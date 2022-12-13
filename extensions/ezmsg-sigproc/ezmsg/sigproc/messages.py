@@ -5,19 +5,20 @@ from dataclasses import dataclass, field
 from ezmsg.util.messages import AxisArray, TimeAxis
 
 
+# UPCOMING: TSMessage Deprecation
 # TSMessage is deprecated because it doesn't handle multiple time axes well.
 # AxisArray has an incompatible API but supports a superset of functionality
 # including messages with multiple time axes and dimensional or categorical axes.
-warnings.warn( 
-    "TimeSeriesMessage/TSMessage is deprecated.  Please use ezmsg.utils.AxisArray", 
-    DeprecationWarning, 
-    stacklevel=2 
-)
+# warnings.warn( 
+#     "TimeSeriesMessage/TSMessage is deprecated.  Please use ezmsg.utils.AxisArray", 
+#     DeprecationWarning, 
+#     stacklevel=2 
+# )
 
 @dataclass
 class TSMessage(AxisArray):
     """
-    NOTE: DEPRECATED. Please use ezmsg.utils.AxisArray
+    NOTE: UPCOMING DEPRECATION. Please use ezmsg.utils.AxisArray
     This class remains as a backwards-compatible API for AxisArray
 
     TS(TimeSeries)Message:
