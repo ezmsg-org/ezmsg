@@ -6,6 +6,9 @@ Messaging and Multiprocessing.
 
 `ezmsg` is very fast and uses Python's (currently) new `multiprocessing.shared_memory` module to facilitate efficient message passing without C++ or any compilation/build tooling.
 
+## Installation
+`pip install ezmsg`
+
 ## Dependencies
 
 Due to reliance on `multiprocessing.shared_memory`, `ezmsg` requires __minimum Python 3.8__. Beyond that, `ezmsg` is a pure Python library with no external dependencies.
@@ -16,7 +19,7 @@ Testing `ezmsg` requires:
 * `pytest-asyncio`
 * `numpy`
 
-## Setup
+## Setup (Development)
 ``` bash
 $ python3 -m venv env
 $ source env/bin/activate
