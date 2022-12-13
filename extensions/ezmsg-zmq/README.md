@@ -2,8 +2,14 @@
 
 Zero-MQ pub/sub units for ezmsg
 
-## Setup
-1. Clone `ezmsg`, run `pip install .` in the root folder.
-2. `cd` to `ezmsg/extensions/ezmsg-zmq` and run `pip install .`
-3. Websocket units are available with `import ezmsg.zmq`
+## Installation
+`pip install ezmsg-sigproc`
 
+## Dependencies
+* `ezmsg`
+* `pyzmq`
+
+## Setup (Development)
+1. Install `ezmsg` either using `pip install ezmsg` or set up the repo for development as described in the `ezmsg` readme.
+2. `cd` to this directory (`ezmsg-zmq`) and run `pip install -e .`
+3. Signal processing modules are available under `import ezmsg.zmq`
