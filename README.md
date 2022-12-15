@@ -30,7 +30,7 @@ $ source env/bin/activate
 ```
 
 ## Documentation
-Some documentation is available in the `docs` directory.
+https://ezmsg.readthedocs.io/en/latest/
 
 `ezmsg` is very similar to [`labgraph`](https://www.github.com/facebookresearch/labgraph), so you might get a primer with their documentation and examples. Additionally, there are many examples provided in the examples/tests directories strewn throughout this repository.
 
