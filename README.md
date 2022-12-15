@@ -1,4 +1,4 @@
-# ezmsg
+# <img src="https://raw.githubusercontent.com/iscoe/ezmsg/main/docs/source/logo.png" width="50"/> ezmsg
 
 Messaging and Multiprocessing.
 
