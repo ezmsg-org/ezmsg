@@ -6,7 +6,7 @@ from collections import UserDict
 from contextlib import contextmanager
 
 from .shmserver import SHMContext
-from .messagemarshal import MessageMarshal
+from .messagemarshal import MessageMarshal, UninitializedMemory
 
 from typing import Dict, Any, Optional, List, Generator, Type
 
@@ -56,18 +56,15 @@ class Cache:
                 raise CacheMiss
             
             with shm.buffer(buf_idx, readonly=True) as mem:
-                if MessageMarshal.msg_id(mem) != msg_id:
+                try:
+                    if MessageMarshal.msg_id(mem) != msg_id:
+                        raise CacheMiss
+                except UninitializedMemory:
                     raise CacheMiss
 
                 with MessageMarshal.obj_from_mem(mem) as obj:
                     yield obj
 
 
-class MessageCache(UserDict[UUID, Cache]):
-
-    def __new__(cls) -> "MessageCache":
-        # Singleton Pattern
-        if not hasattr(cls, 'instance'):
-            cls.instance = super().__new__(cls)
-        return cls.instance
+MessageCache: Dict[UUID, Cache] = dict()
 
