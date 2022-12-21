@@ -265,6 +265,7 @@ class SHMServer(Process):
 
                 # Create segment
                 shm = SharedMemory(size=num_buffers * buf_size, create=True)
+                shm.buf[:] = b'0' * len(shm.buf) # Guarantee zeros
                 shm.buf[0:8] = uint64_to_bytes(num_buffers)
                 shm.buf[8:16] = uint64_to_bytes(buf_size)
                 shm_name = shm.name

@@ -112,10 +112,11 @@ class Command(enum.Enum):
     ADDRESS = enum.auto()
     UPDATE = enum.auto()
 
-    # Pub->Sub Commands
+    # Pub<->Sub Commands
+    MSG = enum.auto()
+    TRANSMIT = enum.auto()
     TX_TCP = enum.auto()
     TX_SHM = enum.auto()
-    TX_LOCAL = enum.auto()
 
     # SHMServer Commands
     SHM_CREATE = enum.auto()
