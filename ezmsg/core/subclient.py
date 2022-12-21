@@ -1,7 +1,5 @@
 import asyncio
 import logging
-import pickle
-import io
 
 from uuid import UUID
 from contextlib import asynccontextmanager, suppress
@@ -10,6 +8,8 @@ from copy import deepcopy
 from .shmserver import SHMContext
 from .graphserver import GraphServer
 from .graphclient import GraphClient
+from .messagecache import MessageCache, CacheMiss, Cache
+from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
     Address,
@@ -26,7 +26,7 @@ from .netprotocol import (
     GRAPHSERVER_ADDR
 )
 
-from typing import Tuple, Dict, List, Any, AsyncGenerator, Optional
+from typing import Tuple, Dict, Any, AsyncGenerator, Set
 
 logger = logging.getLogger('ezmsg')
 
@@ -35,7 +35,8 @@ class Subscriber(GraphClient):
 
     _publishers: Dict[UUID, PublisherInfo]
     _shms: Dict[UUID, SHMContext]
-    _incoming: "asyncio.Queue[ Tuple[ UUID, bytes, int, bytes ] ]"
+    _incoming: "asyncio.Queue[Tuple[UUID, int]]"
+    _tasks: Set[asyncio.Task]
 
     @staticmethod
     def client_type() -> bytes:
@@ -58,6 +59,7 @@ class Subscriber(GraphClient):
         self._publishers = dict()
         self._shms = dict()
         self._incoming = asyncio.Queue()
+        self._tasks = set()
 
     def close(self) -> None:
         super().close()
@@ -91,18 +93,11 @@ class Subscriber(GraphClient):
                     pub_addresses[pub_id] = pub_address
 
             for id in set(pub_addresses.keys() - self._publishers.keys()):
-                try:
-                    pub_reader, pub_writer = await asyncio.open_connection(*pub_addresses[id])
-                    pub_writer.write(encode_str(str(self.id)))
-                    pub_writer.write(encode_str(self.topic))
-                    await pub_writer.drain()
-                    pub_topic = await read_str(pub_reader)
-                except BaseException:
-                    logger.warn(f'Error connecting subscriber {self.id} publisher {id}')
-                    raise
-
-                task = asyncio.create_task(self._handle_publisher(id, pub_reader))
-                self._publishers[id] = PublisherInfo(id, pub_topic, pub_reader, pub_writer, task)
+                coro = self._handle_publisher(id, pub_addresses[id])
+                task_name = f'sub{self.id}:_handle_publisher({id})'
+                task = asyncio.create_task(coro, name = task_name)
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
 
             for id in set(self._publishers.keys() - pub_addresses.keys()):
                 await self._disconnect_publisher(id)
@@ -121,19 +116,49 @@ class Subscriber(GraphClient):
                 with suppress(asyncio.CancelledError):
                     await task
 
-    async def _handle_publisher(self, id: UUID, reader: asyncio.StreamReader) -> None:
+    async def _handle_publisher(self, id: UUID, address: Address) -> None:
+
+        reader, writer = await asyncio.open_connection(*address)
+        writer.write(encode_str(str(self.id)))
+        writer.write(encode_str(self.topic))
+        await writer.drain()
+        pub_topic = await read_str(reader)
+        num_buffers = await read_int(reader)
+
+        # NOTE: Not thread safe
+        cache = MessageCache().get(id, Cache(num_buffers))
+        MessageCache()[id] = cache
+
+        self._publishers[id] = PublisherInfo(id, pub_topic, reader, writer, asyncio.current_task())
+
         try:
             while True:
 
-                msg_type = await reader.read(1)
-                if len(msg_type) == 0:
+                msg = await reader.read(1)
+                if len(msg) == 0:
                     break
 
-                idx = await read_int(reader)
-                buf_size = await read_int(reader)
-                obj_bytes = await reader.readexactly(buf_size)
-                self._incoming.put_nowait((id, msg_type, idx, obj_bytes))
+                msg_id_bytes = await reader.read( UINT64_SIZE )
+                msg_id = bytes_to_uint(msg_id_bytes)
 
+                if msg == Command.TX_SHM.value:
+                    shm_name = await read_str(reader)
+
+                    if id not in self._shms or self._shms[id].name != shm_name:
+                        if id in self._shms:
+                            self._shms[id].close()
+                            await self._shms[id].wait_closed()
+                        self._shms[id] = await SHMContext.attach(shm_name)
+
+                if msg == Command.TX_TCP.value:
+                    buf_size = await read_int(reader)
+                    obj_bytes = await reader.readexactly(buf_size)
+
+                    with MessageMarshal.obj_from_mem(memoryview(obj_bytes)) as obj:
+                        MessageCache()[id].put(msg_id, deepcopy(obj))
+
+                self._incoming.put_nowait((id, msg_id))
+                
         except ConnectionResetError:
             logger.debug(f'Subscriber {self.id}: Publisher {id} connection reset')
 
@@ -153,76 +178,28 @@ class Subscriber(GraphClient):
     @asynccontextmanager
     async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
 
-        id, msg_type, idx, obj_bytes = await self._incoming.get()
-
-        if msg_type == Command.TX_SHM.value:
-            obj_stream = io.BytesIO(obj_bytes)
-            shm_name = obj_bytes.decode('utf-8')
-
-            if id not in self._shms or self._shms[id].name != shm_name:
-                if id in self._shms:
-                    self._shms[id].close()
-                    await self._shms[id].wait_closed()
-                self._shms[id] = await SHMContext.attach(shm_name)
-
-            with self._shms[id].buffer(idx, readonly=True) as mem:
-                # Read header info
-                num_buffers = bytes_to_uint(mem[:UINT64_SIZE])
-
-                # Grab buffer sizes
-                start_idx: int = UINT64_SIZE
-                buf_sizes: List[int] = list()
-                for _ in range(num_buffers):
-                    buf_sizes.append(bytes_to_uint(mem[start_idx: start_idx + UINT64_SIZE]))
-                    start_idx += UINT64_SIZE
-
-                obj: Any = None
-                ser_obj: Optional[memoryview] = None
-                mem_buffers: List[memoryview] = list()
-                try:
-                    # Get the pickled object representation
-                    ser_obj = mem[start_idx: start_idx + buf_sizes[0]]
-                    start_idx += buf_sizes[0]
-
-                    # Extract readonly buffers from the memory view
-                    for buf_len in buf_sizes[1:]:
-                        buf_mem = mem[start_idx: start_idx + buf_len]
-                        mem_buffers.append(buf_mem)
-                        start_idx += buf_len
-
-                    # Reconstitute the object
-                    obj = pickle.loads(ser_obj, buffers=mem_buffers)
-                    yield obj
-
-                except IndexError:
-                    logger.error(f"num_buffers: {num_buffers}")
-                    logger.error(f"start_idx: {start_idx}, buf_sizes[0]: {buf_sizes[0]}")
-
-                finally:
-                    del obj
-                    if ser_obj is not None:
-                        ser_obj.release()
-                    for buffer in mem_buffers:
-                        buffer.release()
-                    await self._acknowledge(id, idx)
-
-        elif msg_type == Command.TX_TCP.value:
-            obj_stream = io.BytesIO(obj_bytes)
-            num_buffers = bytes_to_uint(obj_stream.read(UINT64_SIZE))
-            buf_sizes = [bytes_to_uint(obj_stream.read(UINT64_SIZE)) for _ in range(num_buffers)]
-            bytes_buffers = [obj_stream.read(buf_size) for buf_size in buf_sizes]
-            obj = pickle.loads(bytes_buffers[0], buffers=bytes_buffers[1:])
+        while True:
+            id, msg_id = await self._incoming.get()
+            msg_id_bytes = uint64_to_bytes(msg_id)
 
             try:
-                yield obj
-            finally:
-                del obj
-                await self._acknowledge(id, idx)
+                shm = self._shms.get(id, None)
+                with MessageCache()[id].get(msg_id, shm) as msg:
+                    yield msg
 
-    async def _acknowledge(self, id: UUID, idx: int) -> None:
-        try:
-            self._publishers[id].writer.write(Response.RX_ACK.value + uint64_to_bytes(idx))
-            await self._publishers[id].writer.drain()
-        except (BrokenPipeError, ConnectionResetError):
-            # These might be totally normal/ok if our pub has concluded already
-            logger.debug(f'Subscriber {self.id}: ack fail to Publisher {id}')
+                ack = Response.RX_ACK.value + msg_id_bytes
+                self._publishers[id].writer.write(ack)
+                break
+
+            except CacheMiss:
+                response = Command.TRANSMIT.value + msg_id_bytes
+                self._publishers[id].writer.write(response)
+                
+            finally:
+                try:
+                    await self._publishers[id].writer.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    logger.debug(f'sub:{self.id} tx fail to pub:{id}')
+
+
+            

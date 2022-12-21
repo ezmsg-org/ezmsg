@@ -9,11 +9,15 @@ from collections import defaultdict
 from .shmserver import SHMContext
 from .graphserver import GraphServer
 from .graphclient import GraphClient
+from .messagecache import MessageCache, Cache
+from .messagemarshal import MessageMarshal, UndersizedMemory, UninitializedMemory
 
 from .netprotocol import (
     Address,
     AddressType,
+    UINT64_SIZE,
     uint64_to_bytes,
+    bytes_to_uint,
     read_int,
     read_str,
     encode_str,
@@ -24,7 +28,7 @@ from .netprotocol import (
     GRAPHSERVER_ADDR
 )
 
-from typing import DefaultDict, Set, List, Union, Any, Dict
+from typing import DefaultDict, Set, List, Union, Any, Dict, Type
 
 logger = logging.getLogger('ezmsg')
 
@@ -40,9 +44,9 @@ class Publisher(GraphClient):
     _lowwater: asyncio.Event
     _unpaused: asyncio.Event
     _sync: asyncio.Event
-    _cur_msg: int = 0
-
+    _msg_id: int = 0
     _shm: SHMContext
+    _cache: Cache
 
     _force_tcp: bool = False
     # TODO: Modes -- auto (prefer shm), force_shm, force_tcp,
@@ -79,6 +83,8 @@ class Publisher(GraphClient):
 
         pub._connection_task.add_done_callback(on_done)
         pub._shm = await SHMContext.create(pub._num_buffers)
+        pub._cache = Cache(pub._num_buffers)
+        MessageCache()[id] = pub._cache
 
         response = await reader.read(1)
         return pub
@@ -144,9 +150,10 @@ class Publisher(GraphClient):
             id = UUID(id_str)
             topic = await read_str(reader)
             writer.write(encode_str(self.topic))
+            writer.write(uint64_to_bytes(self._num_buffers))
             await writer.drain()
 
-        except BaseException:
+        except BaseException: # FIXME: Poor form
             logger.warn('Subscriber failed to connect')
             raise
 
@@ -157,6 +164,49 @@ class Publisher(GraphClient):
                 msg = await reader.read(1)
                 if len(msg) == 0:
                     break
+
+                elif msg == Command.TRANSMIT.value:
+                    # Subscriber had a CacheMiss, we need to transmit a message
+                    msg_id_bytes = await reader.read(UINT64_SIZE)
+                    msg_id = bytes_to_uint(msg_id_bytes)
+
+                    if not self._force_tcp and id.node == self.id.node:
+                        try:
+                            self._cache.push(msg_id, self._shm)
+                        except UndersizedMemory as e:
+                            new_shm = await SHMContext.create(self._num_buffers, e.req_size * 2)
+                            for buf_idx in range( self._num_buffers ):
+                                with self._shm.buffer(buf_idx, readonly=True) as from_buf:
+                                    try:
+                                        msg_id = MessageMarshal.msg_id(from_buf)
+                                        with MessageMarshal.obj_from_mem(from_buf) as obj:
+                                            with new_shm.buffer(buf_idx) as to_buf:
+                                                MessageMarshal.to_mem(msg_id, obj, to_buf)
+                                    except UninitializedMemory:
+                                        continue
+                            self._shm.close()
+                            self._shm = new_shm
+                            self._cache.push(msg_id, self._shm)
+                        finally:
+                            writer.write(Command.TX_SHM.value)
+                            writer.write(msg_id_bytes)
+                            writer.write(encode_str(self._shm.name))
+
+                    else:
+                        with self._cache.get(msg_id) as obj:
+                            with MessageMarshal.serialize(msg_id, obj) as ser_obj:
+                                total_size, header, buffers = ser_obj
+                                total_size_bytes = uint64_to_bytes(total_size)
+
+                                writer.write(Command.TX_TCP.value)
+                                writer.write(msg_id_bytes)
+                                writer.write(total_size_bytes)
+                                writer.write(header)
+                                for buffer in buffers:
+                                    writer.write(buffer)
+
+                    await writer.drain()
+                    
                 elif msg == Response.RX_ACK.value:
                     idx = await read_int(reader)
                     self._relieve_backpressure(idx, id)
@@ -205,26 +255,6 @@ class Publisher(GraphClient):
 
     async def broadcast(self, obj: Any) -> None:
 
-        # Pickle object, but not its buffers
-        obj_buffers: List[pickle.PickleBuffer] = list()
-        ser_obj = pickle.dumps(obj, protocol=5, buffer_callback=obj_buffers.append)
-
-        # Create a header and calculate buffer lengths
-        buffers: List[Union[bytes, memoryview]] = [ser_obj] + [b.raw() for b in obj_buffers]
-        header = uint64_to_bytes(len(buffers))
-        buf_lengths = [len(buf) for buf in buffers]
-        header_chunks = [header] + [uint64_to_bytes(b) for b in buf_lengths]
-        header = b''.join(header_chunks)
-        header_len = len(header)
-        total_size = header_len + sum(buf_lengths)
-        total_size_bytes = uint64_to_bytes(total_size)
-
-        # Make sure message fits in SHM
-        if self._shm.buf_size <= total_size:
-            self._shm.close()
-            await self._shm.wait_closed()
-            self._shm = await SHMContext.create(self._num_buffers, total_size * 2)
-
         # Wait until channel is clear for more messages
         if self.backpressure >= self._num_buffers:
             self._lowwater.clear()
@@ -233,32 +263,22 @@ class Publisher(GraphClient):
         # Wait for unpaused state
         await self._unpaused.wait()
 
-        # Copy data into SHM
-        with self._shm.buffer(self._cur_msg) as mem:
-            mem[:header_len] = header[:]
-            start_idx = header_len
-            for buf, buf_len in zip(buffers, buf_lengths):
-                mem[start_idx: start_idx + buf_len] = buf[:]
-                start_idx += buf_len
+        buf_idx = self._msg_id % self._num_buffers
+        msg_id_bytes = uint64_to_bytes(self._msg_id)
 
-        # Transmit Payload
-        idx_bytes = uint64_to_bytes(self._cur_msg)
-        shm_name_bytes = encode_str(self._shm.name)
+        # FIXME: wait for no outstanding reads on buf_idx
+
+        self._cache.put(self._msg_id, obj)
+
+        # Alert all subscribers
         for sub in self._subscribers.values():
             try:
-                if not self._force_tcp and sub.id.node == self.id.node:
-                    sub.writer.write(Command.TX_SHM.value)
-                    sub.writer.write(idx_bytes)
-                    sub.writer.write(shm_name_bytes)
-                else:
-                    sub.writer.write(Command.TX_TCP.value + idx_bytes + total_size_bytes + header)
-                    for buffer in buffers:
-                        sub.writer.write(buffer)
+                sub.writer.write(Command.MSG.value + msg_id_bytes)
                 await sub.writer.drain()
-                self._backpressure[self._cur_msg].add(sub.id)
+                self._backpressure[buf_idx].add(sub.id)
 
             except ConnectionResetError:
                 logger.debug(f'Publisher {self.id}: Subscriber {sub.id} connection reset')
                 continue
 
-        self._cur_msg = (self._cur_msg + 1) % self._num_buffers
+        self._msg_id += 1
