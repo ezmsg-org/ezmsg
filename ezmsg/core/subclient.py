@@ -126,8 +126,8 @@ class Subscriber(GraphClient):
         num_buffers = await read_int(reader)
 
         # NOTE: Not thread safe
-        cache = MessageCache().get(id, Cache(num_buffers))
-        MessageCache()[id] = cache
+        if id not in MessageCache:
+            MessageCache[id] = Cache(num_buffers)
 
         self._publishers[id] = PublisherInfo(id, pub_topic, reader, writer, asyncio.current_task())
 
@@ -155,7 +155,7 @@ class Subscriber(GraphClient):
                     obj_bytes = await reader.readexactly(buf_size)
 
                     with MessageMarshal.obj_from_mem(memoryview(obj_bytes)) as obj:
-                        MessageCache()[id].put(msg_id, deepcopy(obj))
+                        MessageCache[id].put(msg_id, deepcopy(obj))
 
                 self._incoming.put_nowait((id, msg_id))
                 
@@ -184,7 +184,7 @@ class Subscriber(GraphClient):
 
             try:
                 shm = self._shms.get(id, None)
-                with MessageCache()[id].get(msg_id, shm) as msg:
+                with MessageCache[id].get(msg_id, shm) as msg:
                     yield msg
 
                 ack = Response.RX_ACK.value + msg_id_bytes

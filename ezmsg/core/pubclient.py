@@ -84,7 +84,7 @@ class Publisher(GraphClient):
         pub._connection_task.add_done_callback(on_done)
         pub._shm = await SHMContext.create(pub._num_buffers)
         pub._cache = Cache(pub._num_buffers)
-        MessageCache()[id] = pub._cache
+        MessageCache[id] = pub._cache
 
         response = await reader.read(1)
         return pub
