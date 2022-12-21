@@ -2,13 +2,12 @@
 import logging
 
 from uuid import UUID
-from collections import UserDict
 from contextlib import contextmanager
 
 from .shmserver import SHMContext
 from .messagemarshal import MessageMarshal, UninitializedMemory
 
-from typing import Dict, Any, Optional, List, Generator, Type
+from typing import Dict, Any, Optional, List, Generator
 
 logger = logging.getLogger( 'ezmsg' )
 

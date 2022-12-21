@@ -159,11 +159,8 @@ class Subscriber(GraphClient):
 
                 self._incoming.put_nowait((id, msg_id))
                 
-        except ConnectionResetError:
-            logger.debug(f'Subscriber {self.id}: Publisher {id} connection reset')
-
-        except BrokenPipeError:
-            logger.debug(f'Subscriber {self.id}: Publisher {id} broken pipe')
+        except (ConnectionResetError, BrokenPipeError):
+            logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
 
         finally:
             self._publishers[id].writer.close()
@@ -199,7 +196,7 @@ class Subscriber(GraphClient):
                 try:
                     await self._publishers[id].writer.drain()
                 except (BrokenPipeError, ConnectionResetError):
-                    logger.debug(f'sub:{self.id} tx fail to pub:{id}')
+                    logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
 
 
             
