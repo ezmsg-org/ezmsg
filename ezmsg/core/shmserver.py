@@ -291,18 +291,11 @@ class SHMServer(Process):
 
                 finally:
                     self.shms[shm_name].leases.discard(writer)
-
-                    # FIXME: Pubs can come and go before a sub tries to attach SHM
-                    # Its possible that if we unlink right away, a sub might still want
-                    # the SHM..  There should still be a task that unlinks shms with no
-                    # leases every so often, but there's still that chance that a shm
-                    # gets unlinked between a flurry of pub messages/disconnect and a 
-                    # sub attempting to attach to the SHM.
                     
-                    # if len(self.shms[shm_name].leases) == 0:
-                    #     logger.debug(f'unlinking {shm_name}')
-                    #     self.shms[shm_name].shm.close()
-                    #     self.shms[shm_name].shm.unlink()
-                    #     del self.shms[shm_name]
+                    if len(self.shms[shm_name].leases) == 0:
+                        logger.debug(f'unlinking {shm_name}')
+                        self.shms[shm_name].shm.close()
+                        self.shms[shm_name].shm.unlink()
+                        del self.shms[shm_name]
 
                     writer.close()
