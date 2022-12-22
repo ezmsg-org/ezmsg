@@ -100,7 +100,7 @@ class DefaultBackendProcess(BackendProcess):
             task_thread.join()
 
         except KeyboardInterrupt:
-            logger.debug(f'Keyboard Interrupt in PID {self.pid}')
+            logger.debug(f'Keyboard Interrupt')
 
         finally:
 
@@ -150,7 +150,7 @@ class DefaultBackendProcess(BackendProcess):
                 name=f'pid_{self.pid}'
             )
 
-            logger.info(f'Process {self.pid} kicking off tasks: {process_tasks.keys()}')
+            logger.debug(f'Starting tasks: {process_tasks.keys()}')
 
             try:
                 for task in asyncio.as_completed(tasks):
@@ -162,10 +162,13 @@ class DefaultBackendProcess(BackendProcess):
                 with suppress(asyncio.CancelledError):
                     await monitor
         
-            logger.info(f'Process {self.pid} waiting for all other processes')
-            await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
+                # This stop barrier prevents publishers/subscribers
+                # from getting destroyed before all other processes have 
+                # drained communication channels
+                logger.debug(f'Waiting at  stop barrier')
+                await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
 
-        logger.info(f'Process {self.pid} Completed. All Done: {[task.get_name() for task in tasks]}')
+        logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
 
     async def monitor_termination(self, tasks: List[asyncio.Task]):
         while True:
@@ -173,13 +176,10 @@ class DefaultBackendProcess(BackendProcess):
             # await asyncio.get_running_loop().run_in_executor( None, self.term_ev.wait )
             await asyncio.sleep(0.5)
             if self.term_ev.is_set():
-                logger.info(f'Process {self.pid} detected term_ev;')
+                logger.debug(f'Detected term_ev')
                 for task in tasks:
-                    logger.info(f'Cancelling {task}')
+                    logger.debug(f'Cancelling {task.get_name()}')
                     task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-                        logger.info(f'Cancelled {task}')
 
     async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[Subscriber] = None) -> None:
 
@@ -240,6 +240,7 @@ class DefaultBackendProcess(BackendProcess):
         except Exception as e:
             logger.error(f'Exception in Task: {task_address}')
             logger.error(traceback.format_exc())
+            raise
 
         finally:
-            ...
+            logger.debug(f'Task Complete: {task_address}')
