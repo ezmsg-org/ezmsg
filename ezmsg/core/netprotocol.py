@@ -51,6 +51,7 @@ AddressType = Union[Tuple[str, int], Address]
 @dataclass
 class ClientInfo:
     id: UUID
+    pid: int
     topic: str
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
