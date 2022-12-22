@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 from .netprotocol import uint64_to_bytes, bytes_to_uint, UINT64_SIZE
 
-from typing import Any, List, Tuple, Generator
+from typing import Any, List, Tuple, Generator, Optional
 
 _PREAMBLE = b'EZ'
 _PREAMBLE_LEN = len(_PREAMBLE)
@@ -49,9 +49,13 @@ class Marshal:
             raise UninitializedMemory
 
     @classmethod
-    def msg_id(cls, mem: memoryview) -> int:
-        cls._assert_initialized(mem)
-        return bytes_to_uint(mem[_PREAMBLE_LEN:_PREAMBLE_LEN+UINT64_SIZE])
+    def msg_id(cls, mem: memoryview) -> Optional[int]:
+        """ get msg_id currently written in mem; if uninitialized, return None """
+        try:
+            cls._assert_initialized(mem)
+            return bytes_to_uint(mem[_PREAMBLE_LEN:_PREAMBLE_LEN+UINT64_SIZE])
+        except UninitializedMemory:
+            return None
 
     @classmethod
     @contextmanager
@@ -109,8 +113,10 @@ class Marshal:
 
     @classmethod
     def copy_obj(cls, from_mem: memoryview, to_mem: memoryview) -> None:
+        """ copy obj in from_mem (if initialized) to to_mem """
         msg_id = cls.msg_id(from_mem)
-        with MessageMarshal.obj_from_mem(from_mem) as obj:
-            MessageMarshal.to_mem(msg_id, obj, to_mem)
+        if msg_id is not None:
+            with MessageMarshal.obj_from_mem(from_mem) as obj:
+                MessageMarshal.to_mem(msg_id, obj, to_mem)
 
 MessageMarshal = Marshal

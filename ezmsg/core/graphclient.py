@@ -21,12 +21,14 @@ logger = logging.getLogger('ezmsg')
 
 class GraphClient:
     id: UUID
+    pid: int
     topic: str
 
     _graph_server_task: Optional[asyncio.Task] = None
 
     def __init__(self, id: UUID, topic: str) -> None:
         self.id = id
+        self.pid = os.getpid()
         self.topic = topic
 
     @staticmethod
@@ -38,7 +40,7 @@ class GraphClient:
         graph_writer.write(Command.CLIENT.value)
         graph_writer.write(self.client_type())
         graph_writer.write(encode_str(str(self.id)))
-        graph_writer.write(uint64_to_bytes(os.getpid()))
+        graph_writer.write(uint64_to_bytes(self.pid))
         graph_writer.write(encode_str(self.topic))
         await graph_writer.drain()
         server_connection = self._graph_server_connection(graph_reader, graph_writer)

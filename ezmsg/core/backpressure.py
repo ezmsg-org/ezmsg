@@ -57,7 +57,7 @@ class Backpressure:
                 self.buffers[idx].discard(uuid)
         else:
             self.buffers[buf_idx].discard(uuid)
-        
+
         if self.pressure == 0:
             self.empty.set()
 
