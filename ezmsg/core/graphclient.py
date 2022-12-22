@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 
@@ -9,6 +10,7 @@ from .graphserver import GraphServer
 from .netprotocol import (
     Address,
     encode_str,
+    uint64_to_bytes,
     Command,
 )
 
@@ -36,6 +38,7 @@ class GraphClient:
         graph_writer.write(Command.CLIENT.value)
         graph_writer.write(self.client_type())
         graph_writer.write(encode_str(str(self.id)))
+        graph_writer.write(uint64_to_bytes(os.getpid()))
         graph_writer.write(encode_str(self.topic))
         await graph_writer.drain()
         server_connection = self._graph_server_connection(graph_reader, graph_writer)

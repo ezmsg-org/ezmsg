@@ -107,4 +107,10 @@ class Marshal:
     def load(buffers: List[memoryview]) -> Any:
         return pickle.loads(buffers[0], buffers = buffers[1:])
 
+    @classmethod
+    def copy_obj(cls, from_mem: memoryview, to_mem: memoryview) -> None:
+        msg_id = cls.msg_id(from_mem)
+        with MessageMarshal.obj_from_mem(from_mem) as obj:
+            MessageMarshal.to_mem(msg_id, obj, to_mem)
+
 MessageMarshal = Marshal

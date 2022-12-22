@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 
@@ -141,7 +142,10 @@ class Publisher(GraphClient):
         try:
             id_str = await read_str(reader)
             id = UUID(id_str)
+            pid = await read_int(reader)
             topic = await read_str(reader)
+            writer.write(encode_str(str(self.id)))
+            writer.write(uint64_to_bytes(os.getpid()))
             writer.write(encode_str(self.topic))
             writer.write(uint64_to_bytes(self._num_buffers))
             await writer.drain()
@@ -150,7 +154,7 @@ class Publisher(GraphClient):
             logger.warn('Subscriber failed to connect')
             raise
 
-        self._subscribers[id] = SubscriberInfo(id, topic, reader, writer, asyncio.current_task())
+        self._subscribers[id] = SubscriberInfo(id, pid, topic, reader, writer, asyncio.current_task())
 
         try:
             while True:
@@ -168,15 +172,15 @@ class Publisher(GraphClient):
                             self._cache.push(msg_id, self._shm)
                         except UndersizedMemory as e:
                             new_shm = await SHMContext.create(self._num_buffers, e.req_size * 2)
-                            for buf_idx in range( self._num_buffers ):
-                                with self._shm.buffer(buf_idx, readonly=True) as from_buf:
-                                    try:
-                                        msg_id = MessageMarshal.msg_id(from_buf)
-                                        with MessageMarshal.obj_from_mem(from_buf) as obj:
-                                            with new_shm.buffer(buf_idx) as to_buf:
-                                                MessageMarshal.to_mem(msg_id, obj, to_buf)
-                                    except UninitializedMemory:
-                                        continue
+                            
+                            for buf_idx in range(self._num_buffers):
+                                try: # Copy SHM contents from old buffer to new buffer
+                                    with self._shm.buffer(buf_idx, readonly=True) as from_buf:
+                                        with new_shm.buffer(buf_idx) as to_buf:
+                                            MessageMarshal.copy_obj(from_buf, to_buf)
+                                except UninitializedMemory:
+                                    continue
+
                             self._shm.close()
                             self._shm = new_shm
                             self._cache.push(msg_id, self._shm)

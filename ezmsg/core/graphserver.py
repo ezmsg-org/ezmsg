@@ -124,17 +124,18 @@ class GraphServer(Process):
                 client_type = await reader.read(1)
                 id_str = await read_str(reader)
                 id = UUID(id_str)
+                pid = await read_int(reader)
                 topic = await read_str(reader)
 
                 if id not in self._pending_clients:
                     logger.warn('Unknown GraphClient (id: {id}) Attempted Connection')
                     return
 
-                info = ClientInfo(id, topic, reader, writer)
+                info = ClientInfo(id, pid, topic, reader, writer)
                 if client_type == Command.SUBSCRIBE.value:
-                    info = SubscriberInfo(id, topic, reader, writer)
+                    info = SubscriberInfo(id, pid, topic, reader, writer)
                 elif client_type == Command.PUBLISH.value:
-                    info = PublisherInfo(id, topic, reader, writer)
+                    info = PublisherInfo(id, pid, topic, reader, writer)
 
                 self.clients[id] = info
 

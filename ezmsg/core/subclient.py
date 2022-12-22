@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 
@@ -120,16 +121,22 @@ class Subscriber(GraphClient):
 
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
+        writer.write(uint64_to_bytes(os.getpid()))
         writer.write(encode_str(self.topic))
         await writer.drain()
+        pub_id_str = await read_str(reader)
+        pub_pid = await read_int(reader)
         pub_topic = await read_str(reader)
         num_buffers = await read_int(reader)
+
+        if id != UUID(pub_id_str):
+            raise ValueError("Unexpected Publisher ID")
 
         # NOTE: Not thread safe
         if id not in MessageCache:
             MessageCache[id] = Cache(num_buffers)
 
-        self._publishers[id] = PublisherInfo(id, pub_topic, reader, writer, asyncio.current_task())
+        self._publishers[id] = PublisherInfo(id, pub_pid, pub_topic, reader, writer, asyncio.current_task())
 
         try:
             while True:
