@@ -38,9 +38,11 @@ class Cache:
             raise ValueError("shm has incorrect number of buffers")
 
         buf_idx = msg_id % self.num_buffers
-        with self.get(msg_id) as obj:
-            with shm.buffer(buf_idx) as mem:
-                MessageMarshal.to_mem(msg_id, obj, mem)
+        with shm.buffer(buf_idx) as mem:
+            shm_msg_id = MessageMarshal.msg_id(mem)
+            if shm_msg_id != msg_id:
+                with self.get(msg_id) as obj:
+                    MessageMarshal.to_mem(msg_id, obj, mem)
 
     @contextmanager
     def get(self, msg_id: int, shm: Optional[SHMContext] = None) -> Generator[Any, None, None]:

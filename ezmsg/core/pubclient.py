@@ -1,4 +1,3 @@
-import os
 import asyncio
 import logging
 
@@ -10,14 +9,12 @@ from .shmserver import SHMContext
 from .graphserver import GraphServer
 from .graphclient import GraphClient
 from .messagecache import MessageCache, Cache
-from .messagemarshal import MessageMarshal, UndersizedMemory, UninitializedMemory
+from .messagemarshal import MessageMarshal, UndersizedMemory
 
 from .netprotocol import (
     Address,
     AddressType,
-    UINT64_SIZE,
     uint64_to_bytes,
-    bytes_to_uint,
     read_int,
     read_str,
     encode_str,
@@ -145,7 +142,7 @@ class Publisher(GraphClient):
             pid = await read_int(reader)
             topic = await read_str(reader)
             writer.write(encode_str(str(self.id)))
-            writer.write(uint64_to_bytes(os.getpid()))
+            writer.write(uint64_to_bytes(self.pid))
             writer.write(encode_str(self.topic))
             writer.write(uint64_to_bytes(self._num_buffers))
             await writer.drain()
@@ -159,51 +156,10 @@ class Publisher(GraphClient):
         try:
             while True:
                 msg = await reader.read(1)
+
                 if len(msg) == 0:
                     break
-
-                elif msg == Command.TRANSMIT.value:
-                    # Subscriber had a CacheMiss, we need to transmit a message
-                    msg_id_bytes = await reader.read(UINT64_SIZE)
-                    msg_id = bytes_to_uint(msg_id_bytes)
-
-                    if not self._force_tcp and id.node == self.id.node:
-                        try:
-                            self._cache.push(msg_id, self._shm)
-                        except UndersizedMemory as e:
-                            new_shm = await SHMContext.create(self._num_buffers, e.req_size * 2)
-                            
-                            for buf_idx in range(self._num_buffers):
-                                try: # Copy SHM contents from old buffer to new buffer
-                                    with self._shm.buffer(buf_idx, readonly=True) as from_buf:
-                                        with new_shm.buffer(buf_idx) as to_buf:
-                                            MessageMarshal.copy_obj(from_buf, to_buf)
-                                except UninitializedMemory:
-                                    continue
-
-                            self._shm.close()
-                            self._shm = new_shm
-                            self._cache.push(msg_id, self._shm)
-                        finally:
-                            writer.write(Command.TX_SHM.value)
-                            writer.write(msg_id_bytes)
-                            writer.write(encode_str(self._shm.name))
-
-                    else:
-                        with self._cache.get(msg_id) as obj:
-                            with MessageMarshal.serialize(msg_id, obj) as ser_obj:
-                                total_size, header, buffers = ser_obj
-                                total_size_bytes = uint64_to_bytes(total_size)
-
-                                writer.write(Command.TX_TCP.value)
-                                writer.write(msg_id_bytes)
-                                writer.write(total_size_bytes)
-                                writer.write(header)
-                                for buffer in buffers:
-                                    writer.write(buffer)
-
-                    await writer.drain()
-                    
+                   
                 elif msg == Response.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(id, msg_id % self._num_buffers)
@@ -243,8 +199,45 @@ class Publisher(GraphClient):
         self._cache.put(self._msg_id, obj)
 
         for sub in self._subscribers.values():
+            if not self._force_tcp and sub.id.node == self.id.node:
+
+                if sub.pid == self.pid:
+                    sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
+
+                else:
+                    try:
+                        # Push to cache to shm (if not already there)
+                        self._cache.push(self._msg_id, self._shm)
+
+                    except UndersizedMemory as e:
+                        new_shm = await SHMContext.create(self._num_buffers, e.req_size * 2)
+                        
+                        for i in range(self._num_buffers):
+                            with self._shm.buffer(i, readonly=True) as from_buf:
+                                with new_shm.buffer(i) as to_buf:
+                                    MessageMarshal.copy_obj(from_buf, to_buf)
+
+                        self._shm.close()
+                        self._shm = new_shm
+                        self._cache.push(self._msg_id, self._shm)
+
+                    sub.writer.write(Command.TX_SHM.value)
+                    sub.writer.write(msg_id_bytes)
+                    sub.writer.write(encode_str(self._shm.name))
+
+            else:
+                with MessageMarshal.serialize(self._msg_id, obj) as ser_obj:
+                    total_size, header, buffers = ser_obj
+                    total_size_bytes = uint64_to_bytes(total_size)
+
+                    sub.writer.write(Command.TX_TCP.value)
+                    sub.writer.write(msg_id_bytes)
+                    sub.writer.write(total_size_bytes)
+                    sub.writer.write(header)
+                    for buffer in buffers:
+                        sub.writer.write(buffer)
+
             try:
-                sub.writer.write(Command.MSG.value + msg_id_bytes)
                 await sub.writer.drain()
                 self._backpressure.lease(sub.id, buf_idx)
 

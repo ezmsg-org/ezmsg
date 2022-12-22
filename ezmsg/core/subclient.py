@@ -1,4 +1,3 @@
-import os
 import asyncio
 import logging
 
@@ -121,7 +120,7 @@ class Subscriber(GraphClient):
 
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
-        writer.write(uint64_to_bytes(os.getpid()))
+        writer.write(uint64_to_bytes(self.pid))
         writer.write(encode_str(self.topic))
         await writer.drain()
         pub_id_str = await read_str(reader)
@@ -157,7 +156,7 @@ class Subscriber(GraphClient):
                             await self._shms[id].wait_closed()
                         self._shms[id] = await SHMContext.attach(shm_name)
 
-                if msg == Command.TX_TCP.value:
+                elif msg == Command.TX_TCP.value:
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
 
@@ -182,31 +181,21 @@ class Subscriber(GraphClient):
     @asynccontextmanager
     async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
 
-        while True:
-            # logger.info(f'Waiting for message {asyncio.current_task().get_name()}')
-            id, msg_id = await self._incoming.get()
-            msg_id_bytes = uint64_to_bytes(msg_id)
+        # logger.info(f'Waiting for message {asyncio.current_task().get_name()}')
+        id, msg_id = await self._incoming.get()
+        msg_id_bytes = uint64_to_bytes(msg_id)
 
-            try:
-                shm = self._shms.get(id, None)
-                with MessageCache[id].get(msg_id, shm) as msg:
-                    yield msg
+        try:
+            shm = self._shms.get(id, None)
+            with MessageCache[id].get(msg_id, shm) as msg:
+                yield msg
 
-                # logger.info(f'Acknowledge {asyncio.current_task().get_name()}')
-                ack = Response.RX_ACK.value + msg_id_bytes
-                self._publishers[id].writer.write(ack)
-                break
-
-            except CacheMiss:
-                # logger.info(f'Cache Miss {asyncio.current_task().get_name()}')
-                response = Command.TRANSMIT.value + msg_id_bytes
-                self._publishers[id].writer.write(response)
-                
-            finally:
-                try:
-                    await self._publishers[id].writer.drain()
-                except (BrokenPipeError, ConnectionResetError):
-                    logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
+            # logger.info(f'Acknowledge {asyncio.current_task().get_name()}')
+            ack = Response.RX_ACK.value + msg_id_bytes
+            self._publishers[id].writer.write(ack)
+            await self._publishers[id].writer.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
 
 
             
