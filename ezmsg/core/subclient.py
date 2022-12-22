@@ -8,7 +8,7 @@ from copy import deepcopy
 from .shmserver import SHMContext
 from .graphserver import GraphServer
 from .graphclient import GraphClient
-from .messagecache import MessageCache, CacheMiss, Cache
+from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
@@ -26,7 +26,7 @@ from .netprotocol import (
     GRAPHSERVER_ADDR
 )
 
-from typing import Tuple, Dict, Any, AsyncGenerator, Set
+from typing import Tuple, Dict, Any, AsyncGenerator
 
 logger = logging.getLogger('ezmsg')
 
@@ -36,7 +36,6 @@ class Subscriber(GraphClient):
     _publishers: Dict[UUID, PublisherInfo]
     _shms: Dict[UUID, SHMContext]
     _incoming: "asyncio.Queue[Tuple[UUID, int]]"
-    _tasks: Set[asyncio.Task]
 
     @staticmethod
     def client_type() -> bytes:
@@ -47,6 +46,7 @@ class Subscriber(GraphClient):
         reader, writer = await GraphServer.open(address)
         writer.write(Command.NEW_CLIENT.value)
         await writer.drain()
+
         id_str = await read_str(reader)
         id = UUID(id_str)
         sub = cls(id, topic, **kwargs)
@@ -59,7 +59,6 @@ class Subscriber(GraphClient):
         self._publishers = dict()
         self._shms = dict()
         self._incoming = asyncio.Queue()
-        self._tasks = set()
 
     def close(self) -> None:
         super().close()
@@ -93,11 +92,11 @@ class Subscriber(GraphClient):
                     pub_addresses[pub_id] = pub_address
 
             for id in set(pub_addresses.keys() - self._publishers.keys()):
-                coro = self._handle_publisher(id, pub_addresses[id])
+                connected = asyncio.Event()
+                coro = self._handle_publisher(id, pub_addresses[id], connected)
                 task_name = f'sub{self.id}:_handle_publisher({id})'
                 task = asyncio.create_task(coro, name = task_name)
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
+                await connected.wait()
 
             for id in set(self._publishers.keys() - pub_addresses.keys()):
                 await self._disconnect_publisher(id)
@@ -116,7 +115,7 @@ class Subscriber(GraphClient):
                 with suppress(asyncio.CancelledError):
                     await task
 
-    async def _handle_publisher(self, id: UUID, address: Address) -> None:
+    async def _handle_publisher(self, id: UUID, address: Address, connected: asyncio.Event) -> None:
 
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
@@ -137,6 +136,8 @@ class Subscriber(GraphClient):
 
         self._publishers[id] = PublisherInfo(id, pub_pid, pub_topic, reader, writer, asyncio.current_task())
 
+        connected.set()
+
         try:
             while True:
 
@@ -156,12 +157,14 @@ class Subscriber(GraphClient):
                             await self._shms[id].wait_closed()
                         self._shms[id] = await SHMContext.attach(shm_name)
 
+                # FIXME: TCP connections could be more efficient.
+                # https://github.com/iscoe/ezmsg/issues/5
                 elif msg == Command.TX_TCP.value:
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
 
                     with MessageMarshal.obj_from_mem(memoryview(obj_bytes)) as obj:
-                        MessageCache[id].put(msg_id, deepcopy(obj))
+                        MessageCache[id].put(msg_id, obj)
 
                 self._incoming.put_nowait((id, msg_id))
                 

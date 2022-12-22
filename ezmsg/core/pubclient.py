@@ -34,16 +34,13 @@ class Publisher(GraphClient):
     _connection_task: asyncio.Task
     _subscribers: Dict[UUID, SubscriberInfo]
     _address: Address
-
     _backpressure: Backpressure
     _num_buffers: int
     _unpaused: asyncio.Event
-    _msg_id: int = 0
+    _msg_id: int
     _shm: SHMContext
     _cache: Cache
-
-    _force_tcp: bool = False
-    # TODO: Modes -- auto (prefer shm), force_shm, force_tcp,
+    _force_tcp: bool
 
     @staticmethod
     def client_type() -> bytes:
@@ -51,14 +48,12 @@ class Publisher(GraphClient):
 
     @classmethod
     async def create(cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs) -> "Publisher":
-
         reader, writer = await GraphServer.open(address)
-
         writer.write(Command.NEW_CLIENT.value)
         await writer.drain()
+
         id_str = await read_str(reader)
         id = UUID(id_str)
-
         pub = cls(id, topic, **kwargs)
         server = await asyncio.start_server(pub._subscriber_connected, sock=client_socket())
         pub._address = Address(*server.sockets[0].getsockname())
@@ -83,14 +78,16 @@ class Publisher(GraphClient):
         response = await reader.read(1)
         return pub
 
-    def __init__(self, id: UUID, topic: str, num_buffers: int = 32, start_paused: bool = False) -> None:
+    def __init__(self, id: UUID, topic: str, num_buffers: int = 32, start_paused: bool = False, force_tcp: bool = False) -> None:
         super().__init__(id, topic)
+        self._msg_id = 0
         self._subscribers = dict()
         self._unpaused = asyncio.Event()
         if not start_paused:
             self._unpaused.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
+        self._force_tcp = force_tcp
 
     def close(self) -> None:
         super().close()
@@ -136,22 +133,18 @@ class Publisher(GraphClient):
 
     async def _subscriber_connected(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
 
-        try:
-            id_str = await read_str(reader)
-            id = UUID(id_str)
-            pid = await read_int(reader)
-            topic = await read_str(reader)
-            writer.write(encode_str(str(self.id)))
-            writer.write(uint64_to_bytes(self.pid))
-            writer.write(encode_str(self.topic))
-            writer.write(uint64_to_bytes(self._num_buffers))
-            await writer.drain()
-
-        except BaseException: # FIXME: Poor form
-            logger.warn('Subscriber failed to connect')
-            raise
+        id_str = await read_str(reader)
+        id = UUID(id_str)
+        pid = await read_int(reader)
+        topic = await read_str(reader)
 
         self._subscribers[id] = SubscriberInfo(id, pid, topic, reader, writer, asyncio.current_task())
+
+        writer.write(encode_str(str(self.id)))
+        writer.write(uint64_to_bytes(self.pid))
+        writer.write(encode_str(self.topic))
+        writer.write(uint64_to_bytes(self._num_buffers))
+        await writer.drain()
 
         try:
             while True:
@@ -166,9 +159,6 @@ class Publisher(GraphClient):
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f'Publisher {self.id}: Subscriber {id} connection fail')
-
-        except asyncio.CancelledError: # FIXME: Poor Form
-            pass
 
         finally:
             self._backpressure.free(id)

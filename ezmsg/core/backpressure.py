@@ -48,6 +48,7 @@ class Backpressure:
             await self.buffers[buf_idx].wait()
 
     def lease(self, uuid: UUID, buf_idx: int) -> None:
+        # print('LEASE', [len(b) for b in self.buffers])
         self.buffers[buf_idx].add(uuid)
         self.empty.clear()
 
@@ -58,6 +59,7 @@ class Backpressure:
         else:
             self.buffers[buf_idx].discard(uuid)
 
+        # print('FREE', [len(b) for b in self.buffers])
         if self.pressure == 0:
             self.empty.set()
 

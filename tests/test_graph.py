@@ -163,12 +163,14 @@ class ArrayMessage:
 
 class AsyncProcess(Process):
 
+    stop_barrier: BarrierType
     barrier: BarrierType
     n_msgs: int
 
-    def __init__(self, barrier: BarrierType, n_msgs: int) -> None:
+    def __init__(self, barrier: BarrierType, stop_barrier: BarrierType, n_msgs: int) -> None:
         super().__init__()
         self.barrier = barrier
+        self.stop_barrier = stop_barrier
         self.n_msgs = n_msgs
 
     def run(self) -> None:
@@ -185,6 +187,8 @@ class Sender(AsyncProcess):
             tx = await context.publisher('sender')
             await asyncio.get_running_loop().run_in_executor(None, self.barrier.wait)
 
+            assert len( tx._subscribers ) != 0
+
             msg_size = 2**20 * 10  # 10 MB
             arr = np.zeros(int(msg_size // 8), dtype=np.float32)
 
@@ -200,6 +204,8 @@ class Sender(AsyncProcess):
                 print(f'{ message_rate } msgs/sec')
                 print(f'{ msg_size * message_rate / 1024 / 1024 / 1024 } GB/sec')
 
+            await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
+
 
 class Receiver(AsyncProcess):
 
@@ -208,12 +214,17 @@ class Receiver(AsyncProcess):
             rx = await context.subscriber('receiver')
             await asyncio.get_running_loop().run_in_executor(None, self.barrier.wait)
 
+            assert len( rx._publishers ) != 0
+
             for msg_idx in range(self.n_msgs):
                 async with rx.recv_zero_copy() as rx_msg:
                     assert msg_idx == rx_msg.int_val
                     del rx_msg
 
             print('Received all messages')
+
+            await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
+
 
 
 @pytest.mark.asyncio
@@ -223,12 +234,13 @@ async def test_multiprocess(event_loop: asyncio.AbstractEventLoop):
         await context.connect('sender', 'receiver')
 
         barrier = Barrier(2)
-        n_msgs = 2**10
+        stop_barrier = Barrier(2)
+        n_msgs = 50 # 2**10
 
-        sender_proc = Sender(barrier, n_msgs)
+        sender_proc = Sender(barrier, stop_barrier, n_msgs)
         sender_proc.start()
 
-        receiver_proc = Receiver(barrier, n_msgs)
+        receiver_proc = Receiver(barrier, stop_barrier, n_msgs)
         receiver_proc.start()
 
         await event_loop.run_in_executor(None, sender_proc.join)
