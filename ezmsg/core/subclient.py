@@ -176,6 +176,7 @@ class Subscriber(GraphClient):
     async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
 
         while True:
+            # logger.info(f'Waiting for message {asyncio.current_task().get_name()}')
             id, msg_id = await self._incoming.get()
             msg_id_bytes = uint64_to_bytes(msg_id)
 
@@ -184,11 +185,13 @@ class Subscriber(GraphClient):
                 with MessageCache[id].get(msg_id, shm) as msg:
                     yield msg
 
+                # logger.info(f'Acknowledge {asyncio.current_task().get_name()}')
                 ack = Response.RX_ACK.value + msg_id_bytes
                 self._publishers[id].writer.write(ack)
                 break
 
             except CacheMiss:
+                # logger.info(f'Cache Miss {asyncio.current_task().get_name()}')
                 response = Command.TRANSMIT.value + msg_id_bytes
                 self._publishers[id].writer.write(response)
                 

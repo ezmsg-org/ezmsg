@@ -64,6 +64,6 @@ class Cache:
                 with MessageMarshal.obj_from_mem(mem) as obj:
                     yield obj
 
-
+# NOTE: This should be made thread-safe in the future
 MessageCache: Dict[UUID, Cache] = dict()
 
