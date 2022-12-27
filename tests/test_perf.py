@@ -204,4 +204,4 @@ if __name__ == "__main__":
     if args.many_dynamic_sizes:
         run_many_dynamic_sizes(args.duration, args.num_buffers)
     else:
-        test_performance(args.duration, 2**17, args.num_buffers)
+        test_performance(args.duration, 8, args.num_buffers)
