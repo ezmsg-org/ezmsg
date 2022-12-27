@@ -95,7 +95,7 @@ class GraphServer(Process):
         try:
             await server.serve_forever()
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError: # FIXME: Poor Form
             pass
         
         finally:
@@ -120,7 +120,7 @@ class GraphServer(Process):
             if len(req) == 0:
                 return
 
-            if req == Command.CLIENT.value:
+            elif req == Command.CLIENT.value:
                 client_type = await reader.read(1)
                 id_str = await read_str(reader)
                 id = UUID(id_str)
@@ -128,7 +128,7 @@ class GraphServer(Process):
                 topic = await read_str(reader)
 
                 if id not in self._pending_clients:
-                    logger.warn('Unknown GraphClient (id: {id}) Attempted Connection')
+                    logger.warn(f'Unknown GraphClient (id: {id}) Attempted Connection')
                     return
 
                 info = ClientInfo(id, pid, topic, reader, writer)
