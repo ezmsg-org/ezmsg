@@ -18,13 +18,13 @@ class Cache:
     """ shared-memory backed cache for objects """
 
     num_buffers: int
-    cache: Dict[int, Any] # buf_idx to Message
-    cache_id: List[Optional[int]] # msg_ids in each cache buffer
+    cache: List[Any]
+    cache_id: List[Optional[int]]
 
     def __init__(self, num_buffers: int) -> None:
         self.num_buffers = num_buffers
         self.cache_id = [None] * self.num_buffers
-        self.cache = dict()
+        self.cache = [None] * self.num_buffers
 
     def put(self, msg_id: int, msg: Any) -> None:
         """ put an object into cache """
