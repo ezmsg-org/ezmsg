@@ -1,4 +1,5 @@
 __all__ = [
+    "__version__",
     "task",
     "publisher",
     "subscriber",
@@ -24,6 +25,7 @@ __all__ = [
     "Flag"
 ]
 
+from .__version__ import __version__
 from .component import Component
 from .state import State
 from .settings import Settings

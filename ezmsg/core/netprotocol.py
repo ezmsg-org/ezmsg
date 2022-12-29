@@ -5,8 +5,9 @@ import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
+from contextlib import asynccontextmanager
 
-from typing import Tuple, NamedTuple, Union, Optional
+from typing import Tuple, NamedTuple, Union, Optional, AsyncGenerator
 
 VERSION = b'1'
 UINT64_SIZE = 8
@@ -51,22 +52,38 @@ AddressType = Union[Tuple[str, int], Address]
 @dataclass
 class ClientInfo:
     id: UUID
+    writer: asyncio.StreamWriter
     pid: int
     topic: str
-    reader: asyncio.StreamReader
-    writer: asyncio.StreamWriter
-    task: Optional[asyncio.Task] = None
 
+    _pending: asyncio.Event = field(default_factory=asyncio.Event, init = False)
+
+    def __post_init__(self) -> None:
+        self.set_sync()
+
+    def set_sync(self) -> None:
+        self._pending.set()
+
+    @asynccontextmanager
+    async def sync_writer(self) -> AsyncGenerator[asyncio.StreamWriter, None]:
+        await self._pending.wait()
+        try:
+            yield self.writer
+            await self.writer.drain()
+            self._pending.clear()
+            await self._pending.wait()
+        finally:
+            self._pending.set()
+        
 
 @dataclass
 class PublisherInfo(ClientInfo):
-    ...
+    address: Address
 
 
 @dataclass
 class SubscriberInfo(ClientInfo):
     ...
-
 
 def uint64_to_bytes(i: int) -> bytes:
     return i.to_bytes(UINT64_SIZE, BYTEORDER, signed=False)
@@ -97,39 +114,28 @@ class Command(enum.Enum):
     def _generate_next_value_(name, start, count, last_values) -> bytes:
         return count.to_bytes(1, BYTEORDER, signed=False)
 
-    # GraphServer Mode Selection
-    CONNECTION = enum.auto()
-    CLIENT = enum.auto()
+    COMPLETE = enum.auto()
 
     # GraphConnection Commands
-    NEW_CLIENT = enum.auto()
     PUBLISH = enum.auto()
     SUBSCRIBE = enum.auto()
     CONNECT = enum.auto()
     DISCONNECT = enum.auto()
+    CYCLIC = enum.auto()
     PAUSE = enum.auto()
     SYNC = enum.auto()
     RESUME = enum.auto()
-    ADDRESS = enum.auto()
     UPDATE = enum.auto()
 
     # Pub<->Sub Commands
     TX_LOCAL = enum.auto()
     TX_SHM = enum.auto()
     TX_TCP = enum.auto()
+    RX_ACK = enum.auto()
 
     # SHMServer Commands
     SHM_CREATE = enum.auto()
     SHM_ATTACH = enum.auto()
-
-
-class Response(enum.Enum):
-    def _generate_next_value_(name, start, count, last_values) -> bytes:
-        return (0x80 + count).to_bytes(1, BYTEORDER, signed=False)
-
-    OK = enum.auto()
-    RX_ACK = enum.auto()
-    CYCLIC = enum.auto()
 
 
 def client_socket(host: str = '127.0.0.1', port: int = PUBLISHER_START_PORT, max_port: int = 65535) -> socket.socket:

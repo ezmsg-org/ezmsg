@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 
@@ -7,7 +8,6 @@ from contextlib import suppress
 from .backpressure import Backpressure
 from .shmserver import SHMContext
 from .graphserver import GraphServer
-from .graphclient import GraphClient
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal, UndersizedMemory
 
@@ -19,7 +19,6 @@ from .netprotocol import (
     read_str,
     encode_str,
     Command,
-    Response,
     client_socket,
     SubscriberInfo,
     GRAPHSERVER_ADDR
@@ -29,10 +28,17 @@ from typing import Any, Dict
 
 logger = logging.getLogger('ezmsg')
 
-class Publisher(GraphClient):
+class Publisher:
 
-    _connection_task: asyncio.Task
+    id: UUID
+    pid: int
+    topic: str
+
+    _initialized: asyncio.Event
+    _graph_task: "asyncio.Task[None]"
+    _connection_task: "asyncio.Task[None]"
     _subscribers: Dict[UUID, SubscriberInfo]
+    _subscriber_tasks: Dict[UUID, "asyncio.Task[None]"]
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -49,20 +55,21 @@ class Publisher(GraphClient):
     @classmethod
     async def create(cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs) -> "Publisher":
         reader, writer = await GraphServer.open(address)
-        writer.write(Command.NEW_CLIENT.value)
-        await writer.drain()
-
-        id_str = await read_str(reader)
-        id = UUID(id_str)
+        writer.write(Command.PUBLISH.value)
+        id = UUID(await read_str(reader))
         pub = cls(id, topic, **kwargs)
-        server = await asyncio.start_server(pub._subscriber_connected, sock=client_socket())
+        writer.write(uint64_to_bytes(pub.pid))
+        writer.write(encode_str(pub.topic))
+        pub._shm = await SHMContext.create(pub._num_buffers)
+        server = await asyncio.start_server(pub._on_connection, sock=client_socket())
         pub._address = Address(*server.sockets[0].getsockname())
-        await pub.connect_to_servers(Address(*address))
+        pub._address.to_stream(writer)
+        pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
 
         async def serve() -> None:
             try:
                 await server.serve_forever()
-            except asyncio.CancelledError:
+            except asyncio.CancelledError: #FIXME: Poor form?
                 pass
 
         pub._connection_task = asyncio.create_task(serve(), name=f'pub_{str(id)}')
@@ -71,80 +78,97 @@ class Publisher(GraphClient):
             server.close()
 
         pub._connection_task.add_done_callback(on_done)
-        pub._shm = await SHMContext.create(pub._num_buffers)
         pub._cache = Cache(pub._num_buffers)
         MessageCache[id] = pub._cache
-
-        response = await reader.read(1)
+        await pub._initialized.wait()
         return pub
 
     def __init__(self, id: UUID, topic: str, num_buffers: int = 32, start_paused: bool = False, force_tcp: bool = False) -> None:
-        super().__init__(id, topic)
+        self.id = id
+        self.pid = os.getpid()
+        self.topic = topic
+
         self._msg_id = 0
         self._subscribers = dict()
+        self._subscriber_tasks = dict()
         self._unpaused = asyncio.Event()
         if not start_paused:
             self._unpaused.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
+        self._initialized = asyncio.Event()
 
     def close(self) -> None:
-        super().close()
+        self._graph_task.cancel()
         self._shm.close()
         self._connection_task.cancel()
-        for sub in self._subscribers.values():
-            if sub.task is not None:
-                sub.task.cancel()
+        for task in self._subscriber_tasks.values():
+            task.cancel()
 
     async def wait_closed(self) -> None:
-        await super().wait_closed()
         await self._shm.wait_closed()
         with suppress(asyncio.CancelledError):
+            await self._graph_task
             await self._connection_task
-        for sub in self._subscribers.values():
-            if sub.task is not None:
-                with suppress(asyncio.CancelledError):
-                    await sub.task
+        for task in self._subscriber_tasks.values():
+            with suppress(asyncio.CancelledError):
+                await task
 
-    async def _handle_graph_command(self, cmd: bytes, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _graph_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
 
-        if cmd == Command.ADDRESS.value:
-            self._address.to_stream(writer)
-            await writer.drain()
+        try:
+            while True:
+                cmd = await reader.read(1)
+                if not cmd:
+                    break
 
-        elif cmd == Command.PAUSE.value:
-            self.set_paused(True)
-            writer.write(Response.OK.value)
-            await writer.drain()
+                elif cmd == Command.COMPLETE.value:
+                    self._initialized.set()
 
-        elif cmd == Command.RESUME.value:
-            self.set_paused(False)
-            writer.write(Response.OK.value)
-            await writer.drain()
+                elif cmd == Command.PAUSE.value:
+                    self.set_paused(True)
+                    writer.write(Command.COMPLETE.value)
 
-        elif cmd == Command.SYNC.value:
-            await self.sync()
-            writer.write(Response.OK.value)
-            await writer.drain()
+                elif cmd == Command.RESUME.value:
+                    self.set_paused(False)
+                    writer.write(Command.COMPLETE.value)
 
-        else:
-            logger.warn(f'Publisher {self.id} rx unknown command from GraphServer {cmd}')
+                elif cmd == Command.SYNC.value:
+                    await self.sync()
+                    writer.write(Command.COMPLETE.value)
 
-    async def _subscriber_connected(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+                else:
+                    logger.warn(f'Publisher {self.id} rx unknown command from GraphServer {cmd}')
+                
+                await writer.drain()
+            
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(f'Publisher {self.id} lost connection to graph server')
 
+        finally:
+            writer.close()
+
+    async def _on_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         id_str = await read_str(reader)
         id = UUID(id_str)
         pid = await read_int(reader)
         topic = await read_str(reader)
 
-        self._subscribers[id] = SubscriberInfo(id, pid, topic, reader, writer, asyncio.current_task())
-
         writer.write(encode_str(str(self.id)))
         writer.write(uint64_to_bytes(self.pid))
         writer.write(encode_str(self.topic))
         writer.write(uint64_to_bytes(self._num_buffers))
+
+        info = SubscriberInfo(id, writer, pid, topic)
+        coro = self._handle_subscriber(info, reader)
+        self._subscriber_tasks[id] = asyncio.create_task(coro)
+
         await writer.drain()
+
+    async def _handle_subscriber(self, info: SubscriberInfo, reader: asyncio.StreamReader) -> None:
+
+        self._subscribers[info.id] = info
 
         try:
             while True:
@@ -153,16 +177,16 @@ class Publisher(GraphClient):
                 if len(msg) == 0:
                     break
                    
-                elif msg == Response.RX_ACK.value:
+                elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
-                    self._backpressure.free(id, msg_id % self._num_buffers)
+                    self._backpressure.free(info.id, msg_id % self._num_buffers)
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f'Publisher {self.id}: Subscriber {id} connection fail')
 
         finally:
-            self._backpressure.free(id)
-            del self._subscribers[id]
+            self._backpressure.free(info.id)
+            del self._subscribers[info.id]
 
     async def sync(self) -> None:
         self.set_paused(True)

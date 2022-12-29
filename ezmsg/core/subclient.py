@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 
@@ -5,9 +6,8 @@ from uuid import UUID
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
-from .shmserver import SHMContext
 from .graphserver import GraphServer
-from .graphclient import GraphClient
+from .shmserver import SHMContext
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal
 
@@ -21,7 +21,6 @@ from .netprotocol import (
     read_str,
     encode_str,
     Command,
-    Response,
     PublisherInfo,
     GRAPHSERVER_ADDR
 )
@@ -31,89 +30,102 @@ from typing import Tuple, Dict, Any, AsyncGenerator
 logger = logging.getLogger('ezmsg')
 
 
-class Subscriber(GraphClient):
+class Subscriber:
 
+    id: UUID
+    pid: int
+    topic: str
+
+    _initialized: asyncio.Event
+    _graph_task: "asyncio.Task[None]"
     _publishers: Dict[UUID, PublisherInfo]
+    _publisher_tasks: Dict[UUID, "asyncio.Task[None]"]
     _shms: Dict[UUID, SHMContext]
     _incoming: "asyncio.Queue[Tuple[UUID, int]]"
-
-    @staticmethod
-    def client_type() -> bytes:
-        return Command.SUBSCRIBE.value
 
     @classmethod
     async def create(cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs) -> "Subscriber":
         reader, writer = await GraphServer.open(address)
-        writer.write(Command.NEW_CLIENT.value)
-        await writer.drain()
-
+        writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
-        id = UUID(id_str)
-        sub = cls(id, topic, **kwargs)
-        await sub.connect_to_servers(Address(*address))
-        response = await reader.read(1)
+        sub = cls(UUID(id_str), topic, **kwargs)
+        writer.write(uint64_to_bytes(sub.pid))
+        writer.write(encode_str(sub.topic))
+        sub._graph_task = asyncio.create_task(sub._graph_connection(reader, writer))
+        await sub._initialized.wait()
         return sub
 
     def __init__(self, id: UUID, topic: str) -> None:
-        super().__init__(id, topic)
+        self.id = id
+        self.pid = os.getpid()
+        self.topic = topic
+
         self._publishers = dict()
+        self._publisher_tasks = dict()
         self._shms = dict()
         self._incoming = asyncio.Queue()
+        self._initialized = asyncio.Event()
 
     def close(self) -> None:
-        super().close()
-        for pub in self._publishers.values():
-            if pub.task is not None:
-                pub.task.cancel()
+        self._graph_task.cancel()
+        for task in self._publisher_tasks.values():
+            task.cancel()
         for shm in self._shms.values():
             shm.close()
 
     async def wait_closed(self) -> None:
-        await super().wait_closed()
-        for pub in self._publishers.values():
-            if pub.task is not None:
-                with suppress(asyncio.CancelledError):
-                    await pub.task
+        with suppress(asyncio.CancelledError):
+            await self._graph_task
+            for task in self._publisher_tasks.values():
+                    await task
         for shm in self._shms.values():
             await shm.wait_closed()
 
-    async def _handle_graph_command(self, cmd: bytes, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _graph_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while True:
+                cmd = await reader.read(1)
+                if not cmd:
+                    break
 
-        if cmd == Command.UPDATE.value:
+                elif cmd == Command.COMPLETE.value:
+                    self._initialized.set()
 
-            pub_addresses: Dict[UUID, Address] = {}
-            connections = await read_str(reader)
-            connections = connections.strip(',')
-            if len(connections):
-                for connection in connections.split(','):
-                    pub_id, pub_address = connection.split('@')
-                    pub_id = UUID(pub_id)
-                    pub_address = Address.from_string(pub_address)
-                    pub_addresses[pub_id] = pub_address
+                elif cmd == Command.UPDATE.value:
 
-            for id in set(pub_addresses.keys() - self._publishers.keys()):
-                connected = asyncio.Event()
-                coro = self._handle_publisher(id, pub_addresses[id], connected)
-                task_name = f'sub{self.id}:_handle_publisher({id})'
-                task = asyncio.create_task(coro, name = task_name)
-                await connected.wait()
+                    pub_addresses: Dict[UUID, Address] = {}
+                    connections = await read_str(reader)
+                    connections = connections.strip(',')
+                    if len(connections):
+                        for connection in connections.split(','):
+                            pub_id, pub_address = connection.split('@')
+                            pub_id = UUID(pub_id)
+                            pub_address = Address.from_string(pub_address)
+                            pub_addresses[pub_id] = pub_address
 
-            for id in set(self._publishers.keys() - pub_addresses.keys()):
-                await self._disconnect_publisher(id)
+                    for id in set(pub_addresses.keys() - self._publishers.keys()):
+                        connected = asyncio.Event()
+                        coro = self._handle_publisher(id, pub_addresses[id], connected)
+                        task_name = f'sub{self.id}:_handle_publisher({id})'
+                        self._publisher_tasks[id] = asyncio.create_task(coro, name = task_name)
+                        await connected.wait()
 
-            writer.write(Response.OK.value)
-            await writer.drain()
+                    for id in set(self._publishers.keys() - pub_addresses.keys()):
+                        self._publisher_tasks[id].cancel()
+                        with suppress(asyncio.CancelledError):
+                            await self._publisher_tasks[id]
 
-        else:
-            logger.warning(f'Subscriber {self.id} rx unknown command from GraphServer: {cmd}')
+                    writer.write(Command.COMPLETE.value)
+                    await writer.drain()
 
-    async def _disconnect_publisher(self, id: UUID):
-        if id in self._publishers:
-            task = self._publishers[id].task
-            if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                else:
+                    logger.warning(f'Subscriber {self.id} rx unknown command from GraphServer: {cmd}')
+
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(f'Subscriber {self.id} lost connection to graph server')
+
+        finally:
+            writer.close()
 
     async def _handle_publisher(self, id: UUID, address: Address, connected: asyncio.Event) -> None:
 
@@ -134,7 +146,7 @@ class Subscriber(GraphClient):
         if id not in MessageCache:
             MessageCache[id] = Cache(num_buffers)
 
-        self._publishers[id] = PublisherInfo(id, pub_pid, pub_topic, reader, writer, asyncio.current_task())
+        self._publishers[id] = PublisherInfo(id, writer, pub_pid, pub_topic, address)
 
         connected.set()
 
@@ -142,7 +154,7 @@ class Subscriber(GraphClient):
             while True:
 
                 msg = await reader.read(1)
-                if len(msg) == 0:
+                if not msg:
                     break
 
                 msg_id_bytes = await reader.read( UINT64_SIZE )
@@ -184,7 +196,6 @@ class Subscriber(GraphClient):
     @asynccontextmanager
     async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
 
-        # logger.info(f'Waiting for message {asyncio.current_task().get_name()}')
         id, msg_id = await self._incoming.get()
         msg_id_bytes = uint64_to_bytes(msg_id)
 
@@ -193,10 +204,10 @@ class Subscriber(GraphClient):
             with MessageCache[id].get(msg_id, shm) as msg:
                 yield msg
 
-            # logger.info(f'Acknowledge {asyncio.current_task().get_name()}')
-            ack = Response.RX_ACK.value + msg_id_bytes
+            ack = Command.RX_ACK.value + msg_id_bytes
             self._publishers[id].writer.write(ack)
             await self._publishers[id].writer.drain()
+
         except (BrokenPipeError, ConnectionResetError):
             logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
 
