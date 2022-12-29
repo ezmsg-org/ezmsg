@@ -12,7 +12,6 @@ from .netprotocol import (
     DEFAULT_SHM_SIZE,
     SHMSERVER_ADDR,
     Command,
-    Response,
     Address,
     encode_str,
     uint64_to_bytes,
@@ -103,7 +102,7 @@ class SHMContext():
         await writer.drain()
 
         response = await reader.read(1)
-        if response != Response.OK.value:
+        if response != Command.COMPLETE.value:
             raise ValueError("Error creating SHM segment")
 
         shm_name = await read_str(reader)
@@ -117,7 +116,7 @@ class SHMContext():
         await writer.drain()
 
         response = await reader.read(1)
-        if response != Response.OK.value:
+        if response != Command.COMPLETE.value:
             raise ValueError('Invalid SHM Name')
 
         shm_name = await read_str(reader)
@@ -282,7 +281,7 @@ class SHMServer(Process):
 
             if shm_name is not None:
 
-                writer.write(Response.OK.value)
+                writer.write(Command.COMPLETE.value)
                 writer.write(encode_str(shm_name))
                 await writer.drain()
 
