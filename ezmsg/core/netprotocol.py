@@ -51,6 +51,7 @@ AddressType = Union[Tuple[str, int], Address]
 @dataclass
 class ClientInfo:
     id: UUID
+    pid: int
     topic: str
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
@@ -112,10 +113,10 @@ class Command(enum.Enum):
     ADDRESS = enum.auto()
     UPDATE = enum.auto()
 
-    # Pub->Sub Commands
-    TX_TCP = enum.auto()
-    TX_SHM = enum.auto()
+    # Pub<->Sub Commands
     TX_LOCAL = enum.auto()
+    TX_SHM = enum.auto()
+    TX_TCP = enum.auto()
 
     # SHMServer Commands
     SHM_CREATE = enum.auto()

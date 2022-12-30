@@ -70,12 +70,6 @@ class WindowSystem(ez.System):
 
         )
 
-    # These tests complete quickly, sometimes all processes aren't ready
-    # when ez.NormalTermination is raised, which causes system to hang
-    # FIXME #3
-    # def process_components( self ) -> Tuple[ ez.Component, ... ]:
-    #     return ( self.OSC, self.WIN, self.LOG, self.TERM )
-
 
 @pytest.mark.parametrize("block_size", [1, 5, 10, 20])
 @pytest.mark.parametrize("win_dur", [0.2, 1.0])

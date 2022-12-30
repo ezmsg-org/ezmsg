@@ -98,10 +98,11 @@ def run(
         processes = [[component]]
 
     term_ev = Event()
-    barrier = Barrier(len(processes) + 1)
+    start_barrier = Barrier(len(processes) + 1)
+    stop_barrier = Barrier(len(processes))
 
     backend_processes = [
-        backend_process(graph_address, process_units, term_ev, barrier)
+        backend_process(graph_address, process_units, term_ev, start_barrier, stop_barrier)
         for process_units in processes
     ]
 
@@ -127,14 +128,15 @@ def run(
                     term_ev.set()
                 else:
                     logger.warning('Interrupt intercepted, force quitting')
-                    barrier.abort()
+                    start_barrier.abort()
+                    stop_barrier.abort()
                     for proc in backend_processes:
                         proc.terminate()
 
             signal.signal(signal.SIGINT, graceful_shutdown)
 
             try:
-                await loop.run_in_executor(None, barrier.wait)
+                await loop.run_in_executor(None, start_barrier.wait)
             except BrokenBarrierError:
                 logger.error('Could not initialize system, exiting.')
                 return

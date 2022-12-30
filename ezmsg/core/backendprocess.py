@@ -34,14 +34,17 @@ class NormalTermination(Exception):
 class BackendProcess(Process):
     units: List[Unit]
     term_ev: EventType
-    barrier: BarrierType
+    start_barrier: BarrierType
+    stop_barrier: BarrierType
     graph_address: AddressType
 
-    def __init__(self, graph_address: AddressType, units: List[Unit], term_ev: EventType, barrier: BarrierType) -> None:
+    def __init__(self, graph_address: AddressType, units: List[Unit], term_ev: EventType, start_barrier: BarrierType, stop_barrier: BarrierType) -> None:
         super().__init__()
         self.units = units
         self.term_ev = term_ev
-        self.barrier = barrier
+        self.start_barrier = start_barrier
+        self.stop_barrier = stop_barrier
+
         self.graph_address = graph_address
 
 
@@ -97,7 +100,7 @@ class DefaultBackendProcess(BackendProcess):
             task_thread.join()
 
         except KeyboardInterrupt:
-            logger.debug(f'Keyboard Interrupt in PID {self.pid}')
+            logger.debug(f'Keyboard Interrupt')
 
         finally:
 
@@ -132,7 +135,7 @@ class DefaultBackendProcess(BackendProcess):
 
                     process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub)
 
-            await asyncio.get_running_loop().run_in_executor(None, self.barrier.wait)
+            await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
 
             tasks: List[asyncio.Task[None]] = [
                 asyncio.create_task(
@@ -147,6 +150,8 @@ class DefaultBackendProcess(BackendProcess):
                 name=f'pid_{self.pid}'
             )
 
+            logger.debug(f'Starting tasks: {process_tasks.keys()}')
+
             try:
                 for task in asyncio.as_completed(tasks):
                     # Should raise exceptions in user code
@@ -156,8 +161,14 @@ class DefaultBackendProcess(BackendProcess):
                 monitor.cancel()
                 with suppress(asyncio.CancelledError):
                     await monitor
+        
+                # This stop barrier prevents publishers/subscribers
+                # from getting destroyed before all other processes have 
+                # drained communication channels
+                logger.debug(f'Waiting at  stop barrier')
+                await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
 
-        logger.debug(f'Process {self.pid} Completed. All Done: {[task.get_name() for task in tasks]}')
+        logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
 
     async def monitor_termination(self, tasks: List[asyncio.Task]):
         while True:
@@ -165,8 +176,9 @@ class DefaultBackendProcess(BackendProcess):
             # await asyncio.get_running_loop().run_in_executor( None, self.term_ev.wait )
             await asyncio.sleep(0.5)
             if self.term_ev.is_set():
-                logger.debug(f'Process {self.pid} detected term_ev; cancelling all tasks')
+                logger.debug(f'Detected term_ev')
                 for task in tasks:
+                    logger.debug(f'Cancelling {task.get_name()}')
                     task.cancel()
 
     async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[Subscriber] = None) -> None:
@@ -228,6 +240,7 @@ class DefaultBackendProcess(BackendProcess):
         except Exception as e:
             logger.error(f'Exception in Task: {task_address}')
             logger.error(traceback.format_exc())
+            raise
 
         finally:
-            ...
+            logger.debug(f'Task Complete: {task_address}')
