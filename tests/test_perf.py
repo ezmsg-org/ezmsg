@@ -184,6 +184,7 @@ def run_many_dynamic_sizes(duration, buffers) -> None:
 
 
 if __name__ == "__main__":
+
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--many-dynamic-sizes", action="store_true",
