@@ -3,7 +3,6 @@ import logging
 
 from .shmserver import SHMServer
 from .graphserver import GraphServer
-from .graphclient import GraphClient
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import (
@@ -13,7 +12,7 @@ from .netprotocol import (
 )
 
 from types import TracebackType
-from typing import Optional, Tuple, Set, Type, Any
+from typing import Optional, Tuple, Set, Type, Any, Union
 
 logger = logging.getLogger('ezmsg')
 
@@ -21,7 +20,7 @@ logger = logging.getLogger('ezmsg')
 class GraphContext:
 
     _address: Address
-    _clients: Set[GraphClient]
+    _clients: Set[Union[Publisher,Subscriber]]
     _edges: Set[Tuple[str, str]]
 
     _shm_server: Optional[SHMServer]
