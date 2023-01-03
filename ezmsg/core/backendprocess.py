@@ -101,6 +101,7 @@ class DefaultBackendProcess(BackendProcess):
 
         except KeyboardInterrupt:
             logger.debug(f'Keyboard Interrupt')
+            self.term_ev.set()
 
         finally:
 

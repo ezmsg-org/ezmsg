@@ -137,6 +137,8 @@ class Command(enum.Enum):
     SHM_CREATE = enum.auto()
     SHM_ATTACH = enum.auto()
 
+    SHUTDOWN = enum.auto()
+
 
 def client_socket(host: str = '127.0.0.1', port: int = PUBLISHER_START_PORT, max_port: int = 65535) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
