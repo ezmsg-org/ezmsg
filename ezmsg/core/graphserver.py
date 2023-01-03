@@ -8,6 +8,7 @@ from multiprocessing.synchronize import Event as EventType
 
 from uuid import UUID, uuid1, getnode
 
+from .__version__ import __version__
 from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
@@ -17,7 +18,6 @@ from .netprotocol import (
     read_str,
     uint64_to_bytes,
     Command,
-    Response,
     GRAPHSERVER_ADDR,
     ClientInfo,
     SubscriberInfo,
@@ -28,6 +28,8 @@ from typing import Dict, List, Tuple, Optional
 
 logger = logging.getLogger('ezmsg')
 
+class VersionMismatch(Exception):
+    ...
 
 class GraphServer(Process):
     """ Pub-Sub Directed Acyclic Graph """
@@ -35,7 +37,7 @@ class GraphServer(Process):
     address: Address
     graph: DAG
     clients: Dict[UUID, ClientInfo]
-    _pending_clients: Dict[UUID, asyncio.Event]
+    _client_tasks: Dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
     _server_up: EventType
 
@@ -44,7 +46,7 @@ class GraphServer(Process):
         self.address = Address(*address)
         self.graph = DAG()
         self.clients = dict()
-        self._pending_clients = dict()
+        self._client_tasks = dict()
         self._server_up = Event()
         self._shutdown = Event()
 
@@ -54,10 +56,11 @@ class GraphServer(Process):
     @staticmethod
     async def open(address: AddressType = GRAPHSERVER_ADDR) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         reader, writer = await asyncio.open_connection(*address)
-        # TODO: Submit Protocol Version
         writer.write(uint64_to_bytes(getnode()))
         await writer.drain()
-        response = await reader.read(1)  # OK
+        server_version = await read_str(reader)
+        if server_version != __version__:
+            raise VersionMismatch(f"GraphServer@{server_version} != Client@{__version__}")
         return reader, writer
 
     @classmethod
@@ -107,64 +110,72 @@ class GraphServer(Process):
         super().start()
         self._server_up.wait()
 
+    async def handle_client(self, id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+
+        logger.debug(f'Graph Server: Client connected: {id}')
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req == Command.COMPLETE.value:
+                    self.clients[id].set_sync()
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f'Client {id} disconnected from GraphServer: {e}')
+        
+        finally:
+            self.clients[id].set_sync()
+            del self.clients[id]
+            writer.close()
+
+
     async def api(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             node = await read_int(reader)
-            # TODO: Receive Version info
-            writer.write(Response.OK.value)
+            writer.write(encode_str(__version__))
             await writer.drain()
 
             req = await reader.read(1)
 
-            # Empty bytes object == EOF
-            if len(req) == 0:
-                return
-
-            elif req == Command.CLIENT.value:
-                client_type = await reader.read(1)
-                id_str = await read_str(reader)
-                id = UUID(id_str)
-                pid = await read_int(reader)
-                topic = await read_str(reader)
-
-                if id not in self._pending_clients:
-                    logger.warn(f'Unknown GraphClient (id: {id}) Attempted Connection')
-                    return
-
-                info = ClientInfo(id, pid, topic, reader, writer)
-                if client_type == Command.SUBSCRIBE.value:
-                    info = SubscriberInfo(id, pid, topic, reader, writer)
-                elif client_type == Command.PUBLISH.value:
-                    info = PublisherInfo(id, pid, topic, reader, writer)
-
-                self.clients[id] = info
-
-                self._pending_clients[id].set()
-                logger.debug(f'Graph Server: Client connected: {id}')
+            # Empty bytes object means EOF; Client disconnected
+            # This happens frequently when future clients are just pinging
+            # GraphServer to check if server is up
+            if not req:
                 return
 
             # We only want to handle one command at a time
             async with self._command_lock:
 
-                if req == Command.NEW_CLIENT.value:
+                if req in [
+                    Command.SUBSCRIBE.value, 
+                    Command.PUBLISH.value 
+                ]:
 
                     id = uuid1(node=node)
-                    self._pending_clients[id] = asyncio.Event()
                     writer.write(encode_str(str(id)))
-                    await writer.drain()
 
-                    await self._pending_clients[id].wait()
-                    del self._pending_clients[id]
+                    pid = await read_int(reader)
+                    topic = await read_str(reader)
 
-                    client_info = self.clients[id]
-                    if isinstance(client_info, SubscriberInfo):
-                        await self._notify_subscriber(client_info)
+                    if req == Command.SUBSCRIBE.value:
+                        info = SubscriberInfo(id, writer, pid, topic)
+                        self.clients[id] = info
+                        self._client_tasks[id] = asyncio.create_task(self.handle_client(id, reader, writer))
+                        await self._notify_subscriber(info)
 
-                    elif isinstance(client_info, PublisherInfo):
-                        for sub in self._downstream_subs(client_info.topic):
+                    elif req == Command.PUBLISH.value:
+                        address = await Address.from_stream(reader)
+                        info = PublisherInfo(id, writer, pid, topic, address)
+                        self.clients[id] = info
+                        self._client_tasks[id] = asyncio.create_task(self.handle_client(id, reader, writer))
+                        for sub in self._downstream_subs(info.topic):
                             await self._notify_subscriber(sub)
 
-                    writer.write(Response.OK.value)
+                    writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req in [
@@ -178,7 +189,7 @@ class GraphServer(Process):
                         try:
                             self.graph.add_edge(from_topic, to_topic)
                         except CyclicException:
-                            writer.write(Response.CYCLIC.value)
+                            writer.write(Command.CYCLIC.value)
                             await writer.drain()
                             return
 
@@ -187,69 +198,63 @@ class GraphServer(Process):
 
                     for sub in self._downstream_subs(to_topic):
                         await self._notify_subscriber(sub)
-                    writer.write(Response.OK.value)
+
+                    writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req == Command.PAUSE.value:
                     for pub in self._publishers():
-                        pub.writer.write(Command.PAUSE.value)
-                        await pub.writer.drain()
-                        await pub.reader.read(1)  # OK
-                    writer.write(Response.OK.value)
+                        try:
+                            async with pub.sync_writer() as pub_writer:
+                                pub_writer.write(Command.PAUSE.value)
+                        except (ConnectionResetError, BrokenPipeError):
+                            continue
+
+                    writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req == Command.SYNC.value:
                     for pub in self._publishers():
-                        pub.writer.write(Command.SYNC.value)
-                        await pub.writer.drain()
-                        await pub.reader.read(1)  # OK
-                    writer.write(Response.OK.value)
+                        try:
+                            async with pub.sync_writer() as pub_writer:
+                                pub_writer.write(Command.SYNC.value)
+                        except (ConnectionResetError, BrokenPipeError):
+                            continue
+
+                    writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req == Command.RESUME.value:
                     for pub in self._publishers():
-                        pub.writer.write(Command.RESUME.value)
-                        await pub.writer.drain()
-                        await pub.reader.read(1)  # OK
-                    writer.write(Response.OK.value)
+                        try:
+                            async with pub.sync_writer() as pub_writer:
+                                pub_writer.write(Command.RESUME.value)
+                        except (ConnectionResetError, BrokenPipeError):
+                            continue
+
+                    writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 else:
                     logger.warn(f'GraphConnection API received unknown command {req}')
 
-        except ConnectionResetError:
-            logger.debug('GraphServer client connection reset')
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug('GraphServer connection fail mid-command')
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
-
         try:
-            # Check if sub is even still present
-            sub.writer.write(Command.UPDATE.value)
-            await sub.writer.drain()
-
             notification = ''
             for pub in self._upstream_pubs(sub.topic):
-                try:
-                    pub.writer.write(Command.ADDRESS.value)
-                    await pub.writer.drain()
-                    address = await Address.from_stream(pub.reader)
+                address = pub.address
+                if address != None:
                     notification += f'{str(pub.id)}@{address.host}:{address.port},'
-                except (ConnectionResetError, BrokenPipeError) as e:
-                    logger.debug(f'Publisher {pub.id} disconnected from GraphServer: {e}')
-                    del self.clients[pub.id]
 
-            sub.writer.write(encode_str(notification))
-            await sub.writer.drain()
-            result = await sub.reader.read(1)
+            async with sub.sync_writer() as writer:
+                writer.write(Command.UPDATE.value)
+                writer.write(encode_str(notification))
 
-            if len(result) == 0:
-                raise EOFError('EOF')
-            elif result != Response.OK.value:
-                raise ValueError(f'Unexpected response: {result}')
-
-        except (ValueError, EOFError, ConnectionResetError, BrokenPipeError) as e:
-            logger.debug(f'Subscriber {sub.id} disconnected from GraphServer: {e}')
-            del self.clients[sub.id]
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f'Failed to update Subscriber {sub.id}: {e}')
 
     def _publishers(self) -> List[PublisherInfo]:
         return [info for info in self.clients.values() if isinstance(info, PublisherInfo)]
@@ -275,7 +280,7 @@ class GraphServer(Process):
         writer.write(encode_str(to_topic))
         await writer.drain()
         response = await reader.read(1)
-        if response == Response.CYCLIC.value:
+        if response == Command.CYCLIC.value:
             raise CyclicException
 
     @staticmethod
@@ -284,25 +289,25 @@ class GraphServer(Process):
         writer.write(Command.DISCONNECT.value)
         writer.write(encode_str(from_topic))
         writer.write(encode_str(to_topic))
-        response = await reader.read(1)
+        response = await reader.read(1) # Complete
 
     @staticmethod
     async def pause(address: AddressType = GRAPHSERVER_ADDR) -> None:
         reader, writer = await GraphServer.open(address)
         writer.write(Command.PAUSE.value)
         await writer.drain()
-        response = await reader.read(1)
+        response = await reader.read(1) # Complete
 
     @staticmethod
     async def sync(timeout: Optional[float] = None, address: AddressType = GRAPHSERVER_ADDR) -> None:
         reader, writer = await GraphServer.open(address)
         writer.write(Command.SYNC.value)
         await writer.drain()
-        response = await asyncio.wait_for(reader.read(1), timeout=timeout)
+        response = await asyncio.wait_for(reader.read(1), timeout=timeout) # Complete
 
     @staticmethod
     async def resume(address: AddressType = GRAPHSERVER_ADDR) -> None:
         reader, writer = await GraphServer.open(address)
         writer.write(Command.RESUME.value)
         await writer.drain()
-        response = await reader.read(1)
+        response = await reader.read(1) # Complete
