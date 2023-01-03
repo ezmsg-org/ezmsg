@@ -198,9 +198,6 @@ class SHMServer(Process):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         asyncio.run(self._serve())
         signal.signal(signal.SIGINT, handler)
-
-    def shutdown( self ) -> None:
-        self._shutdown.set()
         
     async def _serve(self) -> None:
         loop = asyncio.get_running_loop()
@@ -248,13 +245,23 @@ class SHMServer(Process):
             logger.info(f'Started SHMServer. PID:{shm_server.pid}@{address.host}:{address.port}')
         return shm_server
 
+    @staticmethod
+    async def shutdown_server() -> None:
+        address = Address(*SHMSERVER_ADDR)
+        reader, writer = await asyncio.open_connection(*address)
+        writer.write(Command.SHUTDOWN.value)
+
+
     async def api(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
 
         cmd = await reader.read(1)
         if len(cmd) == 0:
             return
 
-        if cmd in [Command.SHM_ATTACH.value, Command.SHM_CREATE.value]:
+        if cmd == Command.SHUTDOWN.value:
+            self._shutdown.set()
+
+        elif cmd in [Command.SHM_ATTACH.value, Command.SHM_CREATE.value]:
 
             shm_name: Optional[str] = None
 

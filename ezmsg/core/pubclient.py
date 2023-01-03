@@ -42,7 +42,7 @@ class Publisher:
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
-    _unpaused: asyncio.Event
+    _running: asyncio.Event
     _msg_id: int
     _shm: SHMContext
     _cache: Cache
@@ -91,9 +91,9 @@ class Publisher:
         self._msg_id = 0
         self._subscribers = dict()
         self._subscriber_tasks = dict()
-        self._unpaused = asyncio.Event()
+        self._running = asyncio.Event()
         if not start_paused:
-            self._unpaused.set()
+            self._running.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
@@ -127,12 +127,10 @@ class Publisher:
                     self._initialized.set()
 
                 elif cmd == Command.PAUSE.value:
-                    self.set_paused(True)
-                    writer.write(Command.COMPLETE.value)
+                    self._running.clear()
 
                 elif cmd == Command.RESUME.value:
-                    self.set_paused(False)
-                    writer.write(Command.COMPLETE.value)
+                    self._running.set()
 
                 elif cmd == Command.SYNC.value:
                     await self.sync()
@@ -189,22 +187,17 @@ class Publisher:
             del self._subscribers[info.id]
 
     async def sync(self) -> None:
-        self.set_paused(True)
+        """ Pause and drain backpressure """
+        self._running.clear()
         await self._backpressure.sync()
-
-    def set_paused(self, paused: bool = True) -> None:
-        if paused:
-            self._unpaused.clear()
-        else:
-            self._unpaused.set()
 
     @property
     def running(self) -> bool:
-        return self._unpaused.is_set()
+        return self._running.is_set()
 
     async def broadcast(self, obj: Any) -> None:
 
-        await self._unpaused.wait()
+        await self._running.wait()
 
         buf_idx = self._msg_id % self._num_buffers
         msg_id_bytes = uint64_to_bytes(self._msg_id)

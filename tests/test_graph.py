@@ -252,6 +252,6 @@ if __name__ == '__main__':
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_multiprocess(loop))
+        loop.run_until_complete(test_graph(loop))
     finally:
         loop.close()
