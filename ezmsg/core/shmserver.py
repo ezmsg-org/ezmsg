@@ -20,7 +20,7 @@ from .netprotocol import (
     read_int
 )
 
-from typing import Generator, List, Dict, Set, Tuple, NamedTuple, Optional
+from typing import Generator, List, Dict, Set, NamedTuple, Optional
 
 logger = logging.getLogger('ezmsg')
 
