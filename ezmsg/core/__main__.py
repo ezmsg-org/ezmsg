@@ -7,9 +7,13 @@ from .graphserver import GraphServer
 from .shmserver import SHMServer
 from .netprotocol import (
     Address,
-    GRAPHSERVER_DEFAULT_PORT,
+    GRAPHSERVER_PORT_ENV,
+    GRAPHSERVER_PORT_DEFAULT,
+    GRAPHSERVER_PORT,
     GRAPHSERVER_ADDR,
     SHMSERVER_PORT_ENV,
+    SHMSERVER_PORT_DEFAULT,
+    SHMSERVER_PORT
 )
 
 from . import logger
@@ -76,10 +80,10 @@ async def main() -> None:
         'ezmsg.core',
         description = 'start and stop core ezmsg server processes',
         epilog = f"""
-            Change GraphServer and SHMServer ports with the {SHMSERVER_PORT_ENV} 
-            environment variable.  SHMServer will be hosted on {SHMSERVER_PORT_ENV} and 
-            GraphServer will be hosted on {SHMSERVER_PORT_ENV} + 1.  Publishers will be 
-            assigned available ports starting from {SHMSERVER_PORT_ENV} + 2.
+            Change server ports with environment variables.
+            GraphServer will be hosted on ${GRAPHSERVER_PORT_ENV} (default {GRAPHSERVER_PORT_DEFAULT}).  
+            SHMServer will be hosted on ${SHMSERVER_PORT_ENV} (default {SHMSERVER_PORT_DEFAULT}).
+            Publishers will be assigned available ports starting from {SHMSERVER_PORT_ENV}.
         """
     )
 
@@ -107,16 +111,19 @@ async def main() -> None:
         forward: bool
         hostname: str
 
+    logger.info(f'{GRAPHSERVER_PORT=}')
+    logger.info(f'{SHMSERVER_PORT=}')
+
     args = parser.parse_args(namespace=Args)
-    address = Address(args.hostname, GRAPHSERVER_DEFAULT_PORT)
+    address = Address(args.hostname, GRAPHSERVER_PORT)
 
     if args.shutdown:
         try:
             async with GraphServer.connection(address) as connection:
                 connection.shutdown()
-            logger.info(f'Shutdown GraphServer running at {address}')
-        except ConnectionRefusedError:
-            logger.info('GraphServer is not running, or is refusing connections')
+            logger.info(f'Shutdown GraphServer running @{address}')
+        except (ConnectionRefusedError, ConnectionResetError):
+            logger.info(f'GraphServer not running @{address}, or host is refusing connections')
             
         try:
             await SHMServer.shutdown_server()
