@@ -127,9 +127,9 @@ def run(
             if len(backend_processes) == 1:
                 logger.info('Running in single-process mode')
 
-                process_callable = backend_processes[0]
+                process = backend_processes[0]
                 loop.run_in_executor(None, wait_to_start)
-                process_callable.run()
+                process.run()
 
             else:
                 logger.info(f'Running {len(backend_processes)} processes.')

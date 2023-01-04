@@ -73,7 +73,10 @@ class GraphContext:
                         exc_v: Optional[Any],
                         exc_tb: Optional[TracebackType]
                         ) -> bool:
+        await self._exit_context()
+        return False
 
+    async def _exit_context(self) -> None:
         for client in self._clients:
             client.close()
 
@@ -87,21 +90,14 @@ class GraphContext:
             except (ConnectionRefusedError, BrokenPipeError) as e:
                 logger.warn(f'Could not remove edge from GraphServer: {e}')
 
-        await self._connection_context.__aexit__(exc_t, exc_v, exc_tb)
+        await self._connection_context.__aexit__(None, None, None)
         del self._connection
 
-        self._shutdown_graphserver_if_created()
-        self._shutdown_shmserver_if_created()
-
-        return False
-
-    def _shutdown_graphserver_if_created(self) -> None:
         if self._graph_server is not None:
             logger.info( 'Terminating GraphServer' )
             self._graph_server._shutdown.set()
             self._graph_server.join()
 
-    def _shutdown_shmserver_if_created(self) -> None:
         if self._shm_server is not None:
             logger.info( 'Terminating SHMServer' )
             self._shm_server._shutdown.set()
