@@ -7,7 +7,7 @@ from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
 
-from typing import Tuple, NamedTuple, Union, Optional, AsyncGenerator
+from typing import Tuple, NamedTuple, Union, AsyncGenerator
 
 VERSION = b'1'
 UINT64_SIZE = 8
