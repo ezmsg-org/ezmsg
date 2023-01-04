@@ -138,6 +138,7 @@ class GraphServer(Process):
 
                 if req == Command.SHUTDOWN.value:
                     self._shutdown.set()
+                    break
 
                 # We only want to handle one command at a time
                 async with self._command_lock:
@@ -189,7 +190,7 @@ class GraphServer(Process):
                             writer.write(Command.COMPLETE.value)
                         except CyclicException:
                             writer.write(Command.CYCLIC.value)
-                            
+
                         await writer.drain()
 
                     elif req == Command.SYNC.value:
@@ -212,7 +213,7 @@ class GraphServer(Process):
                             pub.writer.write(Command.RESUME.value)
 
                     else:
-                        logger.warn(f'GraphConnection API received unknown command {req}')
+                        logger.warn(f'GraphSerer received unknown command {req}')
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug('GraphServer connection fail mid-command')
