@@ -7,7 +7,7 @@ from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
 
-from typing import Tuple, NamedTuple, Union, AsyncGenerator
+from typing import Tuple, NamedTuple, Union, AsyncGenerator, Optional
 
 VERSION = b'1'
 UINT64_SIZE = 8
@@ -145,13 +145,3 @@ class Command(enum.Enum):
 
     SHUTDOWN = enum.auto()
 
-
-def client_socket(host: str = '127.0.0.1', port: int = PUBLISHER_START_PORT, max_port: int = 65535) -> socket.socket:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    while port <= max_port:
-        try:
-            sock.bind((host, port))
-            return sock
-        except OSError:
-            port += 1
-    raise IOError('Failed to bind a publisher socket; no free ports')

@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import socket
 
 from uuid import UUID
 from contextlib import suppress
@@ -19,12 +20,13 @@ from .netprotocol import (
     read_str,
     encode_str,
     Command,
-    client_socket,
     SubscriberInfo,
-    GRAPHSERVER_ADDR
+    GRAPHSERVER_ADDR,
+    DEFAULT_SHM_SIZE,
+    PUBLISHER_START_PORT,
 )
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger('ezmsg')
 
@@ -53,15 +55,25 @@ class Publisher:
         return Command.PUBLISH.value
 
     @classmethod
-    async def create(cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs) -> "Publisher":
+    async def create(
+        cls, 
+        topic: str, 
+        address: AddressType = GRAPHSERVER_ADDR, 
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        buf_size: int = DEFAULT_SHM_SIZE, 
+        **kwargs
+    ) -> "Publisher":
+
         reader, writer = await GraphServer.open(address)
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
         pub = cls(id, topic, **kwargs)
         writer.write(uint64_to_bytes(pub.pid))
         writer.write(encode_str(pub.topic))
-        pub._shm = await SHMContext.create(pub._num_buffers)
-        server = await asyncio.start_server(pub._on_connection, sock=client_socket())
+        pub._shm = await SHMContext.create(pub._num_buffers, buf_size)
+        
+        server = await asyncio.start_server(pub._on_connection, sock=_create_socket(host, port))
         pub._address = Address(*server.sockets[0].getsockname())
         pub._address.to_stream(writer)
         pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
@@ -83,7 +95,14 @@ class Publisher:
         await pub._initialized.wait()
         return pub
 
-    def __init__(self, id: UUID, topic: str, num_buffers: int = 32, start_paused: bool = False, force_tcp: bool = False) -> None:
+    def __init__(
+        self, 
+        id: UUID, 
+        topic: str, 
+        num_buffers: int = 32, 
+        start_paused: bool = False, 
+        force_tcp: bool = False
+    ) -> None:
         self.id = id
         self.pid = os.getpid()
         self.topic = topic
@@ -110,6 +129,7 @@ class Publisher:
         await self._shm.wait_closed()
         with suppress(asyncio.CancelledError):
             await self._graph_task
+        with suppress(asyncio.CancelledError):
             await self._connection_task
         for task in self._subscriber_tasks.values():
             with suppress(asyncio.CancelledError):
@@ -253,3 +273,29 @@ class Publisher:
                 continue
 
         self._msg_id += 1
+
+def _create_socket(
+    host: Optional[str] = None, 
+    port: Optional[int] = None, 
+    start_port: int = PUBLISHER_START_PORT, 
+    max_port: int = 65535
+) -> socket.socket:
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    if host is None:
+        host = '127.0.0.1'
+
+    if port is not None:
+        sock.bind((host,port))
+        return sock
+
+    port = start_port
+    while port <= max_port:
+        try:
+            sock.bind((host, port))
+            return sock
+        except OSError:
+            port += 1
+
+    raise IOError('Failed to bind socket; no free ports')
