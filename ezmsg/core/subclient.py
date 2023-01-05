@@ -76,8 +76,9 @@ class Subscriber:
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
             await self._graph_task
-            for task in self._publisher_tasks.values():
-                    await task
+        for task in self._publisher_tasks.values():
+            with suppress(asyncio.CancelledError):
+                await task
         for shm in self._shms.values():
             await shm.wait_closed()
 

@@ -98,6 +98,10 @@ def run(
     elif isinstance(component, Unit):
         processes = [[component]]
 
+    if len(processes) == 0:
+        logger.info('No processes to run.')
+        return
+
     term_ev = Event()
     start_barrier = Barrier(len(processes) + 1)
     stop_barrier = Barrier(len(processes))
