@@ -11,7 +11,7 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from contextlib import suppress
 
-from .stream import Stream
+from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
@@ -51,8 +51,9 @@ class BackendProcess(Process):
 
 class DefaultBackendProcess(BackendProcess):
 
-    pubs: Dict[str, Dict[str, Publisher]]
-    subs: Dict[str, Dict[str, Tuple[Subscriber, Set[asyncio.Queue]]]]
+    pubs: Dict[str, Publisher]
+    sub_queues: Dict[str, Set[asyncio.Queue]]
+    sub_tasks: Set["asyncio.Task[None]"]
 
     def run(self) -> None:
         if platform.system() == 'Windows':
@@ -61,6 +62,8 @@ class DefaultBackendProcess(BackendProcess):
             )
 
         self.pubs = dict()
+        self.sub_queues = dict()
+        self.sub_tasks = set()
 
         # Set context for all components and initialize them
         main_func: Optional[Tuple[Unit, Callable]] = None
@@ -116,58 +119,43 @@ class DefaultBackendProcess(BackendProcess):
 
         async with GraphContext(self.graph_address) as context:
 
-            process_tasks: Dict[str, Tuple[Unit, Callable, Optional[asyncio.Queue]]] = dict()
-
-            for unit in self.units:
-
-                self.pubs[unit.address] = dict()
-                self.subs[unit.address] = dict()
-                for task_name, task in unit.tasks.items():
-
-                    sub_queue: Optional[asyncio.Queue] = None
-                    if hasattr(task, SUBSCRIBES_ATTR):
-                        sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
-                        global_topic = unit.streams[sub_stream.name].address
-                        sub = self.subs[unit.address].get(global_topic, None)
-                        if sub is None:
-                            sub = await context.subscriber(unit.streams[sub_stream.name].address)
-                            queues = set()
-                        else:
-                            sub, queues = sub
-                        sub_queue = asyncio.Queue()
-                        queues.add(sub_queue)
-                        self.subs[unit.address][global_topic] = sub, queues
-
-                    if hasattr(task, PUBLISHES_ATTR):
-                        pub_streams: List[Stream] = getattr(task, PUBLISHES_ATTR, [])
-                        for stream in pub_streams:
-                            global_topic = unit.streams[stream.name].address
-                            pub = self.pubs[unit.address].get(global_topic, None)
-                            pub = await context.publisher(global_topic, start_paused=True) if pub is None else pub
-                            self.pubs[unit.address][global_topic] = pub
-
-                    process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub_queue)
-
-            for unit, topics in self.subs.items():
-                for topic, sub_queues in topics.items():
-                    sub, queues = sub_queues
-
-            async def subscribe_task(sub: Subscriber, queues: Set[asyncio.Queue]):
+            async def handle_subscriber(sub: Subscriber, queues: Set[asyncio.Queue]):
                 while True:
                     async with sub.recv_zero_copy() as msg:
                         for queue in queues:
                             queue.put_nowait(msg)
-                            await queue.join()
+                        await asyncio.gather(*[q.join() for q in queues])
+
+            process_tasks: Dict[str, Tuple[Unit, Callable, Optional[Tuple[str, asyncio.Queue]]]] = dict()
+
+            for unit in self.units:
+
+                for stream in unit.streams.values():
+                    if isinstance(stream, InputStream):
+                        sub = await context.subscriber(stream.address)
+                        self.sub_queues[stream.address] = set()
+                        handler = handle_subscriber(sub, self.sub_queues[stream.address])
+                        self.sub_tasks.add(asyncio.create_task(handler))
+                    elif isinstance(stream, OutputStream):
+                        self.pubs[stream.address] = await context.publisher(stream.address)
+
+                for task_name, task in unit.tasks.items():
+                    sub_info: Optional[Tuple[str, asyncio.Queue]] = None
+                    if hasattr(task, SUBSCRIBES_ATTR):
+                        sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
+                        sub_topic = unit.streams[sub_stream.name].address
+                        sub_queue = asyncio.Queue()
+                        self.sub_queues[sub_topic].add(sub_queue)
+                        sub_info = (sub_topic, sub_queue)
+                    process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub_info)
 
             await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
 
-            tasks: List[asyncio.Task[None]] = [
-                asyncio.create_task(
-                    self.task_wrapper(*task_args),
-                    name=f'{task_name}'
-                )
-                for task_name, task_args in process_tasks.items()
-            ]
+            tasks: List[asyncio.Task[None]] = []
+            for task_name, (unit, task, sub_info) in process_tasks.items():
+                task_coro = self.task_wrapper(unit, task, sub_info)
+                task_obj = asyncio.create_task(task_coro, name = task_name)
+                tasks.append(task_obj)
 
             monitor = asyncio.create_task(
                 self.monitor_termination(tasks),
@@ -182,9 +170,14 @@ class DefaultBackendProcess(BackendProcess):
                     await task
 
             finally:
-                monitor.cancel()
                 with suppress(asyncio.CancelledError):
+                    monitor.cancel()
                     await monitor
+
+                for task in self.sub_tasks:
+                    with suppress(asyncio.CancelledError):
+                        task.cancel()
+                        await task
         
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
@@ -205,7 +198,7 @@ class DefaultBackendProcess(BackendProcess):
                     logger.debug(f'Cancelling {task.get_name()}')
                     task.cancel()
 
-    async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[asyncio.Queue] = None) -> None:
+    async def task_wrapper(self, unit: Unit, task: Callable, sub_info: Optional[Tuple[str, asyncio.Queue]] = None) -> None:
 
         task_address = task.__name__
         cur_task = asyncio.current_task()
@@ -213,8 +206,8 @@ class DefaultBackendProcess(BackendProcess):
             task_address = cur_task.get_name()
 
         async def publish(stream: Stream, obj: Any):
-            if stream.address in self.pubs[unit.address]:
-                await self.pubs[unit.address][stream.address].broadcast(obj)
+            if stream.address in self.pubs:
+                await self.pubs[stream.address].broadcast(obj)
 
         async def perf_publish(stream: Stream, obj: Any):
             start = time.perf_counter()
@@ -230,7 +223,9 @@ class DefaultBackendProcess(BackendProcess):
                 await task(unit)
 
             # If we sub we need to be wrapped in a message loop
-            elif sub is not None:
+            elif sub_info is not None:
+
+                sub_topic, sub_queue = sub_info
 
                 async def handle_message(msg: Any) -> None:
                     if hasattr(task, PUBLISHES_ATTR):
@@ -240,11 +235,11 @@ class DefaultBackendProcess(BackendProcess):
                         await task(unit, msg)
 
                 while True:
-                    msg = await sub.get()
+                    msg = await sub_queue.get()
                     if getattr(task, ZERO_COPY_ATTR) == False:
                         msg = deepcopy(msg)
                     await handle_message(msg)
-                    sub.task_done()
+                    sub_queue.task_done()
 
             else:  # No subscriptions; only publications...
                 async for stream, obj in task(unit):
@@ -265,4 +260,7 @@ class DefaultBackendProcess(BackendProcess):
             raise
 
         finally:
+            if sub_info is not None:
+                sub_topic, sub_queue = sub_info
+                self.sub_queues[sub_topic].remove(sub_queue)
             logger.debug(f'Task Complete: {task_address}')
