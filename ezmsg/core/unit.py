@@ -1,6 +1,6 @@
 import time
 import functools
-from .stream import Stream
+from .stream import Stream, InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
@@ -95,7 +95,7 @@ class Unit(Component, metaclass=UnitMeta):
         pass
 
 
-def publisher(stream: Stream):
+def publisher(stream: OutputStream):
     """A decorator for a method that publishes to a stream in the task/messaging thread"""
 
     def pub_factory(func):
@@ -107,7 +107,7 @@ def publisher(stream: Stream):
     return pub_factory
 
 
-def subscriber(stream: Stream, zero_copy: bool = False):
+def subscriber(stream: InputStream, zero_copy: bool = False):
     """A decorator for a method that subscribes to a stream in the task/messaging thread"""
 
     def sub_factory(func):

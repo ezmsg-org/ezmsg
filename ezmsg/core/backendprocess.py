@@ -5,6 +5,7 @@ import traceback
 import threading
 import platform
 
+from copy import deepcopy
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
@@ -18,7 +19,7 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 
-from typing import List, Dict, Callable, Any, Tuple, Optional
+from typing import List, Dict, Callable, Any, Tuple, Optional, Set
 
 logger = logging.getLogger('ezmsg')
 
@@ -51,6 +52,7 @@ class BackendProcess(Process):
 class DefaultBackendProcess(BackendProcess):
 
     pubs: Dict[str, Dict[str, Publisher]]
+    subs: Dict[str, Dict[str, Tuple[Subscriber, Set[asyncio.Queue]]]]
 
     def run(self) -> None:
         if platform.system() == 'Windows':
@@ -114,17 +116,27 @@ class DefaultBackendProcess(BackendProcess):
 
         async with GraphContext(self.graph_address) as context:
 
-            process_tasks: Dict[str, Tuple[Unit, Callable, Optional[Subscriber]]] = dict()
+            process_tasks: Dict[str, Tuple[Unit, Callable, Optional[asyncio.Queue]]] = dict()
 
             for unit in self.units:
 
                 self.pubs[unit.address] = dict()
+                self.subs[unit.address] = dict()
                 for task_name, task in unit.tasks.items():
 
-                    sub: Optional[Subscriber] = None
+                    sub_queue: Optional[asyncio.Queue] = None
                     if hasattr(task, SUBSCRIBES_ATTR):
                         sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
-                        sub = await context.subscriber(unit.streams[sub_stream.name].address)
+                        global_topic = unit.streams[sub_stream.name].address
+                        sub = self.subs[unit.address].get(global_topic, None)
+                        if sub is None:
+                            sub = await context.subscriber(unit.streams[sub_stream.name].address)
+                            queues = set()
+                        else:
+                            sub, queues = sub
+                        sub_queue = asyncio.Queue()
+                        queues.add(sub_queue)
+                        self.subs[unit.address][global_topic] = sub, queues
 
                     if hasattr(task, PUBLISHES_ATTR):
                         pub_streams: List[Stream] = getattr(task, PUBLISHES_ATTR, [])
@@ -134,7 +146,18 @@ class DefaultBackendProcess(BackendProcess):
                             pub = await context.publisher(global_topic, start_paused=True) if pub is None else pub
                             self.pubs[unit.address][global_topic] = pub
 
-                    process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub)
+                    process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub_queue)
+
+            for unit, topics in self.subs.items():
+                for topic, sub_queues in topics.items():
+                    sub, queues = sub_queues
+
+            async def subscribe_task(sub: Subscriber, queues: Set[asyncio.Queue]):
+                while True:
+                    async with sub.recv_zero_copy() as msg:
+                        for queue in queues:
+                            queue.put_nowait(msg)
+                            await queue.join()
 
             await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
 
@@ -166,7 +189,7 @@ class DefaultBackendProcess(BackendProcess):
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
                 # drained communication channels
-                logger.debug(f'Waiting at  stop barrier')
+                logger.debug(f'Waiting at stop barrier')
                 await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
 
         logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
@@ -182,7 +205,7 @@ class DefaultBackendProcess(BackendProcess):
                     logger.debug(f'Cancelling {task.get_name()}')
                     task.cancel()
 
-    async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[Subscriber] = None) -> None:
+    async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[asyncio.Queue] = None) -> None:
 
         task_address = task.__name__
         cur_task = asyncio.current_task()
@@ -217,13 +240,11 @@ class DefaultBackendProcess(BackendProcess):
                         await task(unit, msg)
 
                 while True:
+                    msg = await sub.get()
                     if getattr(task, ZERO_COPY_ATTR) == False:
-                        msg = await sub.recv()
-                        await handle_message(msg)
-                    else:
-                        async with sub.recv_zero_copy() as msg:
-                            await handle_message(msg)
-                        del msg
+                        msg = deepcopy(msg)
+                    await handle_message(msg)
+                    sub.task_done()
 
             else:  # No subscriptions; only publications...
                 async for stream, obj in task(unit):
