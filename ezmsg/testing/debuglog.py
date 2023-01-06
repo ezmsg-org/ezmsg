@@ -1,5 +1,3 @@
-import logging
-
 import ezmsg.core as ez
 
 from typing import AsyncGenerator, Optional, Any
@@ -10,20 +8,12 @@ class DebugLogSettings(ez.Settings):
     max_length: Optional[int] = 400  # No limit if `None``
 
 
-class DebugLogState(ez.State):
-    logger: logging.Logger
-
-
 class DebugLog(ez.Unit):
 
     SETTINGS: DebugLogSettings
-    STATE: DebugLogState
 
     INPUT = ez.InputStream(Any)
     OUTPUT = ez.OutputStream(Any)
-
-    def initialize(self) -> None:
-        self.STATE.logger = logging.getLogger('ezmsg')
 
     @ez.subscriber(INPUT, zero_copy=True)
     @ez.publisher(OUTPUT)
@@ -33,5 +23,5 @@ class DebugLog(ez.Unit):
             if len(logstr) > self.SETTINGS.max_length:
                 logstr = logstr[:self.SETTINGS.max_length]
                 logstr = logstr + ' ... [truncated]'
-        self.STATE.logger.info(logstr)
+        ez.logger.info(logstr)
         yield self.OUTPUT, msg

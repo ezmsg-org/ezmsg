@@ -19,6 +19,7 @@ __all__ = [
     "NormalTermination",
     "GraphServer",
     "GraphContext",
+    "run_command",
 
     # All following are deprecated
     "System",
@@ -38,6 +39,7 @@ from .backend import run
 from .backendprocess import Complete, NormalTermination
 from .graphserver import GraphServer
 from .graphcontext import GraphContext
+from .command import run_command
 
 # Following imports are deprecated
 from .backend import run_system

@@ -5,12 +5,15 @@ import traceback
 import threading
 import platform
 
+from collections import defaultdict
+from functools import wraps
+from copy import deepcopy
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from contextlib import suppress
 
-from .stream import Stream
+from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
@@ -18,7 +21,7 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 
-from typing import List, Dict, Callable, Any, Tuple, Optional
+from typing import List, Dict, Callable, Any, Tuple, Optional, Set, Coroutine, DefaultDict
 
 logger = logging.getLogger('ezmsg')
 
@@ -50,7 +53,7 @@ class BackendProcess(Process):
 
 class DefaultBackendProcess(BackendProcess):
 
-    pubs: Dict[str, Dict[str, Publisher]]
+    pubs: Dict[str, Publisher]
 
     def run(self) -> None:
         if platform.system() == 'Windows':
@@ -101,6 +104,7 @@ class DefaultBackendProcess(BackendProcess):
 
         except KeyboardInterrupt:
             logger.debug(f'Keyboard Interrupt')
+            self.term_ev.set()
 
         finally:
 
@@ -113,86 +117,90 @@ class DefaultBackendProcess(BackendProcess):
 
         async with GraphContext(self.graph_address) as context:
 
-            process_tasks: Dict[str, Tuple[Unit, Callable, Optional[Subscriber]]] = dict()
+            async def handle_subscriber(sub: Subscriber, callables: Set[Callable[..., Coroutine[Any, Any, None]]]):
+                while True:
+                    if not callables:
+                        break
+                    async with sub.recv_zero_copy() as msg:
+                        try:
+                            for callable in list(callables):
+                                try:
+                                    await callable(msg)
+                                except (Complete, NormalTermination):
+                                    callables.remove(callable)
+                        finally:
+                            del msg
+
+            coros: Set[Coroutine[Any, Any, None]] = set()
 
             for unit in self.units:
 
-                self.pubs[unit.address] = dict()
-                for task_name, task in unit.tasks.items():
-
-                    sub: Optional[Subscriber] = None
+                sub_callables: DefaultDict[str, Set[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(set)
+                for task in unit.tasks.values():
+                    task_callable = self.task_wrapper(unit, task)
                     if hasattr(task, SUBSCRIBES_ATTR):
                         sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
-                        sub = await context.subscriber(unit.streams[sub_stream.name].address)
+                        sub_topic = unit.streams[sub_stream.name].address
+                        sub_callables[sub_topic].add(task_callable)
+                    else:
+                        coros.add(task_callable())
 
-                    if hasattr(task, PUBLISHES_ATTR):
-                        pub_streams: List[Stream] = getattr(task, PUBLISHES_ATTR, [])
-                        for stream in pub_streams:
-                            global_topic = unit.streams[stream.name].address
-                            pub = self.pubs[unit.address].get(global_topic, None)
-                            pub = await context.publisher(global_topic, start_paused=True) if pub is None else pub
-                            self.pubs[unit.address][global_topic] = pub
+                for stream in unit.streams.values():
 
-                    process_tasks[f'{unit.address}:{task_name}'] = (unit, task, sub)
+                    if isinstance(stream, InputStream):
+                        sub = await context.subscriber(stream.address)
+                        coros.add(handle_subscriber(sub, sub_callables[stream.address]))
+
+                    elif isinstance(stream, OutputStream):
+                        self.pubs[stream.address] = await context.publisher(
+                            stream.address,
+                            host = stream.host,
+                            port = stream.port,
+                            num_buffers = stream.num_buffers,
+                            buf_size = stream.buf_size,
+                            start_paused = True, 
+                            force_tcp = stream.force_tcp
+                        )
 
             await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
 
-            tasks: List[asyncio.Task[None]] = [
-                asyncio.create_task(
-                    self.task_wrapper(*task_args),
-                    name=f'{task_name}'
-                )
-                for task_name, task_args in process_tasks.items()
-            ]
+            tasks = [asyncio.create_task(coro) for coro in coros]
 
-            monitor = asyncio.create_task(
-                self.monitor_termination(tasks),
-                name=f'pid_{self.pid}'
-            )
-
-            logger.debug(f'Starting tasks: {process_tasks.keys()}')
+            loop = asyncio.get_running_loop()
+            monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
 
             try:
                 for task in asyncio.as_completed(tasks):
-                    # Should raise exceptions in user code
-                    await task
+                    with suppress(Complete, NormalTermination, asyncio.CancelledError):
+                        await task
 
             finally:
-                monitor.cancel()
-                with suppress(asyncio.CancelledError):
-                    await monitor
-        
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
                 # drained communication channels
-                logger.debug(f'Waiting at  stop barrier')
-                await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
+                logger.debug(f'Waiting at stop barrier')
+                await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
+                self.term_ev.set()
+                await monitor
 
         logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
 
-    async def monitor_termination(self, tasks: List[asyncio.Task]):
-        while True:
-            # will never wake, even for cancellation!! ( :S -Griff )
-            # await asyncio.get_running_loop().run_in_executor( None, self.term_ev.wait )
-            await asyncio.sleep(0.5)
-            if self.term_ev.is_set():
-                logger.debug(f'Detected term_ev')
-                for task in tasks:
-                    logger.debug(f'Cancelling {task.get_name()}')
-                    task.cancel()
+    def monitor_termination(self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop):
+        self.term_ev.wait()
+        logger.debug(f'Detected term_ev')
+        for task in tasks:
+            logger.debug(f'Cancelling {task.get_name()}')
+            loop.call_soon_threadsafe(task.cancel)
 
-    async def task_wrapper(self, unit: Unit, task: Callable, sub: Optional[Subscriber] = None) -> None:
+    def task_wrapper(self, unit: Unit, task: Callable) -> Callable[..., Coroutine[Any, Any, None]]:
 
         task_address = task.__name__
-        cur_task = asyncio.current_task()
-        if cur_task is not None:
-            task_address = cur_task.get_name()
 
-        async def publish(stream: Stream, obj: Any):
-            if stream.address in self.pubs[unit.address]:
-                await self.pubs[unit.address][stream.address].broadcast(obj)
+        async def publish(stream: Stream, obj: Any) -> None:
+            if stream.address in self.pubs:
+                await self.pubs[stream.address].broadcast(obj)
 
-        async def perf_publish(stream: Stream, obj: Any):
+        async def perf_publish(stream: Stream, obj: Any) -> None:
             start = time.perf_counter()
             await publish(stream, obj)
             stop = time.perf_counter()
@@ -200,47 +208,41 @@ class DefaultBackendProcess(BackendProcess):
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
 
-        try:
-            # If we don't sub or pub anything, we are a simple task
-            if (not hasattr(task, SUBSCRIBES_ATTR) and not hasattr(task, PUBLISHES_ATTR)):
-                await task(unit)
+        @wraps(task)
+        async def wrapped_task(msg: Any = None) -> None:
 
-            # If we sub we need to be wrapped in a message loop
-            elif sub is not None:
+            try:
+                # If we don't sub or pub anything, we are a simple task
+                if (not hasattr(task, SUBSCRIBES_ATTR) and not hasattr(task, PUBLISHES_ATTR)):
+                    await task(unit)
 
-                async def handle_message(msg: Any) -> None:
+                # No subscriptions; only publications...
+                elif not hasattr(task, SUBSCRIBES_ATTR):
+                    async for stream, obj in task(unit):
+                        await pub_fn(stream, obj)
+
+                # Subscribers need to be called with a message
+                else:
+                    if getattr(task, ZERO_COPY_ATTR) == False:
+                        msg = deepcopy(msg)
                     if hasattr(task, PUBLISHES_ATTR):
                         async for stream, obj in task(unit, msg):
                             await pub_fn(stream, obj)
                     else:
                         await task(unit, msg)
 
-                while True:
-                    if getattr(task, ZERO_COPY_ATTR) == False:
-                        msg = await sub.recv()
-                        await handle_message(msg)
-                    else:
-                        async with sub.recv_zero_copy() as msg:
-                            await handle_message(msg)
-                        del msg
+            except Complete:
+                logger.info(f'{task_address} Complete')
+                raise
 
-            else:  # No subscriptions; only publications...
-                async for stream, obj in task(unit):
-                    await pub_fn(stream, obj)
+            except NormalTermination:
+                logger.info(f'Normal Termination raised in {task_address}')
+                self.term_ev.set()
+                raise
 
-        except Complete:
-            logger.info(f'{task_address} Complete')
+            except Exception as e:
+                logger.error(f'Exception in Task: {task_address}')
+                logger.error(traceback.format_exc())
+                raise
 
-        except NormalTermination:
-            logging.getLogger(__name__).info(
-                f'Normal Termination raised in {task_address}'
-            )
-            self.term_ev.set()
-
-        except Exception as e:
-            logger.error(f'Exception in Task: {task_address}')
-            logger.error(traceback.format_exc())
-            raise
-
-        finally:
-            logger.debug(f'Task Complete: {task_address}')
+        return wrapped_task
