@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Terminator -- Arnold Schwarzenegger
 
 class TerminatorSettings(ez.Settings):
-    term_after: float = 3.0  # sec
+    term_after: float = 1.0  # sec
 
 
 class Terminator(ez.Unit):
