@@ -1,28 +1,33 @@
 import asyncio
 import enum
-import socket
 import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
 
-from typing import Tuple, NamedTuple, Union, Optional, AsyncGenerator
+from typing import Tuple, NamedTuple, Union, AsyncGenerator, Optional
 
 VERSION = b'1'
 UINT64_SIZE = 8
 DEFAULT_SHM_SIZE = 2 ** 16
 BYTEORDER = 'little'
 
+GRAPHSERVER_PORT_ENV = 'EZMSG_GRAPHSERVER_PORT'
+GRAPHSERVER_PORT_DEFAULT = 25978
+GRAPHSERVER_PORT = int(os.getenv(GRAPHSERVER_PORT_ENV, GRAPHSERVER_PORT_DEFAULT))
+GRAPHSERVER_ADDR = ('127.0.0.1', GRAPHSERVER_PORT)
+
 # SHMServer must reside on localhost because it manages shared memory
 # for local processes.  GraphServer may live elsewhere
-SHMSERVER_PORT_ENV = 'EZMSG_PORT'
-SHMSERVER_DEFAULT_PORT = 25978
-SHMSERVER_PORT = int(os.getenv(SHMSERVER_PORT_ENV, SHMSERVER_DEFAULT_PORT))
+SHMSERVER_PORT_ENV = 'EZMSG_SHMSERVER_PORT'
+SHMSERVER_PORT_DEFAULT = 25979
+SHMSERVER_PORT = int(os.getenv(SHMSERVER_PORT_ENV, SHMSERVER_PORT_DEFAULT))
 SHMSERVER_ADDR = ('127.0.0.1', SHMSERVER_PORT)
-GRAPHSERVER_DEFAULT_PORT = SHMSERVER_PORT + 1
-PUBLISHER_START_PORT = SHMSERVER_PORT + 2
-GRAPHSERVER_ADDR = ('127.0.0.1', GRAPHSERVER_DEFAULT_PORT)
+
+PUBLISHER_START_PORT_ENV = 'EZMSG_PUBLISHER_PORT_START'
+PUBLISHER_START_PORT_DEFAULT = 25980
+PUBLISHER_START_PORT = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
 
 
 class Address(NamedTuple):
@@ -137,13 +142,5 @@ class Command(enum.Enum):
     SHM_CREATE = enum.auto()
     SHM_ATTACH = enum.auto()
 
+    SHUTDOWN = enum.auto()
 
-def client_socket(host: str = '127.0.0.1', port: int = PUBLISHER_START_PORT, max_port: int = 65535) -> socket.socket:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    while port <= max_port:
-        try:
-            sock.bind((host, port))
-            return sock
-        except OSError:
-            port += 1
-    raise IOError('Failed to bind a publisher socket; no free ports')

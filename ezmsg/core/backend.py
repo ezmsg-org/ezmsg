@@ -97,6 +97,10 @@ def run(
     elif isinstance(component, Unit):
         processes = [[component]]
 
+    if len(processes) == 0:
+        logger.info('No processes to run.')
+        return
+
     term_ev = Event()
     start_barrier = Barrier(len(processes) + 1)
     stop_barrier = Barrier(len(processes))
@@ -119,39 +123,49 @@ def run(
             for edge in graph_connections:
                 await context.connect(*edge)
 
-            for proc in backend_processes:
-                proc.start()
+            def wait_to_start() -> None:
+                start_barrier.wait()
+                context.resume()
 
-            def graceful_shutdown(signum: int, frame: Optional[FrameType]) -> None:
-                if not term_ev.is_set():
-                    logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-                    term_ev.set()
-                else:
-                    logger.warning('Interrupt intercepted, force quitting')
-                    start_barrier.abort()
-                    stop_barrier.abort()
+            if len(backend_processes) == 1:
+                logger.info('Running in single-process mode')
+
+                process = backend_processes[0]
+                loop.run_in_executor(None, wait_to_start)
+                process.run()
+
+            else:
+                logger.info(f'Running {len(backend_processes)} processes.')
+                for proc in backend_processes:
+                    proc.start()
+
+                def graceful_shutdown(signum: int, frame: Optional[FrameType]) -> None:
+                    if not term_ev.is_set():
+                        logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+                        term_ev.set()
+                    else:
+                        logger.warning('Interrupt intercepted, force quitting')
+                        start_barrier.abort()
+                        stop_barrier.abort()
+                        for proc in backend_processes:
+                            proc.terminate()
+
+                signal.signal(signal.SIGINT, graceful_shutdown)
+
+                try:
+                    loop.run_in_executor(None, wait_to_start)
                     for proc in backend_processes:
-                        proc.terminate()
+                        await loop.run_in_executor(None, proc.join)
 
-            signal.signal(signal.SIGINT, graceful_shutdown)
+                except BrokenBarrierError:
+                    logger.error('Could not initialize system, exiting.')
+                    return
 
-            try:
-                await loop.run_in_executor(None, start_barrier.wait)
-            except BrokenBarrierError:
-                logger.error('Could not initialize system, exiting.')
-                return
-
-            try:
-                await context.resume()
-
-                for proc in backend_processes:
-                    await loop.run_in_executor(None, proc.join)
-                
-            finally:
-                for proc in backend_processes:
-                    if proc.is_alive():
-                        logger.warning(f'Process {proc.pid} did not complete; terminating.')
-                        proc.terminate()
+                finally:
+                    for proc in backend_processes:
+                        if proc.is_alive():
+                            logger.warning(f'Process {proc.pid} did not complete; terminating.')
+                            proc.terminate()
 
     main_task = loop.create_task(main_process())
 

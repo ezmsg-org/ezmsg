@@ -41,12 +41,3 @@ See the extension directory for more details
 * `ezmsg-zmq` -- ZeroMQ pub and sub nodes for `ezmsg` graphs
 * ... More to come!
 
-Every extension has its own set of additional dependencies.  Once ezmsg is installed, these can be installed manually with:
-``` bash
-(env) $ pip install -e extensions/[extension]
-```
-
-Once `ezmsg` has been packaged and is available on PyPI (which it isn't quite yet) you may have luck batch installing all extensions with:
-``` bash
-(env) $ pip install ".[all_ext]"
-```

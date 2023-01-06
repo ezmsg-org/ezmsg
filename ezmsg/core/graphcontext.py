@@ -25,6 +25,7 @@ class GraphContext:
 
     _shm_server: Optional[SHMServer]
     _graph_server: Optional[GraphServer]
+    _connection: GraphServer.Connection
 
     def __init__(self, address: AddressType = GRAPHSERVER_ADDR) -> None:
         self._address = Address(*address)
@@ -44,25 +45,27 @@ class GraphContext:
         return sub
 
     async def connect(self, from_topic: str, to_topic: str) -> None:
-        await GraphServer.connect(from_topic, to_topic, self._address)
+        await self._connection.connect(from_topic, to_topic)
         self._edges.add((from_topic, to_topic))
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
-        await GraphServer.disconnect(from_topic, to_topic, self._address)
+        await self._connection.disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
-    async def pause(self) -> None:
-        await GraphServer.pause(self._address)
-
     async def sync(self, timeout: Optional[float] = None) -> None:
-        await GraphServer.sync(timeout, self._address)
+        await self._connection.sync(timeout)
 
-    async def resume(self) -> None:
-        await GraphServer.resume(self._address)
+    def pause(self) -> None:
+        self._connection.pause()
+
+    def resume(self) -> None:
+        self._connection.resume()
 
     async def __aenter__(self):
         self._shm_server = await SHMServer.ensure_running()
         self._graph_server = await GraphServer.ensure_running(self._address)
+        self._connection_context = GraphServer.connection(self._address)
+        self._connection = await self._connection_context.__aenter__()
         return self
 
     async def __aexit__(self,
@@ -70,6 +73,10 @@ class GraphContext:
                         exc_v: Optional[Any],
                         exc_tb: Optional[TracebackType]
                         ) -> bool:
+        await self._exit_context()
+        return False
+
+    async def _exit_context(self) -> None:
         for client in self._clients:
             client.close()
 
@@ -79,18 +86,20 @@ class GraphContext:
 
         for edge in self._edges:
             try:
-                await GraphServer.disconnect(*edge, address=self._address)
+                await self._connection.disconnect(*edge)
             except (ConnectionRefusedError, BrokenPipeError) as e:
                 logger.warn(f'Could not remove edge from GraphServer: {e}')
 
+        await self._connection_context.__aexit__(None, None, None)
+        del self._connection
+
         if self._graph_server is not None:
-            logger.debug( 'Terminating GraphServer' )
-            self._graph_server.shutdown()
+            logger.info( 'Terminating GraphServer' )
+            self._graph_server._shutdown.set()
             self._graph_server.join()
 
         if self._shm_server is not None:
-            logger.debug( 'Terminating SHMServer' )
-            self._shm_server.shutdown()
+            logger.info( 'Terminating SHMServer' )
+            self._shm_server._shutdown.set()
             self._shm_server.join()
-
-        return False
+    
