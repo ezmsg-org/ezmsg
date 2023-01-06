@@ -21,7 +21,6 @@ class OutputStream(Stream):
     port: Optional[int]
     num_buffers: int
     buf_size: int
-    pub_address: Optional[AddressType]
     force_tcp: bool
 
     def __init__(
