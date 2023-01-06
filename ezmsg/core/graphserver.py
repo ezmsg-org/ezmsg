@@ -213,7 +213,7 @@ class GraphServer(Process):
                             pub.writer.write(Command.RESUME.value)
 
                     else:
-                        logger.warn(f'GraphSerer received unknown command {req}')
+                        logger.warn(f'GraphServer received unknown command {req}')
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug('GraphServer connection fail mid-command')

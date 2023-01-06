@@ -1,6 +1,6 @@
 from typing import Type, Optional
 
-from .netprotocol import AddressType, DEFAULT_SHM_SIZE
+from .netprotocol import DEFAULT_SHM_SIZE
 from .addressable import Addressable
 
 
