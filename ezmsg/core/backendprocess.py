@@ -122,14 +122,14 @@ class DefaultBackendProcess(BackendProcess):
                     if not callables:
                         break
                     async with sub.recv_zero_copy() as msg:
-                        for callable in list(callables):
-                            try:
-                                await callable(msg)
-                            except (Complete, NormalTermination, asyncio.CancelledError):
-                                callables.remove(callable)
-                            except:
-                                callables.remove(callable)
-                                raise
+                        try:
+                            for callable in list(callables):
+                                try:
+                                    await callable(msg)
+                                except (Complete, NormalTermination):
+                                    callables.remove(callable)
+                        finally:
+                            del msg
 
             coros: Set[Coroutine[Any, Any, None]] = set()
 
@@ -166,55 +166,41 @@ class DefaultBackendProcess(BackendProcess):
 
             tasks = [asyncio.create_task(coro) for coro in coros]
 
-            monitor = asyncio.create_task(
-                self.monitor_termination(tasks),
-                name=f'pid_{self.pid}'
-            )
+            loop = asyncio.get_running_loop()
+            monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
 
             try:
                 for task in asyncio.as_completed(tasks):
-                    # Should raise exceptions in user code
-                    with suppress(Complete, NormalTermination):
+                    with suppress(Complete, NormalTermination, asyncio.CancelledError):
                         await task
 
             finally:
-                with suppress(asyncio.CancelledError):
-                    monitor.cancel()
-                    await monitor
-
-                # for task in tasks:
-                #     with suppress(asyncio.CancelledError):
-                #         task.cancel()
-                #         await task
-        
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
                 # drained communication channels
                 logger.debug(f'Waiting at stop barrier')
-                await asyncio.get_running_loop().run_in_executor( None, self.stop_barrier.wait )
+                await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
+                self.term_ev.set()
+                await monitor
 
         logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
 
-    async def monitor_termination(self, tasks: List[asyncio.Task]):
-        while True:
-            # will never wake, even for cancellation!! ( :S -Griff )
-            # await asyncio.get_running_loop().run_in_executor( None, self.term_ev.wait )
-            await asyncio.sleep(0.5)
-            if self.term_ev.is_set():
-                logger.debug(f'Detected term_ev')
-                for task in tasks:
-                    logger.debug(f'Cancelling {task.get_name()}')
-                    task.cancel()
+    def monitor_termination(self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop):
+        self.term_ev.wait()
+        logger.debug(f'Detected term_ev')
+        for task in tasks:
+            logger.debug(f'Cancelling {task.get_name()}')
+            loop.call_soon_threadsafe(task.cancel)
 
     def task_wrapper(self, unit: Unit, task: Callable) -> Callable[..., Coroutine[Any, Any, None]]:
 
         task_address = task.__name__
 
-        async def publish(stream: Stream, obj: Any):
+        async def publish(stream: Stream, obj: Any) -> None:
             if stream.address in self.pubs:
                 await self.pubs[stream.address].broadcast(obj)
 
-        async def perf_publish(stream: Stream, obj: Any):
+        async def perf_publish(stream: Stream, obj: Any) -> None:
             start = time.perf_counter()
             await publish(stream, obj)
             stop = time.perf_counter()
@@ -223,7 +209,7 @@ class DefaultBackendProcess(BackendProcess):
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
 
         @wraps(task)
-        async def wrapped_task( msg: Any = None ) -> None:
+        async def wrapped_task(msg: Any = None) -> None:
 
             try:
                 # If we don't sub or pub anything, we are a simple task
@@ -250,9 +236,7 @@ class DefaultBackendProcess(BackendProcess):
                 raise
 
             except NormalTermination:
-                logger.info(
-                    f'Normal Termination raised in {task_address}'
-                )
+                logger.info(f'Normal Termination raised in {task_address}')
                 self.term_ev.set()
                 raise
 
