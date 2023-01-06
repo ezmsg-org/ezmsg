@@ -1,6 +1,5 @@
 import asyncio
 import enum
-import socket
 import os
 
 from uuid import UUID
