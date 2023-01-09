@@ -102,7 +102,7 @@ def run(
         return
 
     term_ev = Event()
-    start_barrier = Barrier(len(processes) + 1)
+    start_barrier = Barrier(len(processes))
     stop_barrier = Barrier(len(processes))
 
     backend_processes = [
@@ -115,24 +115,19 @@ def run(
     async def main_process() -> None:
 
         async with GraphContext(graph_address) as context:
-            try:
-                await context.sync(timeout=5.0)
-            except asyncio.exceptions.TimeoutError:
-                raise Exception('Could not synchronize graph (is there a zombie graph running?)')
 
             for edge in graph_connections:
                 await context.connect(*edge)
 
-            def wait_to_start() -> None:
-                start_barrier.wait()
-                context.resume()
-
             if len(backend_processes) == 1:
                 logger.info('Running in single-process mode')
 
-                process = backend_processes[0]
-                loop.run_in_executor(None, wait_to_start)
-                process.run()
+                try:
+                    backend_processes[0].run()
+                except BrokenBarrierError:
+                    logger.error('Could not initialize system, exiting.')
+                finally:
+                    ...
 
             else:
                 logger.info(f'Running {len(backend_processes)} processes.')
@@ -153,13 +148,13 @@ def run(
                 signal.signal(signal.SIGINT, graceful_shutdown)
 
                 try:
-                    loop.run_in_executor(None, wait_to_start)
                     for proc in backend_processes:
                         await loop.run_in_executor(None, proc.join)
+                    
+                    logger.info('All processes exited normally')
 
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
-                    return
 
                 finally:
                     for proc in backend_processes:

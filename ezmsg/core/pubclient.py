@@ -215,6 +215,12 @@ class Publisher:
     def running(self) -> bool:
         return self._running.is_set()
 
+    def pause(self) -> None:
+        self._running.clear()
+
+    def resume(self) -> None:
+        self._running.set()
+
     async def broadcast(self, obj: Any) -> None:
 
         await self._running.wait()
