@@ -11,9 +11,14 @@ class Stream(Addressable):
         super().__init__()
         self.msg_type = msg_type
 
+    def __repr__(self) -> str:
+        return f'Stream:{self.address}[{self.msg_type}]'
+
 
 class InputStream(Stream):
-    ...
+    
+    def __repr__(self) -> str:
+        return f'Input{super().__repr__()}()'
 
 
 class OutputStream(Stream):
@@ -38,3 +43,7 @@ class OutputStream(Stream):
         self.num_buffers = num_buffers
         self.buf_size = buf_size
         self.force_tcp = force_tcp
+
+    def __repr__(self) -> str:
+        preamble = f'Output{super().__repr__()}'
+        return f'{preamble}({self.num_buffers=}, {self.force_tcp=})'

@@ -131,7 +131,7 @@ class DefaultBackendProcess(BackendProcess):
                         finally:
                             del msg
 
-            coros: Set[Coroutine[Any, Any, None]] = set()
+            coros: Dict[str, Coroutine[Any, Any, None]] = dict()
 
             for unit in self.units:
 
@@ -143,15 +143,19 @@ class DefaultBackendProcess(BackendProcess):
                         sub_topic = unit.streams[sub_stream.name].address
                         sub_callables[sub_topic].add(task_callable)
                     else:
-                        coros.add(task_callable())
+                        task_name = f'TASK|{unit.address}:{task.__name__}'
+                        coros[task_name]=task_callable()
 
                 for stream in unit.streams.values():
 
                     if isinstance(stream, InputStream):
+                        logger.debug(f'Creating Subscriber from {stream}')
                         sub = await context.subscriber(stream.address)
-                        coros.add(handle_subscriber(sub, sub_callables[stream.address]))
+                        task_name = f'SUBSCRIBER|{stream.address}'
+                        coros[task_name] = handle_subscriber(sub, sub_callables[stream.address])
 
                     elif isinstance(stream, OutputStream):
+                        logger.debug(f'Creating Publisher from {stream}')
                         self.pubs[stream.address] = await context.publisher(
                             stream.address,
                             host = stream.host,
@@ -164,7 +168,10 @@ class DefaultBackendProcess(BackendProcess):
 
             await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
 
-            tasks = [asyncio.create_task(coro) for coro in coros]
+            for pub in self.pubs.values():
+                pub.resume()
+
+            tasks = [asyncio.create_task(coro, name = name) for name, coro in coros.items()]
 
             loop = asyncio.get_running_loop()
             monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
@@ -180,10 +187,12 @@ class DefaultBackendProcess(BackendProcess):
                 # drained communication channels
                 logger.debug(f'Waiting at stop barrier')
                 await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
+
+                logger.debug(f'Terminating monitor')
                 self.term_ev.set()
                 await monitor
 
-        logger.debug(f'Completed. All Done: {[task.get_name() for task in tasks]}')
+        logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
     def monitor_termination(self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop):
         self.term_ev.wait()
@@ -194,7 +203,7 @@ class DefaultBackendProcess(BackendProcess):
 
     def task_wrapper(self, unit: Unit, task: Callable) -> Callable[..., Coroutine[Any, Any, None]]:
 
-        task_address = task.__name__
+        task_address = f'{unit.address}:{task.__name__}'
 
         async def publish(stream: Stream, obj: Any) -> None:
             if stream.address in self.pubs:
@@ -244,5 +253,8 @@ class DefaultBackendProcess(BackendProcess):
                 logger.error(f'Exception in Task: {task_address}')
                 logger.error(traceback.format_exc())
                 raise
+
+            finally:
+                del msg
 
         return wrapped_task
