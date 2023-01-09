@@ -158,7 +158,7 @@ class Subscriber:
                 if not msg:
                     break
 
-                msg_id_bytes = await reader.read( UINT64_SIZE )
+                msg_id_bytes = await reader.read(UINT64_SIZE)
                 msg_id = bytes_to_uint(msg_id_bytes)
 
                 if msg == Command.TX_SHM.value:
@@ -168,7 +168,11 @@ class Subscriber:
                         if id in self._shms:
                             self._shms[id].close()
                             await self._shms[id].wait_closed()
-                        self._shms[id] = await SHMContext.attach(shm_name)
+                        try:
+                            self._shms[id] = await SHMContext.attach(shm_name)
+                        except ValueError:
+                            logger.info('Invalid SHM received from publisher; may be dead')
+                            raise
 
                 # FIXME: TCP connections could be more efficient.
                 # https://github.com/iscoe/ezmsg/issues/5
@@ -182,11 +186,12 @@ class Subscriber:
                 self._incoming.put_nowait((id, msg_id))
                 
         except (ConnectionResetError, BrokenPipeError):
-            logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
+            logger.debug(f'connection fail: sub:{self.id} -> pub:{id}')
 
         finally:
             self._publishers[id].writer.close()
             del self._publishers[id]
+            logger.debug(f'disconnected: sub:{self.id} -> pub:{id}')
 
     async def recv(self) -> Any:
         out_msg = None
@@ -205,12 +210,14 @@ class Subscriber:
             with MessageCache[id].get(msg_id, shm) as msg:
                 yield msg
 
-            ack = Command.RX_ACK.value + msg_id_bytes
-            self._publishers[id].writer.write(ack)
-            await self._publishers[id].writer.drain()
-
-        except (BrokenPipeError, ConnectionResetError):
-            logger.info(f'connection fail: sub:{self.id} -> pub:{id}')
+        finally:
+            if id in self._publishers:
+                try:
+                    ack = Command.RX_ACK.value + msg_id_bytes
+                    self._publishers[id].writer.write(ack)
+                    await self._publishers[id].writer.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    logger.debug(f'ack fail: sub:{self.id} -> pub:{id}')
 
 
             

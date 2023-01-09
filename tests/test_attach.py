@@ -23,7 +23,9 @@ class TransmitReceive(ez.Unit):
     OUTPUT = ez.OutputStream(str)
     INPUT = ez.InputStream(str)
 
-    ACK = ez.OutputStream(str)
+    # Force TCP on ack messages to ensure delivery 
+    # and avoid SHM deallocation between processes
+    ACK = ez.OutputStream(str, force_tcp = True)
 
     @ez.publisher(OUTPUT)
     async def send(self) -> AsyncGenerator:
