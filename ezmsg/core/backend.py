@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import platform
-import signal
 
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
@@ -18,7 +17,6 @@ from .unit import Unit, PROCESS_ATTR
 from .graphcontext import GraphContext
 from .backendprocess import BackendProcess, DefaultBackendProcess
 
-from types import FrameType
 from typing import List, Callable, Tuple, Optional, Type
 
 logger = logging.getLogger( 'ezmsg' )
@@ -126,6 +124,8 @@ def run(
                     backend_processes[0].run()
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
+                except KeyboardInterrupt:
+                    logger.info('Interrupt detected, shutting down')
                 finally:
                     ...
 
@@ -134,24 +134,27 @@ def run(
                 for proc in backend_processes:
                     proc.start()
 
-                def graceful_shutdown(signum: int, frame: Optional[FrameType]) -> None:
-                    if not term_ev.is_set():
-                        logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-                        term_ev.set()
-                    else:
-                        logger.warning('Interrupt intercepted, force quitting')
-                        start_barrier.abort()
-                        stop_barrier.abort()
-                        for proc in backend_processes:
-                            proc.terminate()
-
-                signal.signal(signal.SIGINT, graceful_shutdown)
-
                 try:
                     for proc in backend_processes:
                         await loop.run_in_executor(None, proc.join)
                     
                     logger.info('All processes exited normally')
+
+                except KeyboardInterrupt:
+                    if not term_ev.is_set():
+                        logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+                        term_ev.set()
+
+                        try:
+                            for proc in backend_processes:
+                                await loop.run_in_executor(None, proc.join)
+
+                        except KeyboardInterrupt:
+                            logger.warning('Interrupt intercepted, force quitting')
+                            start_barrier.abort()
+                            stop_barrier.abort()
+                            for proc in backend_processes:
+                                proc.terminate()
 
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
