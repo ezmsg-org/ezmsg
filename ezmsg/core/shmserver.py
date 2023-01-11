@@ -188,7 +188,7 @@ class SHMInfo:
     def _release(self, task: "asyncio.Task[None]"):
         self.leases.discard(task)
         if len(self.leases) == 0:
-            logger.info(f'unlinking {self.shm.name}')
+            logger.debug(f'unlinking {self.shm.name}')
             self.shm.close()
             self.shm.unlink()
 
@@ -296,7 +296,7 @@ class SHMServer(Process):
                 shm.buf[8:16] = uint64_to_bytes(buf_size)
                 info = SHMInfo(shm)
                 self.shms[shm.name] = info
-                logger.info(f'created {shm.name}')
+                logger.debug(f'created {shm.name}')
 
             elif cmd == Command.SHM_ATTACH.value:
                 shm_name = await read_str(reader)
