@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 
+from dataclasses import dataclass, field
 from contextlib import contextmanager, suppress
 from multiprocessing import Process, Event, resource_tracker
 from multiprocessing.synchronize import Event as EventType
@@ -20,7 +21,7 @@ from .netprotocol import (
     read_int
 )
 
-from typing import Generator, List, Dict, Set, NamedTuple, Optional
+from typing import Generator, List, Dict, Set, Optional
 
 logger = logging.getLogger('ezmsg')
 
@@ -39,10 +40,6 @@ def _untracked_shm() -> Generator[None, None, None]:
     resource_tracker.register = _ignore_shm
     yield
     resource_tracker.register = _std_register
-
-
-class VersionMismatch(Exception):
-    ...
 
 
 class SHMContext():
@@ -128,13 +125,15 @@ class SHMContext():
 
         async def monitor() -> None:
             try:
-                await reader.read(1)
+                await reader.read()
             except asyncio.CancelledError:
                 pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
         def close(_: asyncio.Future) -> None:
             context.close()
-            writer.close()
 
         context.monitor = asyncio.create_task(monitor(), name=f'{shm_name}_monitor')
         context.monitor.add_done_callback(close)
@@ -169,10 +168,29 @@ class SHMContext():
     def size(self) -> int:
         return self.buf_size - 16  # 16 byte header
 
-
-class SHMInfo(NamedTuple):
+@dataclass
+class SHMInfo:
     shm: SharedMemory
-    leases: Set[asyncio.StreamWriter]
+    leases: Set["asyncio.Task[None]"] = field(default_factory = set)
+
+    def lease(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> "asyncio.Task[None]":
+        async def _wait_for_eof() -> None:
+            try:
+                await reader.read()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        lease = asyncio.create_task(_wait_for_eof())
+        lease.add_done_callback(self._release)
+        self.leases.add(lease)
+        return lease
+
+    def _release(self, task: "asyncio.Task[None]"):
+        self.leases.discard(task)
+        if len(self.leases) == 0:
+            logger.info(f'unlinking {self.shm.name}')
+            self.shm.close()
+            self.shm.unlink()
 
 
 class SHMServer(Process):
@@ -196,8 +214,13 @@ class SHMServer(Process):
     def run(self) -> None:
         handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        asyncio.run(self._serve())
+        with suppress(asyncio.CancelledError):  
+            asyncio.run(self._serve())
         signal.signal(signal.SIGINT, handler)
+
+    def stop(self) -> None:
+        self._shutdown.set()
+        self.join()
         
     async def _serve(self) -> None:
         loop = asyncio.get_running_loop()
@@ -214,15 +237,13 @@ class SHMServer(Process):
         try:
             await server.serve_forever()
 
-        except asyncio.CancelledError:
-            pass
-
         finally:
             for info in self.shms.values():
-                for writer in info.leases:
-                    writer.close()
-                logger.debug( f'SHMServer unlinking {info.shm.name}' )
-                info.shm.unlink()
+                for lease_task in list(info.leases):
+                    lease_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await lease_task
+                info.leases.clear()
 
             monitor_task.cancel()
             with suppress( asyncio.CancelledError ):
@@ -251,19 +272,18 @@ class SHMServer(Process):
         reader, writer = await asyncio.open_connection(*address)
         writer.write(Command.SHUTDOWN.value)
 
-
     async def api(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
 
-        cmd = await reader.read(1)
-        if len(cmd) == 0:
-            return
+        try:
+            cmd = await reader.read(1)
+            if len(cmd) == 0:
+                return
 
-        if cmd == Command.SHUTDOWN.value:
-            self._shutdown.set()
+            if cmd == Command.SHUTDOWN.value:
+                self._shutdown.set()
+                return
 
-        elif cmd in [Command.SHM_ATTACH.value, Command.SHM_CREATE.value]:
-
-            shm_name: Optional[str] = None
+            info: Optional[SHMInfo] = None
 
             if cmd == Command.SHM_CREATE.value:
                 num_buffers = await read_int(reader)
@@ -274,34 +294,27 @@ class SHMServer(Process):
                 shm.buf[:] = b'0' * len(shm.buf) # Guarantee zeros
                 shm.buf[0:8] = uint64_to_bytes(num_buffers)
                 shm.buf[8:16] = uint64_to_bytes(buf_size)
-                shm_name = shm.name
-                self.shms[shm_name] = SHMInfo(shm, set([writer]))
-                logger.debug(f'created {shm_name}')
+                info = SHMInfo(shm)
+                self.shms[shm.name] = info
+                logger.info(f'created {shm.name}')
 
             elif cmd == Command.SHM_ATTACH.value:
                 shm_name = await read_str(reader)
-                if shm_name in self.shms:
-                    self.shms[shm_name].leases.add(writer)
-                else:
-                    writer.close()
-                    return
+                info = self.shms.get(shm_name, None)
 
-            if shm_name is not None:
+            if info is None:
+                return
+            
+            writer.write(Command.COMPLETE.value)
+            writer.write(encode_str(info.shm.name))
 
-                writer.write(Command.COMPLETE.value)
-                writer.write(encode_str(shm_name))
-                await writer.drain()
+            with suppress(asyncio.CancelledError):
+                await info.lease(reader, writer)
 
-                try:
-                    await reader.read(1)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+        
 
-                finally:
-                    self.shms[shm_name].leases.discard(writer)
-                    
-                    if len(self.shms[shm_name].leases) == 0:
-                        logger.debug(f'unlinking {shm_name}')
-                        self.shms[shm_name].shm.close()
-                        self.shms[shm_name].shm.unlink()
-                        del self.shms[shm_name]
 
-                    writer.close()
+

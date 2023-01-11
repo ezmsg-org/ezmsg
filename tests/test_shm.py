@@ -12,7 +12,7 @@ async def test_invalid_name() -> None:
     with pytest.raises(ValueError):
         await SHMContext.attach('JERRY')
 
-    server.terminate()
+    server.stop()
 
 
 @pytest.mark.asyncio
@@ -34,7 +34,7 @@ async def test_rw() -> None:
     shm.close()
     attach_shm.close()
 
-    server.terminate()
+    server.stop()
 
 
 @pytest.mark.asyncio
@@ -77,7 +77,7 @@ async def test_shm_detach_order() -> None:
     attach_shm.close()
     await asyncio.sleep(0.1)
 
-    server.terminate()
+    server.stop()
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_shmserver_shutdown() -> None:
     with shm.buffer(0) as mem:
         mem[0: len(content)] = content[:]
 
-    server.terminate()
+    server.stop()
 
     await asyncio.sleep(0.1)
 
