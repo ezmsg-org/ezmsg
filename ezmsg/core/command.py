@@ -61,8 +61,7 @@ async def run_command(cmd: str, address: AddressType = GRAPHSERVER_ADDR, **kwarg
 
     if cmd == 'shutdown':
         try:
-            async with GraphServer.connection(address) as connection:
-                connection.shutdown()
+            await GraphServer.Connection(address).shutdown()
             logger.info(f'Shutdown GraphServer running @{address}')
         except (ConnectionRefusedError, ConnectionResetError):
             logger.info(f'GraphServer not running @{address}, or host is refusing connections')
@@ -89,11 +88,9 @@ async def run_command(cmd: str, address: AddressType = GRAPHSERVER_ADDR, **kwarg
 
         finally:
             if graph_server is not None:
-                graph_server._shutdown.set()
-                graph_server.join()
+                graph_server.stop()
 
             if shm_server is not None:
-                shm_server._shutdown.set()
-                shm_server.join()
+                shm_server.stop()
         
     
