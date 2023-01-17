@@ -6,20 +6,16 @@ from ezmsg.core.shmserver import SHMContext, SHMServer
 
 @pytest.mark.asyncio
 async def test_invalid_name() -> None:
-    server = SHMServer()
-    server.start()
+    await SHMServer.ensure_running()
 
     with pytest.raises(ValueError):
         await SHMContext.attach('JERRY')
-
-    server.terminate()
 
 
 @pytest.mark.asyncio
 async def test_rw() -> None:
 
-    server = SHMServer()
-    server.start()
+    await SHMServer.ensure_running()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
@@ -32,16 +28,15 @@ async def test_rw() -> None:
         assert content == ro_mem[0: len(content)]
 
     shm.close()
+    await shm.wait_closed()
     attach_shm.close()
-
-    server.terminate()
+    await attach_shm.wait_closed()
 
 
 @pytest.mark.asyncio
 async def test_shm_detach_order() -> None:
 
-    server = SHMServer()
-    server.start()
+    await SHMServer.ensure_running()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
@@ -51,13 +46,13 @@ async def test_shm_detach_order() -> None:
         mem[0: len(content)] = content[:]
 
     attach_shm.close()
-    await asyncio.sleep(0.1)
+    await attach_shm.wait_closed()
 
     with shm.buffer(0) as mem:
         assert content == mem[0: len(content)]
 
     shm.close()
-    await asyncio.sleep(0.1)
+    await shm.wait_closed()
 
     # Close created SHM first
 
@@ -69,22 +64,19 @@ async def test_shm_detach_order() -> None:
         mem[0: len(content)] = content[:]
 
     shm.close()
-    await asyncio.sleep(0.1)
+    await shm.wait_closed()
 
     with attach_shm.buffer(0) as mem:
         assert content == mem[0: len(content)]
 
     attach_shm.close()
-    await asyncio.sleep(0.1)
-
-    server.terminate()
+    await attach_shm.wait_closed()
 
 
 @pytest.mark.asyncio
 async def test_shmserver_shutdown() -> None:
 
-    server = SHMServer()
-    server.start()
+    await SHMServer.ensure_running()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
@@ -93,8 +85,7 @@ async def test_shmserver_shutdown() -> None:
     with shm.buffer(0) as mem:
         mem[0: len(content)] = content[:]
 
-    server.terminate()
-
+    await SHMServer.shutdown_server()
     await asyncio.sleep(0.1)
 
     with pytest.raises(BufferError):

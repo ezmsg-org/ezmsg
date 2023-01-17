@@ -103,7 +103,6 @@ class DefaultBackendProcess(BackendProcess):
             task_thread.join()
 
         except KeyboardInterrupt:
-            logger.debug(f'Keyboard Interrupt')
             self.term_ev.set()
 
         finally:

@@ -16,7 +16,6 @@ from typing import Optional, Tuple, Set, Type, Any, Union
 
 logger = logging.getLogger('ezmsg')
 
-
 class GraphContext:
 
     _address: Address
@@ -55,17 +54,16 @@ class GraphContext:
     async def sync(self, timeout: Optional[float] = None) -> None:
         await self._connection.sync(timeout)
 
-    def pause(self) -> None:
-        self._connection.pause()
+    async def pause(self) -> None:
+        await self._connection.pause()
 
-    def resume(self) -> None:
-        self._connection.resume()
+    async def resume(self) -> None:
+        await self._connection.resume()
 
     async def __aenter__(self):
         self._shm_server = await SHMServer.ensure_running()
         self._graph_server = await GraphServer.ensure_running(self._address)
-        self._connection_context = GraphServer.connection(self._address)
-        self._connection = await self._connection_context.__aenter__()
+        self._connection = GraphServer.Connection(self._address)
         return self
 
     async def __aexit__(self,
@@ -87,19 +85,14 @@ class GraphContext:
         for edge in self._edges:
             try:
                 await self._connection.disconnect(*edge)
-            except (ConnectionRefusedError, BrokenPipeError) as e:
-                logger.warn(f'Could not remove edge from GraphServer: {e}')
-
-        await self._connection_context.__aexit__(None, None, None)
-        del self._connection
+            except (ConnectionRefusedError, BrokenPipeError, ConnectionResetError) as e:
+                logger.warn(f'Could not remove edge {edge} from GraphServer: {e}')
 
         if self._graph_server is not None:
             logger.info( 'Terminating GraphServer' )
-            self._graph_server._shutdown.set()
-            self._graph_server.join()
+            self._graph_server.stop()
 
         if self._shm_server is not None:
             logger.info( 'Terminating SHMServer' )
-            self._shm_server._shutdown.set()
-            self._shm_server.join()
+            self._shm_server.stop()
     

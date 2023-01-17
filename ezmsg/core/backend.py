@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import platform
-import signal
 
+from socket import socket
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
+from multiprocessing.connection import wait, Connection
+
 from dataclasses import dataclass, field
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType, GRAPHSERVER_ADDR
@@ -18,8 +20,7 @@ from .unit import Unit, PROCESS_ATTR
 from .graphcontext import GraphContext
 from .backendprocess import BackendProcess, DefaultBackendProcess
 
-from types import FrameType
-from typing import List, Callable, Tuple, Optional, Type
+from typing import List, Callable, Tuple, Optional, Type, Set, Union
 
 logger = logging.getLogger( 'ezmsg' )
 
@@ -126,6 +127,8 @@ def run(
                     backend_processes[0].run()
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
+                except KeyboardInterrupt:
+                    logger.info('Interrupt detected, shutting down')
                 finally:
                     ...
 
@@ -134,33 +137,47 @@ def run(
                 for proc in backend_processes:
                     proc.start()
 
-                def graceful_shutdown(signum: int, frame: Optional[FrameType]) -> None:
-                    if not term_ev.is_set():
-                        logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-                        term_ev.set()
-                    else:
+                sentinels: Set[Union[Connection, socket, int]] = \
+                    set([proc.sentinel for proc in backend_processes])
+
+                async def join_all():
+                    while len(sentinels):
+                        # FIXME?: `wait` should be called from an executor so as to
+                        # not block the loop, but strangely this seems to raise a 
+                        # KeyboardInterrupt that I cannot catch from this scope
+                        # done = await loop.run_in_executor(None, wait, sentinels)
+                        done = wait(sentinels)
+                        for sentinel in done:
+                            sentinels.discard(sentinel)
+
+                try:
+                    await join_all()
+                    logger.info('All processes exited normally')
+
+                except KeyboardInterrupt:
+                    # At this point it is assumed that KeyboardInterrupt was forwarded
+                    # on to all subprocesses.  Every subprocess should catch/handle this
+                    # KeyboardInterrupt and they will ALL set the term_ev individually
+                    # around the same time.  I hope this isn't an issue.
+                    logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+
+                    term_ev.set() # FIXME?: This line is only necessary for windows... ?!
+
+                    try:
+                        await join_all()
+
+                    except KeyboardInterrupt:
                         logger.warning('Interrupt intercepted, force quitting')
                         start_barrier.abort()
                         stop_barrier.abort()
                         for proc in backend_processes:
                             proc.terminate()
 
-                signal.signal(signal.SIGINT, graceful_shutdown)
-
-                try:
-                    for proc in backend_processes:
-                        await loop.run_in_executor(None, proc.join)
-                    
-                    logger.info('All processes exited normally')
-
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
 
                 finally:
-                    for proc in backend_processes:
-                        if proc.is_alive():
-                            logger.warning(f'Process {proc.pid} did not complete; terminating.')
-                            proc.terminate()
+                    await join_all()
 
     main_task = loop.create_task(main_process())
 
