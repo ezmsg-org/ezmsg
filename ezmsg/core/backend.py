@@ -140,28 +140,29 @@ def run(
                 sentinels: Set[Union[Connection, socket, int]] = \
                     set([proc.sentinel for proc in backend_processes])
 
-                def join_all():
-                    # FIXME: This is a little silly, but attempting to join
-                    # the processes with indefinite timeout seems to deadlock
-                    # on Windows.  This routine should be called from an 
-                    # executor but strangely this seems to raise a KeyboardInterrupt
-                    # that I cannot catch from this scope
+                async def join_all():
                     while len(sentinels):
-                        for sentinel in wait(sentinels, timeout = 0.1):
+                        # FIXME: `wait` should be called from an executor so as to
+                        # not block the loop, but strangely this seems to raise a 
+                        # KeyboardInterrupt that I cannot catch from this scope
+                        # done = await loop.run_in_executor(None, wait, sentinels)
+                        done = wait(sentinels)
+                        for sentinel in done:
                             sentinels.discard(sentinel)
 
                 try:
-                    join_all()
-                    # await loop.run_in_executor(None, join_all)
+                    await join_all()
                     logger.info('All processes exited normally')
 
                 except KeyboardInterrupt:
+                    # At this point it is assumed that KeyboardInterrupt was forwarded
+                    # on to all subprocesses.  Every subprocess should catch/handle this
+                    # KeyboardInterrupt and they will ALL set the term_ev individually
+                    # around the same time.  I hope this isn't an issue.
                     logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-                    term_ev.set()
 
                     try:
-                        # await loop.run_in_executor(None, join_all)
-                        join_all()
+                        await join_all()
 
                     except KeyboardInterrupt:
                         logger.warning('Interrupt intercepted, force quitting')
@@ -174,7 +175,7 @@ def run(
                     logger.error('Could not initialize system, exiting.')
 
                 finally:
-                    join_all()
+                    await join_all()
 
     main_task = loop.create_task(main_process())
 

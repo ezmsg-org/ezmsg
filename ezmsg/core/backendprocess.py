@@ -103,7 +103,6 @@ class DefaultBackendProcess(BackendProcess):
             task_thread.join()
 
         except KeyboardInterrupt:
-            logger.info(f'Keyboard Interrupt')
             self.term_ev.set()
 
         finally:
@@ -185,14 +184,14 @@ class DefaultBackendProcess(BackendProcess):
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
                 # drained communication channels
-                logger.info(f'Waiting at stop barrier')
+                logger.debug(f'Waiting at stop barrier')
                 await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
 
-                logger.info(f'Terminating monitor')
+                logger.debug(f'Terminating monitor')
                 self.term_ev.set()
                 await monitor
 
-        logger.info(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
+        logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
     def monitor_termination(self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop):
         self.term_ev.wait()
