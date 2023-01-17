@@ -7,10 +7,15 @@ from .state import State
 from .addressable import Addressable
 from .stream import Stream
 
-from typing import List, Optional, Dict, Tuple, Any, Callable
+from typing import List, Optional, Dict, Tuple, Any, Callable, Type
 
 
 class ComponentMeta(ABCMeta):
+
+    __streams__: Dict[str, Stream]
+    __settings_type__: Type[Settings]
+    __state_type__: Type[State]
+
     def __init__(
         cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
     ) -> None:
@@ -62,7 +67,7 @@ class ComponentMeta(ABCMeta):
 
         for base in bases:
             if hasattr(base, "__streams__"):
-                streams = getattr(base, "__streams__")
+                streams: Dict[str, Stream] = getattr(base, "__streams__")
                 for stream_name, stream in streams.items():
                     cls.__streams__[stream_name] = stream
 
