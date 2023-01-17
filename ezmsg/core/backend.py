@@ -141,12 +141,18 @@ def run(
                     set([proc.sentinel for proc in backend_processes])
 
                 def join_all():
+                    # FIXME: This is a little silly, but attempting to join
+                    # the processes with indefinite timeout seems to deadlock
+                    # on Windows.  This routine should be called from an 
+                    # executor but strangely this seems to raise a KeyboardInterrupt
+                    # that I cannot catch from this scope
                     while len(sentinels):
                         for sentinel in wait(sentinels, timeout = 0.1):
                             sentinels.discard(sentinel)
 
                 try:
                     join_all()
+                    # await loop.run_in_executor(None, join_all)
                     logger.info('All processes exited normally')
 
                 except KeyboardInterrupt:
@@ -154,6 +160,7 @@ def run(
                     term_ev.set()
 
                     try:
+                        # await loop.run_in_executor(None, join_all)
                         join_all()
 
                     except KeyboardInterrupt:
@@ -167,10 +174,7 @@ def run(
                     logger.error('Could not initialize system, exiting.')
 
                 finally:
-                    for proc in backend_processes:
-                        if proc.is_alive():
-                            logger.warning(f'Process {proc.pid} did not complete; terminating.')
-                            proc.terminate()
+                    join_all()
 
     main_task = loop.create_task(main_process())
 

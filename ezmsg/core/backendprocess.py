@@ -192,7 +192,7 @@ class DefaultBackendProcess(BackendProcess):
                 self.term_ev.set()
                 await monitor
 
-        logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
+        logger.info(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
     def monitor_termination(self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop):
         self.term_ev.wait()
