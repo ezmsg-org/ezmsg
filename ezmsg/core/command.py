@@ -1,6 +1,7 @@
 import asyncio
 import argparse
 import logging
+import subprocess
 
 from .graphserver import GraphServer
 from .shmserver import SHMServer
@@ -34,7 +35,7 @@ def cmdline() -> None:
     parser.add_argument(
         'command',
         help = 'command for ezmsg', 
-        choices = ['serve', 'shutdown']
+        choices = ['serve', 'shutdown', 'start']
     )
 
     parser.add_argument(
@@ -92,5 +93,22 @@ async def run_command(cmd: str, address: AddressType = GRAPHSERVER_ADDR, **kwarg
 
             if shm_server is not None:
                 shm_server.stop()
+
+    elif cmd == 'start':
+        popen = subprocess.Popen([
+            "python", 
+            "-m", "ezmsg.core", 
+            "serve", 
+            f"--hostname={address.host}"
+        ])
+
+        while True:
+            try:
+                await GraphServer.open(address)
+                break
+            except ConnectionRefusedError:
+                await asyncio.sleep(0.1)
+
+        logger.info( f'Forked ezmsg servers.' )
         
     
