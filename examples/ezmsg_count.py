@@ -61,5 +61,8 @@ class CountSystem(ez.System):
 
 if __name__ == '__main__':
 
+    # import multiprocessing
+    # multiprocessing.set_start_method('spawn', force=True)
+
     system = CountSystem()
     ez.run_system(system)
