@@ -271,6 +271,7 @@ class SHMServer(Process):
         address = Address(*SHMSERVER_ADDR)
         reader, writer = await asyncio.open_connection(*address)
         writer.write(Command.SHUTDOWN.value)
+        await writer.drain()
 
     async def api(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
 
