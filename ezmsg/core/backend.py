@@ -136,25 +136,26 @@ def run(
 
                 try:
                     for proc in backend_processes:
-                        await loop.run_in_executor(None, proc.join)
+                        # await loop.run_in_executor(None, proc.join)
+                        proc.join()
                     
                     logger.info('All processes exited normally')
 
                 except KeyboardInterrupt:
-                    if not term_ev.is_set():
-                        logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-                        term_ev.set()
+                    logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+                    term_ev.set()
 
-                        try:
-                            for proc in backend_processes:
-                                await loop.run_in_executor(None, proc.join)
+                    try:
+                        for proc in backend_processes:
+                            # await loop.run_in_executor(None, proc.join)
+                            proc.join()
 
-                        except KeyboardInterrupt:
-                            logger.warning('Interrupt intercepted, force quitting')
-                            start_barrier.abort()
-                            stop_barrier.abort()
-                            for proc in backend_processes:
-                                proc.terminate()
+                    except KeyboardInterrupt:
+                        logger.warning('Interrupt intercepted, force quitting')
+                        start_barrier.abort()
+                        stop_barrier.abort()
+                        for proc in backend_processes:
+                            proc.terminate()
 
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
