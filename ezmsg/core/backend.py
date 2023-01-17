@@ -2,9 +2,12 @@ import asyncio
 import logging
 import platform
 
+from socket import socket
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
+from multiprocessing.connection import wait, Connection
+
 from dataclasses import dataclass, field
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType, GRAPHSERVER_ADDR
@@ -17,7 +20,7 @@ from .unit import Unit, PROCESS_ATTR
 from .graphcontext import GraphContext
 from .backendprocess import BackendProcess, DefaultBackendProcess
 
-from typing import List, Callable, Tuple, Optional, Type
+from typing import List, Callable, Tuple, Optional, Type, Set, Union
 
 logger = logging.getLogger( 'ezmsg' )
 
@@ -134,11 +137,16 @@ def run(
                 for proc in backend_processes:
                     proc.start()
 
+                sentinels: Set[Union[Connection, socket, int]] = \
+                    set([proc.sentinel for proc in backend_processes])
+
+                def join_all():
+                    while len(sentinels):
+                        for sentinel in wait(sentinels, timeout = 0.1):
+                            sentinels.discard(sentinel)
+
                 try:
-                    for proc in backend_processes:
-                        # await loop.run_in_executor(None, proc.join)
-                        proc.join()
-                    
+                    join_all()
                     logger.info('All processes exited normally')
 
                 except KeyboardInterrupt:
@@ -146,9 +154,7 @@ def run(
                     term_ev.set()
 
                     try:
-                        for proc in backend_processes:
-                            # await loop.run_in_executor(None, proc.join)
-                            proc.join()
+                        join_all()
 
                     except KeyboardInterrupt:
                         logger.warning('Interrupt intercepted, force quitting')
