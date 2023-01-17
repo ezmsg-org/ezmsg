@@ -142,7 +142,7 @@ def run(
 
                 async def join_all():
                     while len(sentinels):
-                        # FIXME: `wait` should be called from an executor so as to
+                        # FIXME?: `wait` should be called from an executor so as to
                         # not block the loop, but strangely this seems to raise a 
                         # KeyboardInterrupt that I cannot catch from this scope
                         # done = await loop.run_in_executor(None, wait, sentinels)
@@ -160,6 +160,8 @@ def run(
                     # KeyboardInterrupt and they will ALL set the term_ev individually
                     # around the same time.  I hope this isn't an issue.
                     logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+
+                    term_ev.set() # FIXME?: This line is only necessary for windows... ?!
 
                     try:
                         await join_all()
