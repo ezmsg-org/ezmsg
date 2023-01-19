@@ -7,6 +7,8 @@ from zmq.utils.monitor import parse_monitor_message
 from pickle import PickleBuffer
 from typing import AsyncGenerator
 
+from .__version__ import __version__
+
 # Module Imports
 import ezmsg.core as ez
 
