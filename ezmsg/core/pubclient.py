@@ -229,9 +229,9 @@ class Publisher:
         msg_id_bytes = uint64_to_bytes(self._msg_id)
 
         if not self._backpressure.available(buf_idx):
-            logger.debug(f'{self.topic} under subscriber backpressure!')
+            logger.warning(f'{self.topic} under subscriber backpressure!')
             await self._backpressure.wait(buf_idx)
-            
+
         self._cache.put(self._msg_id, obj)
 
         for sub in list(self._subscribers.values()):
