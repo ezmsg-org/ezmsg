@@ -45,9 +45,10 @@ class Backpressure:
     def is_empty(self) -> bool:
         return self.pressure == 0
 
+    def available(self, buf_idx: int) -> bool:
+        return self.buffers[buf_idx].is_empty
+
     async def wait(self, buf_idx: int) -> None:
-        # Somehow, high_water//low_water seems much slower
-        # if self.pressure == len(self.buffers): await self.sync()
         await self.buffers[buf_idx].wait()
 
     def lease(self, uuid: UUID, buf_idx: int) -> None:
