@@ -2,7 +2,6 @@ import asyncio
 import dataclasses
 import datetime
 import os
-import logging
 import platform
 import time
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from typing import List, Tuple, AsyncGenerator
 
 import ezmsg.core as ez
-
 
 @dataclasses.dataclass
 class TimeSeriesMessage:
@@ -25,12 +23,11 @@ PLATFORM = {
 SAMPLE_SUMMARY_DATASET_PREFIX = "sample_summary"
 COUNT_DATASET_NAME = "count"
 
-logger = logging.getLogger('ezmsg')
 
 try:
     import numpy as np
 except ImportError:
-    logger.error('This test requires Numpy to run.')
+    ez.logger.error('This test requires Numpy to run.')
     raise
 
 
@@ -59,7 +56,7 @@ class LoadTestPublisher(ez.Unit):
 
     @ez.publisher(OUTPUT)
     async def publish(self) -> AsyncGenerator:
-        logger.info(f"Load test publisher started. (PID: {os.getpid()})")
+        ez.logger.info(f"Load test publisher started. (PID: {os.getpid()})")
         start_time = time.time()
         while self.running:
             current_time = time.time()
@@ -73,12 +70,12 @@ class LoadTestPublisher(ez.Unit):
             )
             self.counter += 1
             time.sleep(0)
-        logging.getLogger('ezmsg').info("Exiting publish")
+        ez.logger.info("Exiting publish")
         raise ez.Complete
 
     def shutdown(self) -> None:
         self.running = False
-        logger.info(f"Samples sent: {self.counter}")
+        ez.logger.info(f"Samples sent: {self.counter}")
 
 
 class LoadTestSubscriberState(ez.State):
@@ -97,7 +94,7 @@ class LoadTestSubscriber(ez.Unit):
     @ez.subscriber(INPUT, zero_copy=True)
     async def receive(self, sample: LoadTestSample) -> None:
         if sample.counter != self.STATE.counter + 1:
-            logger.warning(f"{sample.counter - self.STATE.counter-1} samples skipped!")
+            ez.logger.warning(f"{sample.counter - self.STATE.counter-1} samples skipped!")
         self.STATE.received_data.append(
             (sample._timestamp, time.perf_counter(), sample.counter)
         )
@@ -105,7 +102,7 @@ class LoadTestSubscriber(ez.Unit):
 
     @ez.task
     async def log_result(self) -> None:
-        logger.info(f"Load test subscriber started. (PID: {os.getpid()})")
+        ez.logger.info(f"Load test subscriber started. (PID: {os.getpid()})")
 
         # Wait for the duration of the load test
         await asyncio.sleep(self.SETTINGS.duration)
@@ -127,14 +124,14 @@ class LoadTestSubscriber(ez.Unit):
         dropped_samples = sum([(x1 - x0) - 1 for x1, x0 in zip(counters[1:], counters[:-1])])
 
         num_samples = len(self.STATE.received_data)
-        logger.info(f"Samples received: {num_samples}")
-        logger.info(f"Sample rate: {num_samples / (max_timestamp - min_timestamp)} Hz")
-        logger.info(f"Mean latency: {total_latency / num_samples} s")
-        logger.info(f"Total latency: {total_latency} s")
+        ez.logger.info(f"Samples received: {num_samples}")
+        ez.logger.info(f"Sample rate: {num_samples / (max_timestamp - min_timestamp)} Hz")
+        ez.logger.info(f"Mean latency: {total_latency / num_samples} s")
+        ez.logger.info(f"Total latency: {total_latency} s")
 
         total_data = num_samples * self.SETTINGS.dynamic_size
-        logger.info(f"Data rate: {total_data / (max_timestamp - min_timestamp) * 1e-6} MB/s")
-        logger.info(
+        ez.logger.info(f"Data rate: {total_data / (max_timestamp - min_timestamp) * 1e-6} MB/s")
+        ez.logger.info(
             f"Dropped samples: {dropped_samples} ({dropped_samples / (dropped_samples + num_samples)}%)",
         )
 
@@ -168,7 +165,7 @@ def get_time() -> float:
 @pytest.mark.parametrize("buffers", [2, 32])
 @pytest.mark.parametrize("size", [2**i for i in range(5, 22, 4)])
 def test_performance(duration, size, buffers) -> None:
-    logger.info(f"Running load test for dynamic size: {size} bytes")
+    ez.logger.info(f"Running load test for dynamic size: {size} bytes")
     system = LoadTest(
         LoadTestSettings(
             dynamic_size=int(size),
