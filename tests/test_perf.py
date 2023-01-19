@@ -10,10 +10,6 @@ from typing import List, Tuple, AsyncGenerator
 
 import ezmsg.core as ez
 
-@dataclasses.dataclass
-class TimeSeriesMessage:
-    _timestamp: float
-
 
 PLATFORM = {
     "Darwin": "mac",
@@ -41,7 +37,8 @@ class LoadTestSettings(ez.Settings):
 
 
 @dataclasses.dataclass
-class LoadTestSample(TimeSeriesMessage):
+class LoadTestSample:
+    _timestamp: float
     counter: int
     dynamic_data: np.ndarray
 
