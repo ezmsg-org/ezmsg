@@ -29,9 +29,6 @@ from typing import Dict, List, Tuple, Optional, AsyncGenerator
 
 logger = logging.getLogger('ezmsg')
 
-class VersionMismatch(Exception):
-    ...
-
 class GraphServer(Process):
     """ Pub-Sub Directed Acyclic Graph """
 
@@ -57,11 +54,16 @@ class GraphServer(Process):
         address = Address(*address)
         try:
             await cls.open(address)
-            logger.debug( f'GraphServer Exists: {address.host}:{address.port}' )
-        except ConnectionRefusedError:
-            graph_server = cls(address)
-            graph_server.start()
-            logger.info(f'Started GraphServer. PID:{graph_server.pid}@{address.host}:{address.port}')
+            logger.debug( f'GraphServer Exists: {address}' )
+        except ConnectionRefusedError as ref_e:
+            try:
+                graph_server = cls(address)
+                graph_server.start()
+                logger.info(f'Started GraphServer. PID:{graph_server.pid}@{address}')
+            except OSError as os_e:
+                logger.error(f'Could not connect to GraphServer - {ref_e}.')
+                logger.error(f'Additionally, could not start GraphServer@{address}: {os_e}')
+                raise ref_e
         return graph_server
 
     def run(self) -> None:
@@ -264,7 +266,7 @@ class GraphServer(Process):
         await writer.drain()
         server_version = await read_str(reader)
         if server_version != __version__:
-            raise VersionMismatch(f"GraphServer@{server_version} != Client@{__version__}")
+            logger.warning(f"Version Mismatch: GraphServer@{server_version} != Client@{__version__}")
         return reader, writer
 
     @dataclass
