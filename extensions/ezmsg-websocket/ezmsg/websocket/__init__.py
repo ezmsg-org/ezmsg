@@ -7,6 +7,8 @@ import ssl
 
 import ezmsg.core as ez
 
+from .__version__ import __version__
+
 from typing import AsyncGenerator, ByteString
 
 
