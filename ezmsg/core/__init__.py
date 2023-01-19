@@ -46,7 +46,7 @@ from .backend import run_system
 from .message import Message, Flag  # deprecated
 from .collection import Collection as System  # deprecated, backward compatibility
 
-
+import os
 import logging
 
 logger = logging.getLogger('ezmsg')
@@ -59,4 +59,6 @@ formatter = logging.Formatter(
 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+
+LOGLEVEL = os.environ.get('EZMSG_LOGLEVEL', 'INFO').upper()
+logger.setLevel(LOGLEVEL)
