@@ -44,7 +44,7 @@ class Sampler( ez.Unit ):
     STATE: SamplerState
 
     INPUT_TRIGGER = ez.InputStream( SampleTriggerMessage )
-    INPUT_SIGNAL = ez.OutputStream( TSMessage )
+    INPUT_SIGNAL = ez.InputStream( TSMessage )
     OUTPUT_SAMPLE = ez.OutputStream( SampleMessage )
 
     @ez.subscriber( INPUT_TRIGGER )
