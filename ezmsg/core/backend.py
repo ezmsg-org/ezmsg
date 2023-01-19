@@ -179,9 +179,11 @@ def run(
                 finally:
                     await join_all()
 
-    main_task = loop.create_task(main_process())
-
-    loop.run_until_complete(main_task)
+    try:
+        main_task = loop.create_task(main_process())
+        loop.run_until_complete(main_task)
+    finally:
+        loop.close()
 
 
 def collect_processes(collection: Collection) -> List[List[Unit]]:
