@@ -10,14 +10,11 @@ from .messages import TSMessage as TimeSeriesMessage
 
 from typing import AsyncGenerator, Optional, Tuple
 
-logger = logging.getLogger('ezmsg')
-
 
 @dataclass
 class FilterCoefficients:
     b: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
     a: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
-
 
 
 class FilterSettings(ez.Settings):
@@ -58,7 +55,7 @@ class Filter(ez.Unit):
             try:
                 self.update_filter()
             except NotImplementedError:
-                logger.debug("Using filter coefficients.")
+                ez.logger.debug("Using filter coefficients.")
 
     @ez.subscriber(INPUT_FILTER)
     async def redesign(self, message: FilterCoefficients):
@@ -73,7 +70,7 @@ class Filter(ez.Unit):
         except NotImplementedError as e:
             raise e
         except Exception as e:
-            logger.warning(f"Error when designing filter: {e}")
+            ez.logger.warning(f"Error when designing filter: {e}")
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
@@ -85,9 +82,9 @@ class Filter(ez.Unit):
         # Ensure filter is defined
         if self.STATE.filt is None:
             self.STATE.filt_set.clear()
-            logger.info("Awaiting filter coefficients...")
+            ez.logger.info("Awaiting filter coefficients...")
             await self.STATE.filt_set.wait()
-            logger.info("Filter coefficients received.")
+            ez.logger.info("Filter coefficients received.")
 
         arr_in: np.ndarray
 
