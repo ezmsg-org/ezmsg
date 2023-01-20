@@ -228,10 +228,13 @@ class Publisher:
         buf_idx = self._msg_id % self._num_buffers
         msg_id_bytes = uint64_to_bytes(self._msg_id)
 
-        await self._backpressure.wait(buf_idx)
+        if not self._backpressure.available(buf_idx):
+            logger.warning(f'{self.topic} under subscriber backpressure!')
+            await self._backpressure.wait(buf_idx)
+
         self._cache.put(self._msg_id, obj)
 
-        for sub in self._subscribers.values():
+        for sub in list(self._subscribers.values()):
             if not self._force_tcp and sub.id.node == self.id.node:
 
                 if sub.pid == self.pid:
@@ -239,7 +242,7 @@ class Publisher:
 
                 else:
                     try:
-                        # Push to cache to shm (if not already there)
+                        # Push cache to shm (if not already there)
                         self._cache.push(self._msg_id, self._shm)
 
                     except UndersizedMemory as e:
@@ -274,8 +277,8 @@ class Publisher:
                 await sub.writer.drain()
                 self._backpressure.lease(sub.id, buf_idx)
 
-            except ConnectionResetError:
-                logger.debug(f'Publisher {self.id}: Subscriber {sub.id} connection reset')
+            except (ConnectionResetError, BrokenPipeError):
+                logger.debug(f'Publisher {self.id}: Subscriber {sub.id} connection fail')
                 continue
 
         self._msg_id += 1
