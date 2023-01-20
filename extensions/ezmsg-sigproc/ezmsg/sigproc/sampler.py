@@ -9,8 +9,6 @@ from .messages import TSMessage
 
 from typing import Optional, Any, Tuple, List, Dict
 
-logger = logging.getLogger('ezmsg')
-
 @dataclass( frozen = True )
 class SampleTriggerMessage:
     timestamp: float = field( default_factory = time.time )
@@ -44,7 +42,7 @@ class Sampler( ez.Unit ):
     STATE: SamplerState
 
     INPUT_TRIGGER = ez.InputStream( SampleTriggerMessage )
-    INPUT_SIGNAL = ez.OutputStream( TSMessage )
+    INPUT_SIGNAL = ez.InputStream( TSMessage )
     OUTPUT_SAMPLE = ez.OutputStream( SampleMessage )
 
     @ez.subscriber( INPUT_TRIGGER )
@@ -56,21 +54,21 @@ class Sampler( ez.Unit ):
             value = msg.value if msg.value is not None else self.SETTINGS.value
 
             if period is None:
-                logger.warn( f'Sampling failed: period not specified' )
+                ez.logger.warning( f'Sampling failed: period not specified' )
                 return
 
             # Check that period is valid
             start_offset = int( period[0] * fs )
             stop_offset = int( period[1] * fs )
             if ( stop_offset - start_offset ) <= 0:
-                logger.warn( f'Sampling failed: invalid period requested' )
+                ez.logger.warning( f'Sampling failed: invalid period requested' )
                 return
 
             # Check that period is compatible with buffer duration
             max_buf_len = int( self.SETTINGS.buffer_dur * fs )
             req_buf_len = int( ( period[1] - period[0] ) * fs )
             if req_buf_len >= max_buf_len:
-                logger.warn( f'Sampling failed: {period=} >= {self.SETTINGS.buffer_dur=}' )
+                ez.logger.warning( f'Sampling failed: {period=} >= {self.SETTINGS.buffer_dur=}' )
                 return
 
             offset: int = 0
@@ -81,13 +79,13 @@ class Sampler( ez.Unit ):
 
             # Check that current buffer accumulation allows for offset - period start
             if -min( offset + start_offset, 0 ) >= self.STATE.buffer.shape[0]:
-                logger.warn( 'Sampling failed: insufficient buffer accumulation for requested sample period' )
+                ez.logger.warning( 'Sampling failed: insufficient buffer accumulation for requested sample period' )
                 return
 
             trigger = replace( msg, period = period, value = value )
             self.STATE.triggers[ trigger ] = offset 
 
-        else: logger.warn( 'Sampling failed: no signal to sample yet' )
+        else: ez.logger.warning( 'Sampling failed: no signal to sample yet' )
 
     @ez.subscriber( INPUT_SIGNAL )
     @ez.publisher( OUTPUT_SAMPLE )
@@ -108,8 +106,8 @@ class Sampler( ez.Unit ):
         ):
             # Data stream changed meaningfully -- flush buffer, stop sampling
             if len( self.STATE.triggers ) > 0:
-                logger.warn( 'Sampling failed: Discarding all triggers' )
-            logger.warn( 'Flushing buffer: signal properties changed' )
+                ez.logger.warning( 'Sampling failed: Discarding all triggers' )
+            ez.logger.warning( 'Flushing buffer: signal properties changed' )
             self.STATE.buffer = None
             self.STATE.triggers = dict()
 

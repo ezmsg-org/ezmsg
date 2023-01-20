@@ -98,8 +98,11 @@ class Unit(Component, metaclass=UnitMeta):
 def publisher(stream: OutputStream):
     """A decorator for a method that publishes to a stream in the task/messaging thread"""
 
+    if not isinstance(stream, OutputStream):
+        raise ValueError(f'Cannot publish to object of type {type(stream)}')
+
     def pub_factory(func):
-        published_streams: List[Stream] = getattr(func, PUBLISHES_ATTR, [])
+        published_streams: List[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
         published_streams.append(stream)
         setattr(func, PUBLISHES_ATTR, published_streams)
         return task(func)
@@ -110,8 +113,11 @@ def publisher(stream: OutputStream):
 def subscriber(stream: InputStream, zero_copy: bool = False):
     """A decorator for a method that subscribes to a stream in the task/messaging thread"""
 
+    if not isinstance(stream, InputStream):
+        raise ValueError(f'Cannot subscribe to object of type {type(stream)}')
+
     def sub_factory(func):
-        subscribed_streams = getattr(func, SUBSCRIBES_ATTR, None)
+        subscribed_streams: Optional[InputStream] = getattr(func, SUBSCRIBES_ATTR, None)
         if subscribed_streams is not None:
             raise Exception(f"{func} cannot subscribe to more than one stream")
         setattr(func, SUBSCRIBES_ATTR, stream)

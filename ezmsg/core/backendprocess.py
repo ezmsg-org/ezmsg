@@ -181,6 +181,7 @@ class DefaultBackendProcess(BackendProcess):
                         await task
 
             finally:
+            
                 # This stop barrier prevents publishers/subscribers
                 # from getting destroyed before all other processes have 
                 # drained communication channels
@@ -189,7 +190,11 @@ class DefaultBackendProcess(BackendProcess):
 
                 logger.debug(f'Terminating monitor')
                 self.term_ev.set()
-                await monitor
+                await monitor # should cancel all tasks
+
+                for task in tasks:
+                    with suppress(Complete, NormalTermination, asyncio.CancelledError):
+                        await task
 
         logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
@@ -231,10 +236,12 @@ class DefaultBackendProcess(BackendProcess):
 
                 # Subscribers need to be called with a message
                 else:
-                    if getattr(task, ZERO_COPY_ATTR) == False:
+                    if not getattr(task, ZERO_COPY_ATTR): 
                         msg = deepcopy(msg)
                     if hasattr(task, PUBLISHES_ATTR):
                         async for stream, obj in task(unit, msg):
+                            if getattr(task, ZERO_COPY_ATTR) and obj is msg:
+                                obj = deepcopy(obj)
                             await pub_fn(stream, obj)
                     else:
                         await task(unit, msg)
@@ -252,8 +259,5 @@ class DefaultBackendProcess(BackendProcess):
                 logger.error(f'Exception in Task: {task_address}')
                 logger.error(traceback.format_exc())
                 raise
-
-            finally:
-                del msg
 
         return wrapped_task
