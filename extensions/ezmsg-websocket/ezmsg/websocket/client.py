@@ -4,7 +4,7 @@ import ezmsg.core as ez
 
 from websockets.legacy.client import connect, WebSocketClientProtocol
 
-from . import WebsocketSettings, WebsocketState
+from .server import WebsocketSettings, WebsocketState
 
 from typing import AsyncGenerator
 
