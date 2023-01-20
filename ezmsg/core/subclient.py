@@ -129,7 +129,6 @@ class Subscriber:
             writer.close()
 
     async def _handle_publisher(self, id: UUID, address: Address, connected: asyncio.Event) -> None:
-
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
         writer.write(uint64_to_bytes(self.pid))

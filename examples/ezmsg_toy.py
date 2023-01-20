@@ -175,11 +175,12 @@ if __name__ == '__main__':
 
     system = TestSystem(TestSystemSettings(name='A'))
 
-    ez.run_system(
+    ez.run(
         system,
-        # name = 'TOY',
-        # connections = [
-        #     ( system.PING.OUTPUT, 'PING_OUTPUT' ),
-        #     ( 'FOO_SUB', system.FOOSUB.INPUT )
-        # ]
+        name = 'TOY',
+        connections = [
+            ( system.PING.OUTPUT, 'PING_OUTPUT' ),
+            ( 'FOO_SUB', system.FOOSUB.INPUT )
+        ],
+        graph_address=('0.0.0.0', 25978),
     )
