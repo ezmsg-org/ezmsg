@@ -130,6 +130,9 @@ class DefaultBackendProcess(BackendProcess):
                         finally:
                             del msg
 
+                    if len(callables) > 1:
+                        await asyncio.sleep(0)
+
             coros: Dict[str, Coroutine[Any, Any, None]] = dict()
 
             for unit in self.units:
@@ -212,6 +215,7 @@ class DefaultBackendProcess(BackendProcess):
         async def publish(stream: Stream, obj: Any) -> None:
             if stream.address in self.pubs:
                 await self.pubs[stream.address].broadcast(obj)
+            await asyncio.sleep(0)
 
         async def perf_publish(stream: Stream, obj: Any) -> None:
             start = time.perf_counter()
