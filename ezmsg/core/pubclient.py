@@ -30,6 +30,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger('ezmsg')
 
+BACKPRESSURE_WARNING = not ('EZMSG_DISABLE_BACKPRESSURE_WARNING' in os.environ)
+
 class Publisher:
 
     id: UUID
@@ -229,7 +231,8 @@ class Publisher:
         msg_id_bytes = uint64_to_bytes(self._msg_id)
 
         if not self._backpressure.available(buf_idx):
-            logger.warning(f'{self.topic} under subscriber backpressure!')
+            if BACKPRESSURE_WARNING:
+                logger.warning( f'{self.topic} under subscriber backpressure!')
             await self._backpressure.wait(buf_idx)
 
         self._cache.put(self._msg_id, obj)
