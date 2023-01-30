@@ -2,11 +2,11 @@ import json
 import ezmsg.core as ez
 
 from ezmsg.testing.lfo import LFO, LFOSettings
-from ezmsg.websocket import (
+from ezmsg.websocket.units import (
     WebsocketServer, WebsocketClient, WebsocketSettings
 )
 
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Tuple
 
 
 class JSONAdapter(ez.Unit):
@@ -80,6 +80,13 @@ class WebsocketSystem(ez.System):
 
             (self.SERVER.OUTPUT, self.JSON.JSON_INPUT),
             (self.JSON.DICT_OUTPUT, self.OUT.INPUT)
+        )
+
+    def process_components(self) -> Tuple[ez.Component, ...]:
+        return (
+            self.OSC,
+            self.CLIENT,
+            self.SERVER
         )
 
 
