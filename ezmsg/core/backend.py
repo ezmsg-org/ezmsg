@@ -124,7 +124,7 @@ def run(
                 logger.info('Running in single-process mode')
 
                 try:
-                    backend_processes[0].run()
+                    backend_processes[0].process(loop)
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
                 except KeyboardInterrupt:

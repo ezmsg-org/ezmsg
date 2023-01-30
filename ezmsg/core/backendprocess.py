@@ -47,13 +47,7 @@ class BackendProcess(Process):
         self.term_ev = term_ev
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
-
         self.graph_address = graph_address
-
-
-class DefaultBackendProcess(BackendProcess):
-
-    pubs: Dict[str, Publisher]
 
     def run(self) -> None:
         if platform.system() == 'Windows':
@@ -61,14 +55,28 @@ class DefaultBackendProcess(BackendProcess):
                 asyncio.WindowsSelectorEventLoopPolicy()  # type: ignore
             )
 
+        loop = asyncio.new_event_loop()
+        self.process(loop)
+
+        # TODO: close event loop?
+
+    def process(self, loop: asyncio.AbstractEventLoop) -> None:
+        raise NotImplementedError
+
+
+class DefaultBackendProcess(BackendProcess):
+
+    pubs: Dict[str, Publisher]
+
+    def process(self, loop: asyncio.AbstractEventLoop) -> None:
+
         self.pubs = dict()
 
         # Set context for all components and initialize them
         main_func: Optional[Tuple[Unit, Callable]] = None
         threads: List[Tuple[Unit, Callable]] = []
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop( loop )
+        asyncio.set_event_loop(loop)
 
         for unit in self.units:
             unit.setup()
@@ -84,6 +92,7 @@ class DefaultBackendProcess(BackendProcess):
 
         run_task = loop.create_task(self.run_units(), name=f'run_units_{self.pid}')
 
+        # TODO: Can be accomplished with loop.run_in_executor?
         def run_thread() -> None:
             with suppress(asyncio.CancelledError):
                 loop.run_until_complete(run_task)
