@@ -18,7 +18,7 @@ from .stream import Stream
 from .unit import Unit, PROCESS_ATTR
 
 from .graphcontext import GraphContext
-from .backendprocess import BackendProcess, DefaultBackendProcess
+from .backendprocess import BackendProcess, DefaultBackendProcess, new_threaded_event_loop
 
 from typing import List, Callable, Tuple, Optional, Type, Set, Union
 
@@ -122,7 +122,8 @@ def run(
                 logger.info('Running in single-process mode')
 
                 try:
-                    backend_processes[0].process()
+                    with new_threaded_event_loop() as loop:
+                        backend_processes[0].process(loop)
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
                 except KeyboardInterrupt:

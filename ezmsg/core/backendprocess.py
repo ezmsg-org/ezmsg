@@ -55,9 +55,10 @@ class BackendProcess(Process):
                 asyncio.WindowsSelectorEventLoopPolicy()  # type: ignore
             )
 
-        self.process()
+        with new_threaded_event_loop() as loop:
+            self.process(loop)
 
-    def process(self) -> None:
+    def process(self, loop: asyncio.AbstractEventLoop) -> None:
         raise NotImplementedError
 
 
@@ -65,7 +66,7 @@ class DefaultBackendProcess(BackendProcess):
 
     pubs: Dict[str, Publisher]
 
-    def process(self) -> None:
+    def process(self, loop: asyncio.AbstractEventLoop) -> None:
 
         self.pubs = dict()
 
@@ -86,26 +87,25 @@ class DefaultBackendProcess(BackendProcess):
                     main_func = (unit, unit.main)
 
 
-        with new_threaded_event_loop() as loop:
-            fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
+        fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
 
-            try:
-                if main_func is not None:
-                    unit, fn = main_func
-                    try:
-                        fn(unit)
-                    except NormalTermination:
-                        self.term_ev.set()
+        try:
+            if main_func is not None:
+                unit, fn = main_func
+                try:
+                    fn(unit)
+                except NormalTermination:
+                    self.term_ev.set()
 
-                fut.result()
+            fut.result()
 
-            except KeyboardInterrupt:
-                self.term_ev.set()
+        except KeyboardInterrupt:
+            self.term_ev.set()
 
-            finally:
-                fut.result()
-                for unit in self.units:
-                    unit.shutdown()
+        finally:
+            fut.result()
+            for unit in self.units:
+                unit.shutdown()
 
     async def run_units(self) -> None:
 
