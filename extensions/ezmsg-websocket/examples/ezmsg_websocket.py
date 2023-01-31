@@ -82,12 +82,12 @@ class WebsocketSystem(ez.System):
             (self.JSON.DICT_OUTPUT, self.OUT.INPUT)
         )
 
-    def process_components(self) -> Tuple[ez.Component, ...]:
-        return (
-            self.OSC,
-            self.CLIENT,
-            self.SERVER
-        )
+    # def process_components(self) -> Tuple[ez.Component, ...]:
+    #     return (
+    #         self.OSC,
+    #         self.CLIENT,
+    #         self.SERVER
+    #     )
 
 
 if __name__ == '__main__':
