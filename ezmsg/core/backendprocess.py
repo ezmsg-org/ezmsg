@@ -11,7 +11,7 @@ from copy import deepcopy
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
-from contextlib import suppress
+from contextlib import suppress, contextmanager
 
 from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
@@ -21,7 +21,7 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 
-from typing import List, Dict, Callable, Any, Tuple, Optional, Set, Coroutine, DefaultDict
+from typing import List, Dict, Callable, Any, Tuple, Optional, Set, Coroutine, DefaultDict, Generator
 
 logger = logging.getLogger('ezmsg')
 
@@ -55,12 +55,9 @@ class BackendProcess(Process):
                 asyncio.WindowsSelectorEventLoopPolicy()  # type: ignore
             )
 
-        loop = asyncio.new_event_loop()
-        self.process(loop)
+        self.process()
 
-        # TODO: close event loop?
-
-    def process(self, loop: asyncio.AbstractEventLoop) -> None:
+    def process(self) -> None:
         raise NotImplementedError
 
 
@@ -68,15 +65,13 @@ class DefaultBackendProcess(BackendProcess):
 
     pubs: Dict[str, Publisher]
 
-    def process(self, loop: asyncio.AbstractEventLoop) -> None:
+    def process(self) -> None:
 
         self.pubs = dict()
 
         # Set context for all components and initialize them
         main_func: Optional[Tuple[Unit, Callable]] = None
         threads: List[Tuple[Unit, Callable]] = []
-
-        asyncio.set_event_loop(loop)
 
         for unit in self.units:
             unit.setup()
@@ -90,36 +85,27 @@ class DefaultBackendProcess(BackendProcess):
                 else:
                     main_func = (unit, unit.main)
 
-        run_task = loop.create_task(self.run_units(), name=f'run_units_{self.pid}')
 
-        # TODO: Can be accomplished with loop.run_in_executor?
-        def run_thread() -> None:
-            with suppress(asyncio.CancelledError):
-                loop.run_until_complete(run_task)
+        with new_threaded_event_loop() as loop:
+            fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
 
-        task_thread = threading.Thread(target=run_thread, name="TaskThread")
+            try:
+                if main_func is not None:
+                    unit, fn = main_func
+                    try:
+                        fn(unit)
+                    except NormalTermination:
+                        self.term_ev.set()
 
-        try:
-            task_thread.start()
+                fut.result()
 
-            if main_func is not None:
-                unit, fn = main_func
-                try:
-                    fn(unit)
-                except NormalTermination:
-                    self.term_ev.set()
+            except KeyboardInterrupt:
+                self.term_ev.set()
 
-            task_thread.join()
-
-        except KeyboardInterrupt:
-            self.term_ev.set()
-
-        finally:
-
-            task_thread.join()
-
-            for unit in self.units:
-                unit.shutdown()
+            finally:
+                fut.result()
+                for unit in self.units:
+                    unit.shutdown()
 
     async def run_units(self) -> None:
 
@@ -274,3 +260,29 @@ class DefaultBackendProcess(BackendProcess):
                 raise
 
         return wrapped_task
+
+@contextmanager
+def new_threaded_event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+
+    logger.info( 'creating new threaded event loop')
+
+    try:
+        prev_loop = asyncio.get_running_loop()
+    except:
+        prev_loop = None
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    thread = threading.Thread(target=loop.run_forever)
+    thread.start()
+
+    try:
+        yield loop
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()
+
+        if prev_loop is not None:
+            asyncio.set_event_loop(prev_loop)

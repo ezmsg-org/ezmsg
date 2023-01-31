@@ -111,8 +111,6 @@ def run(
         for process_units in processes
     ]
 
-    loop = asyncio.new_event_loop()
-
     async def main_process() -> None:
 
         async with GraphContext(graph_address) as context:
@@ -124,7 +122,7 @@ def run(
                 logger.info('Running in single-process mode')
 
                 try:
-                    backend_processes[0].process(loop)
+                    backend_processes[0].process()
                 except BrokenBarrierError:
                     logger.error('Could not initialize system, exiting.')
                 except KeyboardInterrupt:
@@ -179,12 +177,7 @@ def run(
                 finally:
                     await join_all()
 
-    try:
-        main_task = loop.create_task(main_process())
-        loop.run_until_complete(main_task)
-    finally:
-        loop.close()
-
+    asyncio.run(main_process())
 
 def collect_processes(collection: Collection) -> List[List[Unit]]:
     process_units, units = _collect_processes(collection)
@@ -215,3 +208,5 @@ def _collect_processes(collection: Collection) -> Tuple[List[List[Unit]], List[U
                 else:
                     units.append(comp)
     return process_units, units
+
+
