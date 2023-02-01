@@ -50,13 +50,10 @@ class BackendProcess(Process):
         self.graph_address = graph_address
 
     def run(self) -> None:
-        # We shield subprocesses from SIGINT because
-        # we will signal term_ev from main process.
-        handler = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
         with new_threaded_event_loop() as loop:
+            # This shields the loop from sigint and allows it to shutdown normally
+            loop.add_signal_handler(signal.SIGINT, logger.debug, 'Caught SIGINT' )
             self.process(loop)
-        signal.signal(signal.SIGINT, handler)
             
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         raise NotImplementedError
@@ -76,7 +73,6 @@ class DefaultBackendProcess(BackendProcess):
 
         asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
 
-        # Set context for all components and initialize them
         main_func = [(unit, unit.main) for unit in self.units if unit.main is not None]
 
         if len(main_func) > 1:
