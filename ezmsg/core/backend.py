@@ -76,6 +76,8 @@ def run(
 ) -> None:
 
     execution_context = setup(component, name, connections, backend_process, graph_address)
+    if execution_context is None:
+        return
 
     with new_threaded_event_loop() as loop:
 
@@ -137,7 +139,7 @@ def setup(
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
     graph_address: AddressType = GRAPHSERVER_ADDR
-) -> ExecutionContext:
+) -> Optional[ExecutionContext]:
 
     component._set_name(name)
     component._set_location()
@@ -182,12 +184,15 @@ def setup(
     elif isinstance(component, Unit):
         processes = [[component]]
 
-    return ExecutionContext(
-        processes, 
-        graph_connections, 
-        backend_process, 
-        graph_address
-    )
+    try:
+        return ExecutionContext(
+            processes, 
+            graph_connections, 
+            backend_process, 
+            graph_address
+        )
+    except ValueError:
+        return None
 
             
 def collect_processes(collection: Collection) -> List[List[Unit]]:
