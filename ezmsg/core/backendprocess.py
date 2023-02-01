@@ -70,24 +70,32 @@ class DefaultBackendProcess(BackendProcess):
 
         self.pubs = dict()
 
+        async def setup_state():
+            for unit in self.units:
+                unit.setup()
+
+        asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
+
         # Set context for all components and initialize them
-        main_func: Optional[Tuple[Unit, Callable]] = None
-        threads: List[Tuple[Unit, Callable]] = []
+        main_func = [(unit, unit.main) for unit in self.units if unit.main is not None]
+        threads = [(unit, thread_fn) for unit in self.units for thread_fn in unit.threads.values()]
 
-        for unit in self.units:
-            unit.setup()
-
-            for thread_fn in unit.threads.values():
-                threads.append((unit, thread_fn))
-
-            if unit.main is not None:
-                if main_func is not None:
-                    raise Exception("Process has more than one main-thread functions")
-                else:
-                    main_func = (unit, unit.main)
-
+        if len(main_func) > 1:
+            details = ''.join([f'\t* {unit.name}:{main_fn.__name__}\n' for unit, main_fn in main_func])
+            raise Exception(
+                f"Process has more than one main-thread functions: {details}\n" + \
+                "Use a Collection and define process_components to separate these units."
+            )
+        elif len(main_func) == 1:
+            main_func = main_func[0]
+        else:
+            main_func = None
 
         fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
+        thread_futures = [
+            loop.run_in_executor(None, thread_fn, unit) 
+            for unit, thread_fn in threads
+        ]
 
         try:
             if main_func is not None:
