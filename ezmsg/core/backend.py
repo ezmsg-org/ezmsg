@@ -1,14 +1,11 @@
 import asyncio
 import logging
-import platform
 
 from socket import socket
-from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
+from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
-
-from dataclasses import dataclass, field
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType, GRAPHSERVER_ADDR
 
@@ -24,12 +21,40 @@ from typing import List, Callable, Tuple, Optional, Type, Set, Union
 
 logger = logging.getLogger( 'ezmsg' )
 
-@dataclass
-class RunContext:
-    process_units: List[List[Unit]]
-    graph_connections: List[Tuple[str, str]]
-    term_ev: EventType = field(default_factory=Event)
-    go_ev: EventType = field(default_factory=Event)
+class ExecutionContext:
+
+    processes: List[BackendProcess]
+    term_ev: EventType
+    start_barrier: BarrierType
+    connections: List[Tuple[str, str]]
+
+    def __init__(
+        self, 
+        processes: List[List[Unit]], 
+        connections: List[Tuple[str, str]] = [],
+        backend_process: Type[BackendProcess] = DefaultBackendProcess,
+        graph_address: AddressType = GRAPHSERVER_ADDR
+    ) -> None:
+
+        if not processes:
+            raise ValueError("Cannot create an execution context for zero processes")
+
+        self.connections = connections
+
+        self.term_ev = Event()
+        self.start_barrier = Barrier(len(processes))
+        self.stop_barrier = Barrier(len(processes))
+
+        self.processes = [
+            backend_process(
+                graph_address, 
+                process_units, 
+                self.term_ev, 
+                self.start_barrier, 
+                self.stop_barrier
+            )
+            for process_units in processes
+        ]
 
 
 def run_system(
@@ -50,10 +75,69 @@ def run(
     graph_address: AddressType = GRAPHSERVER_ADDR
 ) -> None:
 
-    if platform.system() == 'Windows':
-        asyncio.set_event_loop_policy(
-            asyncio.WindowsSelectorEventLoopPolicy()  # type: ignore
-        )
+    execution_context = setup(component, name, connections, backend_process, graph_address)
+
+    with new_threaded_event_loop() as loop:
+
+        async def setup_graph() -> GraphContext:
+            context = await GraphContext(graph_address).__aenter__()
+            for edge in execution_context.connections:
+                await context.connect(*edge)
+            return context
+
+        async def cleanup_graph(context: GraphContext) -> None:
+            await context.__aexit__(None, None, None)
+
+        graph_context = asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
+
+        main_process = execution_context.processes[0]
+        other_processes = execution_context.processes[1:]
+
+        sentinels: Set[Union[Connection, socket, int]] = set()
+        if other_processes:
+            logger.info(f'Spinning up {len(other_processes)} extra processes.')
+
+        for proc in other_processes:
+            proc.start()
+            sentinels.add(proc.sentinel)
+
+        def join_all_other_processes():
+            while len(sentinels):
+                done = wait(sentinels)
+                for sentinel in done:
+                    sentinels.discard(sentinel)
+
+        try:
+            main_process.process(loop)
+            join_all_other_processes()
+            logger.info('All processes exited normally')
+
+        except KeyboardInterrupt:
+            logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+            execution_context.term_ev.set()
+
+            try:
+                join_all_other_processes()
+
+            except KeyboardInterrupt:
+                logger.warning('Interrupt intercepted, force quitting')
+                execution_context.start_barrier.abort()
+                execution_context.stop_barrier.abort()
+                for proc in other_processes:
+                    proc.terminate()
+
+        finally:
+            join_all_other_processes()
+            asyncio.run_coroutine_threadsafe(cleanup_graph(graph_context), loop).result()
+
+
+def setup(
+    component: Component,
+    name: Optional[str] = None,
+    connections: Optional[NetworkDefinition] = None,
+    backend_process: Type[BackendProcess] = DefaultBackendProcess,
+    graph_address: AddressType = GRAPHSERVER_ADDR
+) -> ExecutionContext:
 
     component._set_name(name)
     component._set_location()
@@ -98,88 +182,14 @@ def run(
     elif isinstance(component, Unit):
         processes = [[component]]
 
-    if len(processes) == 0:
-        logger.info('No processes to run.')
-        return
+    return ExecutionContext(
+        processes, 
+        graph_connections, 
+        backend_process, 
+        graph_address
+    )
 
-    term_ev = Event()
-    start_barrier = Barrier(len(processes))
-    stop_barrier = Barrier(len(processes))
-
-    backend_processes = [
-        backend_process(graph_address, process_units, term_ev, start_barrier, stop_barrier)
-        for process_units in processes
-    ]
-
-    async def main_process() -> None:
-
-        async with GraphContext(graph_address) as context:
-
-            for edge in graph_connections:
-                await context.connect(*edge)
-
-            if len(backend_processes) == 1:
-                logger.info('Running in single-process mode')
-
-                try:
-                    with new_threaded_event_loop() as loop:
-                        backend_processes[0].process(loop)
-                except BrokenBarrierError:
-                    logger.error('Could not initialize system, exiting.')
-                except KeyboardInterrupt:
-                    logger.info('Interrupt detected, shutting down')
-                finally:
-                    ...
-
-            else:
-                logger.info(f'Running {len(backend_processes)} processes.')
-                for proc in backend_processes:
-                    proc.start()
-
-                sentinels: Set[Union[Connection, socket, int]] = \
-                    set([proc.sentinel for proc in backend_processes])
-
-                async def join_all():
-                    while len(sentinels):
-                        # FIXME?: `wait` should be called from an executor so as to
-                        # not block the loop, but strangely this seems to raise a 
-                        # KeyboardInterrupt that I cannot catch from this scope
-                        # done = await loop.run_in_executor(None, wait, sentinels)
-                        done = wait(sentinels)
-                        for sentinel in done:
-                            sentinels.discard(sentinel)
-
-                try:
-                    await join_all()
-                    logger.info('All processes exited normally')
-
-                except KeyboardInterrupt:
-                    # At this point it is assumed that KeyboardInterrupt was forwarded
-                    # on to all subprocesses.  Every subprocess should catch/handle this
-                    # KeyboardInterrupt and they will ALL set the term_ev individually
-                    # around the same time.  I hope this isn't an issue.
-                    logger.info('Attempting graceful shutdown, interrupt again to force quit...')
-
-                    term_ev.set() # FIXME?: This line is only necessary for windows... ?!
-
-                    try:
-                        await join_all()
-
-                    except KeyboardInterrupt:
-                        logger.warning('Interrupt intercepted, force quitting')
-                        start_barrier.abort()
-                        stop_barrier.abort()
-                        for proc in backend_processes:
-                            proc.terminate()
-
-                except BrokenBarrierError:
-                    logger.error('Could not initialize system, exiting.')
-
-                finally:
-                    await join_all()
-
-    asyncio.run(main_process())
-
+            
 def collect_processes(collection: Collection) -> List[List[Unit]]:
     process_units, units = _collect_processes(collection)
     if len(units):

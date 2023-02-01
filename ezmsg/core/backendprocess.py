@@ -3,7 +3,7 @@ import logging
 import time
 import traceback
 import threading
-import platform
+import signal
 
 from collections import defaultdict
 from functools import wraps
@@ -50,14 +50,14 @@ class BackendProcess(Process):
         self.graph_address = graph_address
 
     def run(self) -> None:
-        if platform.system() == 'Windows':
-            asyncio.set_event_loop_policy(
-                asyncio.WindowsSelectorEventLoopPolicy()  # type: ignore
-            )
-
+        # We shield subprocesses from SIGINT because
+        # we will signal term_ev from main process.
+        handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         with new_threaded_event_loop() as loop:
             self.process(loop)
-
+        signal.signal(signal.SIGINT, handler)
+            
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         raise NotImplementedError
 
@@ -78,7 +78,6 @@ class DefaultBackendProcess(BackendProcess):
 
         # Set context for all components and initialize them
         main_func = [(unit, unit.main) for unit in self.units if unit.main is not None]
-        threads = [(unit, thread_fn) for unit in self.units for thread_fn in unit.threads.values()]
 
         if len(main_func) > 1:
             details = ''.join([f'\t* {unit.name}:{main_fn.__name__}\n' for unit, main_fn in main_func])
@@ -92,10 +91,6 @@ class DefaultBackendProcess(BackendProcess):
             main_func = None
 
         fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
-        thread_futures = [
-            loop.run_in_executor(None, thread_fn, unit) 
-            for unit, thread_fn in threads
-        ]
 
         try:
             if main_func is not None:
@@ -107,15 +102,13 @@ class DefaultBackendProcess(BackendProcess):
 
             fut.result()
 
-        except KeyboardInterrupt:
-            self.term_ev.set()
-
         finally:
-            fut.result()
             for unit in self.units:
                 unit.shutdown()
 
     async def run_units(self) -> None:
+
+        loop = asyncio.get_running_loop()
 
         async with GraphContext(self.graph_address) as context:
 
@@ -171,14 +164,19 @@ class DefaultBackendProcess(BackendProcess):
                             force_tcp = stream.force_tcp
                         )
 
-            await asyncio.get_running_loop().run_in_executor(None, self.start_barrier.wait)
+            await loop.run_in_executor(None, self.start_barrier.wait)
+
+            threads = [
+                loop.run_in_executor(None, thread_fn, unit) 
+                for unit in self.units 
+                for thread_fn in unit.threads.values()
+            ]
 
             for pub in self.pubs.values():
                 pub.resume()
 
             tasks = [asyncio.create_task(coro, name = name) for name, coro in coros.items()]
 
-            loop = asyncio.get_running_loop()
             monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
 
             try:
@@ -201,6 +199,9 @@ class DefaultBackendProcess(BackendProcess):
                 for task in tasks:
                     with suppress(Complete, NormalTermination, asyncio.CancelledError):
                         await task
+
+                for thread in threads:
+                    await thread
 
         logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
@@ -272,25 +273,14 @@ class DefaultBackendProcess(BackendProcess):
 @contextmanager
 def new_threaded_event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 
-    logger.info( 'creating new threaded event loop')
-
-    try:
-        prev_loop = asyncio.get_running_loop()
-    except:
-        prev_loop = None
-
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    thread = threading.Thread(target=loop.run_forever)
+    thread = threading.Thread(target=loop.run_forever, name='TaskThread')
     thread.start()
 
     try:
         yield loop
+
     finally:
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
         loop.close()
-
-        if prev_loop is not None:
-            asyncio.set_event_loop(prev_loop)
