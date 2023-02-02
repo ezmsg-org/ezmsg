@@ -77,10 +77,9 @@ class DefaultBackendProcess(BackendProcess):
 
         if len(main_func) > 1:
             details = ''.join([f'\t* {unit.name}:{main_fn.__name__}\n' for unit, main_fn in main_func])
-            raise Exception(
-                f"Process has more than one main-thread functions: {details}\n" + \
-                "Use a Collection and define process_components to separate these units."
-            )
+            suggestion = f'Use a Collection and define process_components to separate these units.'
+            raise Exception("Process has more than one main-thread functions\n"+details+suggestion)
+
         elif len(main_func) == 1:
             main_func = main_func[0]
         else:
