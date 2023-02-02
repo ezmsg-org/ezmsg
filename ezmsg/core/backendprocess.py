@@ -11,6 +11,7 @@ from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from contextlib import suppress, contextmanager
+from concurrent.futures import TimeoutError
 
 from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
@@ -153,7 +154,12 @@ class DefaultBackendProcess(BackendProcess):
                 except NormalTermination:
                     self.term_ev.set()
 
-            complete_tasks.result()
+            while True:
+                try:
+                    complete_tasks.result(timeout=0.1)
+                    break
+                except TimeoutError:
+                    pass
 
         finally:
         
