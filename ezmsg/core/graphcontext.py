@@ -17,6 +17,15 @@ from typing import Optional, Tuple, Set, Type, Any, Union
 logger = logging.getLogger('ezmsg')
 
 class GraphContext:
+    """ 
+    GraphContext maintains a list of created 
+    publishers, subscribers, and connections in the graph.
+    Once the context is no-longer-needed, we can revert()
+    changes in the graph which disconnects publishers and removes
+    changes that this context made.
+    It also maintains a context manager that ensures 
+    graph and SHMServer are up.
+    """
 
     _address: Address
     _clients: Set[Union[Publisher,Subscriber]]
@@ -32,6 +41,7 @@ class GraphContext:
         self._edges = set()
         self._shm_server = None
         self._graph_server = None
+        self._connection = GraphServer.Connection(self._address)
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
         pub = await Publisher.create(topic, self._address, **kwargs)
@@ -60,10 +70,23 @@ class GraphContext:
     async def resume(self) -> None:
         await self._connection.resume()
 
-    async def __aenter__(self):
+    async def _ensure_servers(self) -> None:
         self._shm_server = await SHMServer.ensure_running()
         self._graph_server = await GraphServer.ensure_running(self._address)
-        self._connection = GraphServer.Connection(self._address)
+
+    async def _shutdown_servers(self) -> None:
+        if self._graph_server is not None:
+            logger.info( 'Terminating GraphServer' )
+            self._graph_server.stop()
+        self._graph_server = None
+
+        if self._shm_server is not None:
+            logger.info( 'Terminating SHMServer' )
+            self._shm_server.stop()
+        self._shm_server = None
+
+    async def __aenter__(self) -> "GraphContext":
+        await self._ensure_servers()
         return self
 
     async def __aexit__(self,
@@ -71,10 +94,12 @@ class GraphContext:
                         exc_v: Optional[Any],
                         exc_tb: Optional[TracebackType]
                         ) -> bool:
-        await self._exit_context()
+
+        await self.revert()
+        await self._shutdown_servers()
         return False
 
-    async def _exit_context(self) -> None:
+    async def revert(self) -> None:
         for client in self._clients:
             client.close()
 
@@ -87,12 +112,3 @@ class GraphContext:
                 await self._connection.disconnect(*edge)
             except (ConnectionRefusedError, BrokenPipeError, ConnectionResetError) as e:
                 logger.warn(f'Could not remove edge {edge} from GraphServer: {e}')
-
-        if self._graph_server is not None:
-            logger.info( 'Terminating GraphServer' )
-            self._graph_server.stop()
-
-        if self._shm_server is not None:
-            logger.info( 'Terminating SHMServer' )
-            self._shm_server.stop()
-    

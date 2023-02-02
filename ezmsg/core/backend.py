@@ -105,7 +105,7 @@ def run(
 
         def join_all_other_processes():
             while len(sentinels):
-                done = wait(sentinels)
+                done = wait(sentinels, timeout=0.1)
                 for sentinel in done:
                     sentinels.discard(sentinel)
 
