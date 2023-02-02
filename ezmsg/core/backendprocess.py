@@ -165,7 +165,6 @@ class DefaultBackendProcess(BackendProcess):
             self.term_ev.set()
 
             complete_tasks.result()
-            monitor.result()
 
             # TODO: Currently, threads have no shutdown mechanism...
             # We should really change the call signature for @ez.thread
