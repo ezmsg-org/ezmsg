@@ -3,7 +3,6 @@ import logging
 import time
 import traceback
 import threading
-import signal
 
 from collections import defaultdict
 from functools import wraps
@@ -21,7 +20,7 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 
-from typing import List, Dict, Callable, Any, Tuple, Optional, Set, Coroutine, DefaultDict, Generator
+from typing import List, Dict, Callable, Any, Set, Coroutine, DefaultDict, Generator
 
 logger = logging.getLogger('ezmsg')
 
@@ -51,9 +50,10 @@ class BackendProcess(Process):
 
     def run(self) -> None:
         with new_threaded_event_loop() as loop:
-            # This shields the loop from sigint and allows it to shutdown normally
-            loop.add_signal_handler(signal.SIGINT, logger.debug, 'Caught SIGINT' )
-            self.process(loop)
+            try:
+                self.process(loop)
+            except KeyboardInterrupt:
+                logger.debug( 'Process Interrupted.' )
             
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         raise NotImplementedError
@@ -86,7 +86,65 @@ class DefaultBackendProcess(BackendProcess):
         else:
             main_func = None
 
-        fut = asyncio.run_coroutine_threadsafe(self.run_units(), loop)
+        context = GraphContext(self.graph_address)
+        coros: Dict[str, Coroutine[Any, Any, None]] = dict()
+
+        for unit in self.units:
+
+            sub_callables: DefaultDict[str, Set[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(set)
+            for task in unit.tasks.values():
+                task_callable = self.task_wrapper(unit, task)
+                if hasattr(task, SUBSCRIBES_ATTR):
+                    sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
+                    sub_topic = unit.streams[sub_stream.name].address
+                    sub_callables[sub_topic].add(task_callable)
+                else:
+                    task_name = f'TASK|{unit.address}:{task.__name__}'
+                    coros[task_name]=task_callable()
+
+            for stream in unit.streams.values():
+
+                if isinstance(stream, InputStream):
+                    logger.debug(f'Creating Subscriber from {stream}')
+                    sub = asyncio.run_coroutine_threadsafe(context.subscriber(stream.address), loop).result()
+                    task_name = f'SUBSCRIBER|{stream.address}'
+                    coros[task_name] = handle_subscriber(sub, sub_callables[stream.address])
+
+                elif isinstance(stream, OutputStream):
+                    logger.debug(f'Creating Publisher from {stream}')
+                    self.pubs[stream.address] = asyncio.run_coroutine_threadsafe(
+                        context.publisher(
+                            stream.address,
+                            host = stream.host,
+                            port = stream.port,
+                            num_buffers = stream.num_buffers,
+                            buf_size = stream.buf_size,
+                            start_paused = True, 
+                            force_tcp = stream.force_tcp
+                        ), loop = loop
+                    ).result()
+
+        self.start_barrier.wait()
+
+        threads = [
+            loop.run_in_executor(None, thread_fn, unit) 
+            for unit in self.units 
+            for thread_fn in unit.threads.values()
+        ]
+
+        for pub in self.pubs.values():
+            pub.resume()
+
+        tasks = [loop.create_task(coro, name = name) for name, coro in coros.items()]
+
+        async def _complete_tasks() -> None:
+            for task in asyncio.as_completed(tasks):
+                with suppress(Complete, NormalTermination, asyncio.CancelledError):
+                    await task
+        
+        complete_tasks = asyncio.run_coroutine_threadsafe(_complete_tasks(), loop = loop)
+
+        monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
 
         try:
             if main_func is not None:
@@ -96,108 +154,34 @@ class DefaultBackendProcess(BackendProcess):
                 except NormalTermination:
                     self.term_ev.set()
 
-            fut.result()
+            complete_tasks.result()
 
         finally:
-            for unit in self.units:
-                unit.shutdown()
+        
+            # This stop barrier prevents publishers/subscribers
+            # from getting destroyed before all other processes have 
+            # drained communication channels
+            logger.debug(f'Waiting at stop barrier')
+            self.stop_barrier.wait()
+            self.term_ev.set()
 
-    async def run_units(self) -> None:
+            complete_tasks.result()
+            monitor.result()
 
-        loop = asyncio.get_running_loop()
+            # TODO: Currently, threads have no shutdown mechanism...
+            # We should really change the call signature for @ez.thread
+            # functions to receive the term_ev so that the user can 
+            # terminate the thread when shutdown occurs.
+            # for thread in threads:
+            #     thread.result()
 
-        async with GraphContext(self.graph_address) as context:
-
-            async def handle_subscriber(sub: Subscriber, callables: Set[Callable[..., Coroutine[Any, Any, None]]]):
-                while True:
-                    if not callables:
-                        break
-                    async with sub.recv_zero_copy() as msg:
-                        try:
-                            for callable in list(callables):
-                                try:
-                                    await callable(msg)
-                                except (Complete, NormalTermination):
-                                    callables.remove(callable)
-                        finally:
-                            del msg
-
-                    if len(callables) > 1:
-                        await asyncio.sleep(0)
-
-            coros: Dict[str, Coroutine[Any, Any, None]] = dict()
-
-            for unit in self.units:
-
-                sub_callables: DefaultDict[str, Set[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(set)
-                for task in unit.tasks.values():
-                    task_callable = self.task_wrapper(unit, task)
-                    if hasattr(task, SUBSCRIBES_ATTR):
-                        sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
-                        sub_topic = unit.streams[sub_stream.name].address
-                        sub_callables[sub_topic].add(task_callable)
-                    else:
-                        task_name = f'TASK|{unit.address}:{task.__name__}'
-                        coros[task_name]=task_callable()
-
-                for stream in unit.streams.values():
-
-                    if isinstance(stream, InputStream):
-                        logger.debug(f'Creating Subscriber from {stream}')
-                        sub = await context.subscriber(stream.address)
-                        task_name = f'SUBSCRIBER|{stream.address}'
-                        coros[task_name] = handle_subscriber(sub, sub_callables[stream.address])
-
-                    elif isinstance(stream, OutputStream):
-                        logger.debug(f'Creating Publisher from {stream}')
-                        self.pubs[stream.address] = await context.publisher(
-                            stream.address,
-                            host = stream.host,
-                            port = stream.port,
-                            num_buffers = stream.num_buffers,
-                            buf_size = stream.buf_size,
-                            start_paused = True, 
-                            force_tcp = stream.force_tcp
-                        )
-
-            await loop.run_in_executor(None, self.start_barrier.wait)
-
-            threads = [
-                loop.run_in_executor(None, thread_fn, unit) 
-                for unit in self.units 
-                for thread_fn in unit.threads.values()
-            ]
-
-            for pub in self.pubs.values():
-                pub.resume()
-
-            tasks = [asyncio.create_task(coro, name = name) for name, coro in coros.items()]
-
-            monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
-
-            try:
-                for task in asyncio.as_completed(tasks):
-                    with suppress(Complete, NormalTermination, asyncio.CancelledError):
-                        await task
-
-            finally:
-            
-                # This stop barrier prevents publishers/subscribers
-                # from getting destroyed before all other processes have 
-                # drained communication channels
-                logger.debug(f'Waiting at stop barrier')
-                await asyncio.get_running_loop().run_in_executor(None, self.stop_barrier.wait)
-
-                logger.debug(f'Terminating monitor')
-                self.term_ev.set()
-                await monitor # should cancel all tasks
-
-                for task in tasks:
-                    with suppress(Complete, NormalTermination, asyncio.CancelledError):
-                        await task
-
-                for thread in threads:
-                    await thread
+            logger.debug(f'Shutting down Units')
+            async def shutdown_units() -> None:
+                for unit in self.units:
+                    unit.shutdown()
+        
+            asyncio.run_coroutine_threadsafe(shutdown_units(), loop = loop).result()
+            asyncio.run_coroutine_threadsafe(context.revert(), loop = loop).result()
 
         logger.debug(f'Process Completed. All Done: {[task.get_name() for task in tasks]}')
 
@@ -266,6 +250,23 @@ class DefaultBackendProcess(BackendProcess):
 
         return wrapped_task
 
+async def handle_subscriber(sub: Subscriber, callables: Set[Callable[..., Coroutine[Any, Any, None]]]):
+    while True:
+        if not callables:
+            break
+        async with sub.recv_zero_copy() as msg:
+            try:
+                for callable in list(callables):
+                    try:
+                        await callable(msg)
+                    except (Complete, NormalTermination):
+                        callables.remove(callable)
+            finally:
+                del msg
+
+        if len(callables) > 1:
+            await asyncio.sleep(0)
+
 @contextmanager
 def new_threaded_event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 
@@ -277,6 +278,7 @@ def new_threaded_event_loop() -> Generator[asyncio.AbstractEventLoop, None, None
         yield loop
 
     finally:
+        logger.debug('Stopping and closing task thread')
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
         loop.close()
