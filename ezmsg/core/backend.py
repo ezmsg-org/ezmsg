@@ -72,10 +72,19 @@ def run(
     name: Optional[str] = None,
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: AddressType = GRAPHSERVER_ADDR
+    graph_address: AddressType = GRAPHSERVER_ADDR,
+    force_single_process: bool = False
 ) -> None:
 
-    execution_context = setup(component, name, connections, backend_process, graph_address)
+    execution_context = setup(
+        component, 
+        name, 
+        connections, 
+        backend_process, 
+        graph_address,
+        force_single_process
+    )
+    
     if execution_context is None:
         return
 
@@ -138,7 +147,8 @@ def setup(
     name: Optional[str] = None,
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: AddressType = GRAPHSERVER_ADDR
+    graph_address: AddressType = GRAPHSERVER_ADDR,
+    force_single_process: bool = False
 ) -> Optional[ExecutionContext]:
 
     component._set_name(name)
@@ -183,6 +193,9 @@ def setup(
         crawl_components(component, configure_collections)
     elif isinstance(component, Unit):
         processes = [[component]]
+
+    if force_single_process:
+        processes = [[u for pu in processes for u in pu]]
 
     try:
         return ExecutionContext(
