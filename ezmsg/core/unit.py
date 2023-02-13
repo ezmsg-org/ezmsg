@@ -4,27 +4,20 @@ from .stream import Stream, InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
-from typing import (
-    Any,
-    Dict,
-    List,
-    Tuple,
-    Callable,
-    Optional
-)
+from typing import Any, Dict, List, Tuple, Callable, Optional
 
 import logging
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
 
-MAIN_ATTR = "main"
-THREAD_ATTR = "thread"
-TASK_ATTR = "task"
-PUBLISHES_ATTR = "publishes"
-SUBSCRIBES_ATTR = "subscribes"
-TIMEIT_ATTR = "timeit"
-ZERO_COPY_ATTR = "zero-copy"
-PROCESS_ATTR = "process"
+MAIN_ATTR = "__ez_main__"
+THREAD_ATTR = "__ez_thread__"
+TASK_ATTR = "__ez_task__"
+PUBLISHES_ATTR = "__ez_publishes__"
+SUBSCRIBES_ATTR = "__ez_subscribes__"
+TIMEIT_ATTR = "__ez_timeit__"
+ZERO_COPY_ATTR = "__ez_zerocopy__"
+PROCESS_ATTR = "__ez_process__"
 
 
 class UnitMeta(ComponentMeta):
@@ -99,7 +92,7 @@ def publisher(stream: OutputStream):
     """A decorator for a method that publishes to a stream in the task/messaging thread"""
 
     if not isinstance(stream, OutputStream):
-        raise ValueError(f'Cannot publish to object of type {type(stream)}')
+        raise ValueError(f"Cannot publish to object of type {type(stream)}")
 
     def pub_factory(func):
         published_streams: List[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
@@ -114,7 +107,7 @@ def subscriber(stream: InputStream, zero_copy: bool = False):
     """A decorator for a method that subscribes to a stream in the task/messaging thread"""
 
     if not isinstance(stream, InputStream):
-        raise ValueError(f'Cannot subscribe to object of type {type(stream)}')
+        raise ValueError(f"Cannot subscribe to object of type {type(stream)}")
 
     def sub_factory(func):
         subscribed_streams: Optional[InputStream] = getattr(func, SUBSCRIBES_ATTR, None)
