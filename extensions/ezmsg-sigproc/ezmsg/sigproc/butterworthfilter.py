@@ -1,5 +1,4 @@
-from dataclasses import dataclass, field
-import logging
+from dataclasses import dataclass
 
 import ezmsg.core as ez
 import scipy.signal
@@ -8,9 +7,6 @@ import numpy as np
 from .filter import Filter, FilterState, FilterSettings
 
 from typing import Optional, Tuple, Union
-
-logger = logging.getLogger('ezmsg')
-
 
 @dataclass( frozen = True )
 class ButterworthFilterDesign:
