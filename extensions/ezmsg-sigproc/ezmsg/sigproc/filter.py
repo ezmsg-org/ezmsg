@@ -5,7 +5,7 @@ import scipy.signal
 import numpy as np
 import asyncio
 
-from ezmsg.util.messages import AxisArray, DimensionalAxis
+from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import AsyncGenerator, Optional, Tuple
 
@@ -79,10 +79,9 @@ class Filter(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def apply_filter(self, msg: AxisArray) -> AsyncGenerator:
         axis_name = msg.dims[0] if self.STATE.axis is None else self.STATE.axis
-        axis_idx = msg.get_axis_num(axis_name)
-        axis = msg.axes.get(axis_name, None)
-
-        fs = 1.0 if not isinstance(axis, DimensionalAxis) else 1.0 / axis.gain
+        axis_idx = msg.get_axis_idx(axis_name)
+        axis = msg.get_axis(axis_name)
+        fs = 1.0 / axis.gain
 
         if self.STATE.fs != fs and self.STATE.filt_designed is True:
             self.STATE.fs = fs
@@ -95,15 +94,13 @@ class Filter(ez.Unit):
             await self.STATE.filt_set.wait()
             ez.logger.info("Filter coefficients received.")
 
-        arr_in: np.ndarray
+        arr_in = msg.data
 
         # If the array is one dimensional, add a temporary second dimension so that the math works out
         one_dimensional = False
-        if msg.data.ndim == 1:
-            arr_in = np.expand_dims(msg.data, axis=1)
+        if arr_in.ndim == 1:
+            arr_in = np.expand_dims(arr_in, axis=1)
             one_dimensional = True
-        else:
-            arr_in = msg.data
 
         # We will perform filter with time dimension as last axis
         arr_in = np.moveaxis(arr_in, axis_idx, -1)
@@ -130,4 +127,4 @@ class Filter(ez.Unit):
         if one_dimensional:
             arr_out = np.squeeze(arr_out, axis=1)
 
-        yield (self.OUTPUT_SIGNAL, replace(msg, data=arr_out))
+        yield self.OUTPUT_SIGNAL, replace(msg, data = arr_out), 

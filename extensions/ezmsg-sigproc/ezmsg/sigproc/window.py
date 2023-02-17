@@ -4,7 +4,7 @@ import ezmsg.core as ez
 import numpy as np
 import numpy.typing as npt
 
-from ezmsg.util.messages import AxisArray, DimensionalAxis
+from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import (
     AsyncGenerator,
@@ -54,7 +54,6 @@ class Window(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
 
-        # TODO: Handle coordinates appropriately!
         # TODO: Handle axes appropriately!
 
         if self.STATE.cur_settings.window_dur is None:
@@ -62,10 +61,10 @@ class Window(ez.Unit):
             return
 
         axis_name = msg.dims[0] if self.STATE.cur_settings.axis is None else self.STATE.cur_settings.axis
-        axis_idx = msg.get_axis_num(axis_name)
-        axis = msg.axes.get(axis_name, None)
+        axis_idx = msg.get_axis_idx(axis_name)
+        axis = msg.get_axis(axis_name)
         
-        fs = 1.0 / axis.gain if isinstance(axis, DimensionalAxis) else 1.0
+        fs = 1.0 / axis.gain
 
         # Create a view of data with time axis at dim 0
         time_view = np.moveaxis(msg.data, axis_idx, 0)

@@ -5,7 +5,7 @@ from dataclasses import replace
 import ezmsg.core as ez
 import numpy as np
 
-from ezmsg.util.messages import AxisArray, time_axis, DimensionalAxis
+from ezmsg.util.messages.axisarray import AxisArray
 
 from .butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
@@ -68,7 +68,7 @@ class Counter(ez.Unit):
                 t_samp,
                 dims = ['time', 'ch'],
                 axes = dict( 
-                    time = time_axis(
+                    time = AxisArray.Axis.TimeAxis(
                         fs = self.SETTINGS.fs, 
                         offset = time.time()
                     )
@@ -116,8 +116,8 @@ class SinGenerator(ez.Unit):
         axis_name = self.SETTINGS.time_axis
         if axis_name is None:
             axis_name = msg.dims[0]
-        axis = msg.axes.get(axis_name, None)
-        fs = 1.0 / axis.gain if isinstance(axis, DimensionalAxis) else 1.0
+
+        fs = msg.get_axis(axis_name).gain
         t_sec = msg.data / fs
         w = self.STATE.ang_freq * t_sec
         out_data = self.SETTINGS.amp * np.sin(w + self.SETTINGS.phase)
