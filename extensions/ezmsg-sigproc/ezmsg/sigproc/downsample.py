@@ -1,9 +1,10 @@
 from dataclasses import dataclass, replace
 
+from ezmsg.util.messages import AxisArray, DimensionalAxis
+
 import ezmsg.core as ez
 import numpy as np
-
-from .messages import TSMessage as TimeSeriesMessage
+import numpy.typing as npt
 
 from typing import (
     AsyncGenerator,
@@ -12,6 +13,7 @@ from typing import (
 
 @dataclass( frozen = True )
 class DownsampleSettingsMessage:
+    axis: Optional[str] = None
     factor: int = 1
 
 
@@ -30,8 +32,8 @@ class Downsample(ez.Unit):
     STATE: DownsampleState
 
     INPUT_SETTINGS = ez.InputStream(DownsampleSettingsMessage)
-    INPUT_SIGNAL = ez.InputStream(TimeSeriesMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TimeSeriesMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
@@ -42,12 +44,18 @@ class Downsample(ez.Unit):
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def on_signal(self, msg: TimeSeriesMessage) -> AsyncGenerator:
+    async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
 
         if self.STATE.cur_settings.factor < 1:
             raise ValueError("Downsample factor must be at least 1 (no downsampling)")
 
-        samples = np.arange(msg.n_time) + self.STATE.s_idx
+        axis_name = self.STATE.cur_settings.axis
+        if axis_name is None:
+            axis_name = msg.dims[0]
+        axis = msg.axes.get(axis_name, None)
+        axis_idx = msg.get_axis_num(axis_name)
+
+        samples = np.arange(msg.data.shape[axis_idx]) + self.STATE.s_idx
         samples = samples % self.STATE.cur_settings.factor
         self.STATE.s_idx = samples[-1] + 1
 
@@ -55,15 +63,24 @@ class Downsample(ez.Unit):
 
         if len(pub_samples) != 0:
 
-            time_view = np.moveaxis(msg.data, msg.time_dim, 0)
-            data_down = time_view[pub_samples, ...]
-            data_down = np.moveaxis(data_down, 0, -(msg.time_dim))
+            out_axes = msg.axes
+            if isinstance(axis, DimensionalAxis):
+                axis.gain *= self.STATE.cur_settings.factor
+                out_axes[axis_name] = axis
+            
+            out_coords = msg.coords
+            for coord in out_coords.values():
+                if axis_name in coord.axes:
+                    caxis_idx = coord.get_axis_num(axis_name)
+                    coord.data = grab(coord.data, pub_samples, caxis_idx)
 
-            yield (
-                self.OUTPUT_SIGNAL,
-                replace(
-                    msg,
-                    data=data_down,
-                    fs=msg.fs / self.SETTINGS.factor
-                )
-            )
+            down_data = grab(msg.data, pub_samples, axis_idx)
+
+            out_msg = replace(msg, data = down_data, axes = out_axes, coords = out_coords)
+            out_msg.axes = out_axes
+
+            yield ( self.OUTPUT_SIGNAL, out_msg )
+
+def grab( data: npt.NDArray, index: npt.ArrayLike, axis_idx: int ):
+    sl = [index if d == axis_idx else slice(None) for d in range(data.ndim)]
+    return data[tuple(sl)]
