@@ -1,21 +1,20 @@
 import asyncio
+import time
 from dataclasses import replace
 
 import ezmsg.core as ez
 import numpy as np
 
-from .messages import TSMessage
-from .butterworthfilter import (
-    ButterworthFilter, 
-    ButterworthFilterSettings, 
-    ButterworthFilterDesign
-)
+from ezmsg.util.messages import AxisArray, time_axis, DimensionalAxis
+
+from .butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
 from typing import Optional, AsyncGenerator, Union
 
 
 class CounterSettings(ez.Settings):
     """
+    TODO: Adapt this to use ezmsg.util.rate?
     NOTE: This module uses asyncio.sleep to delay appropriately in realtime mode.
     This method of sleeping/yielding execution priority has quirky behavior with
     sub-millisecond sleep periods which may result in unexpected behavior (e.g.
@@ -42,7 +41,11 @@ class Counter(ez.Unit):
     SETTINGS: CounterSettings
     STATE: CounterState
 
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
+    def initialize(self) -> None:
+        if isinstance(self.SETTINGS.dispatch_rate, str) and self.SETTINGS.dispatch_rate != 'realtime':
+            raise ValueError(f'Unknown dispatch_rate: {self.SETTINGS.dispatch_rate}')
 
     @ez.publisher(OUTPUT_SIGNAL)
     async def publish(self) -> AsyncGenerator:
@@ -61,49 +64,61 @@ class Counter(ez.Unit):
 
             t_samp = np.tile( t_samp, ( 1, self.SETTINGS.n_ch ) )
 
-            yield (
-                self.OUTPUT_SIGNAL,
-                TSMessage(
-                    t_samp,
-                    fs=self.SETTINGS.fs
+            out = AxisArray(
+                t_samp,
+                dims = ['time', 'ch'],
+                axes = dict( 
+                    time = time_axis(
+                        fs = self.SETTINGS.fs, 
+                        offset = time.time()
+                    )
                 )
             )
 
+            yield self.OUTPUT_SIGNAL, out
+
             if self.SETTINGS.dispatch_rate is not None:
-                await asyncio.sleep(
-                    block_dur if self.SETTINGS.dispatch_rate == 'realtime'
-                    else (1.0 / self.SETTINGS.dispatch_rate)
-                )
+                if isinstance(self.SETTINGS.dispatch_rate, str):
+                    if self.SETTINGS.dispatch_rate == 'realtime':
+                        await asyncio.sleep(block_dur)
+                else:
+                    await asyncio.sleep(1.0 / self.SETTINGS.dispatch_rate)
 
 
 class SinGeneratorSettings(ez.Settings):
+    time_axis: Optional[str] = 'time'
     freq: float = 1.0  # Oscillation frequency in Hz
     amp: float = 1.0  # Amplitude
     phase: float = 0.0  # Phase offset (in radians)
 
 
 class SinGeneratorState(ez.State):
-    ang_freq: Optional[float] = None  # pre-calculated angular frequency in radians
+    ang_freq: float # pre-calculated angular frequency in radians
 
 
 class SinGenerator(ez.Unit):
     SETTINGS: SinGeneratorSettings
     STATE: SinGeneratorState
 
-    INPUT_SIGNAL = ez.InputStream(TSMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     def initialize(self) -> None:
         self.STATE.ang_freq = 2.0 * np.pi * self.SETTINGS.freq
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def generate(self, msg: TSMessage) -> AsyncGenerator:
+    async def generate(self, msg: AxisArray) -> AsyncGenerator:
         """
         msg is assumed to be a monotonically increasing counter ..
         .. or at least a counter with an intelligently chosen modulus
         """
-        t_sec = msg.data / msg.fs
+        axis_name = self.SETTINGS.time_axis
+        if axis_name is None:
+            axis_name = msg.dims[0]
+        axis = msg.axes.get(axis_name, None)
+        fs = 1.0 / axis.gain if isinstance(axis, DimensionalAxis) else 1.0
+        t_sec = msg.data / fs
         w = self.STATE.ang_freq * t_sec
         out_data = self.SETTINGS.amp * np.sin(w + self.SETTINGS.phase)
         yield (self.OUTPUT_SIGNAL, replace(msg, data=out_data))
@@ -124,7 +139,7 @@ class Oscillator(ez.Collection):
 
     SETTINGS: OscillatorSettings
 
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     COUNTER = Counter()
     SIN = SinGenerator()
@@ -165,12 +180,12 @@ class Oscillator(ez.Collection):
 
 
 class RandomGenerator(ez.Unit):
-    INPUT_SIGNAL = ez.InputStream(TSMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def generate(self, msg: TSMessage) -> AsyncGenerator:
+    async def generate(self, msg: AxisArray) -> AsyncGenerator:
         random_data = np.random.normal(size=msg.shape)
         yield (self.OUTPUT_SIGNAL, replace(msg, data=random_data))
 
@@ -187,7 +202,7 @@ class WhiteNoise(ez.Collection):
 
     SETTINGS: NoiseSettings
 
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     COUNTER = Counter()
     RANDOM = RandomGenerator()
@@ -214,7 +229,7 @@ class PinkNoise(ez.Collection):
 
     SETTINGS: WhiteNoiseSettings
 
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     WHITE_NOISE = WhiteNoise()
     FILTER = ButterworthFilter()

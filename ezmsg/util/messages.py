@@ -18,13 +18,11 @@ class DimensionalAxis(Axis):
     gain: float = 1.0
     offset: float = 0.0
 
-class TimeAxis(DimensionalAxis):
-    def __init__( self, fs: float ) -> None:
-        super().__init__( unit = 's', gain = 1.0 / fs )
 
-    @property
-    def fs( self ) -> float:
-        return 1.0 / self.gain
+def time_axis( fs: float, offset: float = 0.0 ) -> DimensionalAxis:
+    """ Creates a time axis with dimension of seconds """
+    return DimensionalAxis( unit = 's', gain = 1.0 / fs, offset = offset )
+
 
 @dataclass
 class CategoricalAxis(Axis):
@@ -67,8 +65,11 @@ class AxisArray:
     def get_axis_num( self, dim: str ) -> int:
         return self._axis_num[ dim ]
 
+    def as2d(self, dim: str) -> npt.NDArray:
+        return as2d(self.data, self.get_axis_num(dim))
+
     @contextmanager
-    def view2d( self, dim: str ) -> Generator[np.ndarray, None, None]:
+    def view2d( self, dim: str ) -> Generator[npt.NDArray, None, None]:
         with view2d( self.data, self.get_axis_num( dim ) ) as arr:
             yield arr
 
@@ -111,14 +112,7 @@ def concat( *aas: AxisArray, axis: str ) -> AxisArray:
 
     return AxisArray(arr, dims = aas[0].dims, axes = aas[0].axes, coords = coords)
 
-
-@contextmanager
-def view2d(in_arr: npt.NDArray, axis: int = 0) -> Generator[np.ndarray, None, None]:
-    """ 
-    2D-View (el x ch) of the array, no matter what input dimensionality is.
-    Yields a view of underlying data when possible, changes to data in yielded 
-    array will always be reflected in self.data, either via the view or copying
-    """
+def as2d(in_arr: npt.NDArray, axis: int = 0) -> npt.NDArray:
     arr = in_arr
     if arr.ndim == 0:
         arr = arr.reshape(1, 1)
@@ -128,6 +122,16 @@ def view2d(in_arr: npt.NDArray, axis: int = 0) -> Generator[np.ndarray, None, No
     arr = np.moveaxis(arr, axis, 0)
     remaining_shape = arr.shape[1:]
     arr = arr.reshape(arr.shape[0], np.prod(remaining_shape))
+    return arr
+
+@contextmanager
+def view2d(in_arr: npt.NDArray, axis: int = 0) -> Generator[npt.NDArray, None, None]:
+    """ 
+    2D-View (el x ch) of the array, no matter what input dimensionality is.
+    Yields a view of underlying data when possible, changes to data in yielded 
+    array will always be reflected in self.data, either via the view or copying
+    """
+    arr = as2d(in_arr, axis)
 
     yield arr
 
