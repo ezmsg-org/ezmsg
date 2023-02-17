@@ -2,7 +2,7 @@ import ezmsg.core as ez
 
 import scipy.signal
 
-from ezmsg.util.messages import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray
 
 from .downsample import Downsample, DownsampleSettings
 from .filter import Filter, FilterCoefficients, FilterSettings

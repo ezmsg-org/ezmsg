@@ -3,7 +3,7 @@ import time
 
 import numpy.typing as npt
 
-from ezmsg.util.messages import AxisArray, time_axis
+from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import Optional
 
@@ -21,6 +21,6 @@ def TSMessage( data: npt.NDArray, fs: float = 1.0, time_dim: int = 0, timestamp:
     dims = [f'dim_{i}' for i in range(data.ndim)]
     dims[time_dim] = 'time'
     offset = time.time() if timestamp is None else timestamp
-    axis = time_axis(fs, offset = offset)
+    axis = AxisArray.Axis.TimeAxis(fs, offset = offset)
     return AxisArray( data, dims = dims, axes = dict( time = axis ) )
 
