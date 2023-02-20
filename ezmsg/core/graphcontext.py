@@ -5,13 +5,16 @@ from .shmserver import SHMServer
 from .graphserver import GraphServer
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .netprotocol import AddressType, GRAPHSERVER_ADDR, Address
+from .netprotocol import (
+    AddressType,
+    GRAPHSERVER_ADDR,
+    Address
+)
 
 from types import TracebackType
 from typing import Optional, Tuple, Set, Type, Any, Union
 
-logger = logging.getLogger("ezmsg")
-
+logger = logging.getLogger('ezmsg')
 
 class GraphContext:
     """ 
@@ -25,7 +28,7 @@ class GraphContext:
     """
 
     _address: Address
-    _clients: Set[Union[Publisher, Subscriber]]
+    _clients: Set[Union[Publisher,Subscriber]]
     _edges: Set[Tuple[str, str]]
 
     _shm_server: Optional[SHMServer]
@@ -73,12 +76,12 @@ class GraphContext:
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
-            logger.info("Terminating GraphServer")
+            logger.info( 'Terminating GraphServer' )
             self._graph_server.stop()
         self._graph_server = None
 
         if self._shm_server is not None:
-            logger.info("Terminating SHMServer")
+            logger.info( 'Terminating SHMServer' )
             self._shm_server.stop()
         self._shm_server = None
 
@@ -86,12 +89,11 @@ class GraphContext:
         await self._ensure_servers()
         return self
 
-    async def __aexit__(
-        self,
-        exc_t: Optional[Type[Exception]],
-        exc_v: Optional[Any],
-        exc_tb: Optional[TracebackType],
-    ) -> bool:
+    async def __aexit__(self,
+                        exc_t: Optional[Type[Exception]],
+                        exc_v: Optional[Any],
+                        exc_tb: Optional[TracebackType]
+                        ) -> bool:
 
         await self.revert()
         await self._shutdown_servers()
@@ -109,4 +111,4 @@ class GraphContext:
             try:
                 await self._connection.disconnect(*edge)
             except (ConnectionRefusedError, BrokenPipeError, ConnectionResetError) as e:
-                logger.warn(f"Could not remove edge {edge} from GraphServer: {e}")
+                logger.warn(f'Could not remove edge {edge} from GraphServer: {e}')

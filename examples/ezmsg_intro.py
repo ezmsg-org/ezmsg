@@ -28,7 +28,6 @@ from typing import AsyncGenerator, Tuple
 class CountMessage:
     value: int
 
-
 # Also if you've not run into typehinting before, you'll see a lot of
 # it in this code.  Dataclasses use typehinting for fields.  This
 # type information can be very helpful when working in editors like
@@ -45,7 +44,6 @@ class CountMessage:
 
 class CountSettings(ez.Settings):
     iterations: int
-
 
 # Next, create a Unit that will generate the count. Every Unit should
 # contain inputs and/or outputs and at least one function which
@@ -70,9 +68,10 @@ class Count(ez.Unit):
     async def count(self) -> AsyncGenerator:
         count = 0
         while count < self.SETTINGS.iterations:
-            yield (self.OUTPUT_COUNT, CountMessage(value=count))
+            yield (self.OUTPUT_COUNT, CountMessage(
+                value=count
+            ))
             count = count + 1
-
 
 # The next `Unit` in the chain should accept a `CountMessage` from the
 # first `Unit`, add 1 to its value, and yield a new CountMessage. To
@@ -93,8 +92,9 @@ class AddOne(ez.Unit):
     @ez.subscriber(INPUT_COUNT)
     @ez.publisher(OUTPUT_PLUS_ONE)
     async def on_message(self, message: CountMessage) -> AsyncGenerator:
-        yield (self.OUTPUT_PLUS_ONE, CountMessage(value=message.value + 1))
-
+        yield (self.OUTPUT_PLUS_ONE, CountMessage(
+            value=message.value + 1
+        ))
 
 # Finally, the last unit should print the value of any messages it
 # receives.
@@ -133,12 +133,11 @@ class PrintValue(ez.Unit):
     @ez.subscriber(INPUT)
     async def on_message(self, message: CountMessage) -> None:
 
-        print(f"Current Count: {message.value}")
+        print(f'Current Count: {message.value}')
 
         self.STATE.current_iteration = self.STATE.current_iteration + 1
         if self.STATE.current_iteration == self.SETTINGS.iterations:
             raise ez.NormalTermination
-
 
 # The last thing to do before we have a fully functioning ezmsg
 # pipeline is to define any Settings that have been declared and to
@@ -162,15 +161,19 @@ class CountSystem(ez.Collection):
 
     # Use the configure function to apply settings to sub-Units
     def configure(self) -> None:
-        self.COUNT.apply_settings(CountSettings(iterations=self.SETTINGS.iterations))
+        self.COUNT.apply_settings(
+            CountSettings(iterations=self.SETTINGS.iterations)
+        )
 
-        self.PRINT.apply_settings(PrintSettings(iterations=self.SETTINGS.iterations))
+        self.PRINT.apply_settings(
+            PrintSettings(iterations=self.SETTINGS.iterations)
+        )
 
     # Use the network function to connect inputs and outputs of Units
     def network(self) -> ez.NetworkDefinition:
         return (
             (self.COUNT.OUTPUT_COUNT, self.ADD_ONE.INPUT_COUNT),
-            (self.ADD_ONE.OUTPUT_PLUS_ONE, self.PRINT.INPUT),
+            (self.ADD_ONE.OUTPUT_PLUS_ONE, self.PRINT.INPUT)
         )
 
     # Use process_components to define units that need to live in
@@ -180,7 +183,7 @@ class CountSystem(ez.Collection):
     # Any remaining sub units not specified are all run in the
     # main process.
     def process_components(self) -> Tuple[ez.Component, ...]:
-        return (self.COUNT, self.ADD_ONE, self.PRINT)
+        return (self.COUNT, self.ADD_ONE)
 
 
 if __name__ == "__main__":
