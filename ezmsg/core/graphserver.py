@@ -164,7 +164,6 @@ class GraphServer(Process):
                 return
 
             if req == Command.SHUTDOWN.value:
-                logger.debug("Shutting down graph server...")
                 self._shutdown.set()
                 writer.close()
                 await writer.wait_closed()

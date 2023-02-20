@@ -87,17 +87,14 @@ class Publisher:
                 await server.serve_forever()
             except asyncio.CancelledError:  # FIXME: Poor form?
                 logger.debug("pubclient serve is Cancelled...")
+            finally:
                 server.close()
                 await server.wait_closed()
-                sock.close()
-                pass
 
         pub._connection_task = asyncio.create_task(serve(), name=f"pub_{str(id)}")
 
         def on_done(_: asyncio.Future) -> None:
             logger.debug("Closing pub server task.")
-            server.close()
-            sock.close()
 
         pub._connection_task.add_done_callback(on_done)
         pub._cache = Cache(pub._num_buffers)
@@ -223,6 +220,8 @@ class Publisher:
 
         finally:
             self._backpressure.free(info.id)
+            self._subscribers[info.id].writer.close()
+            await self._subscribers[info.id].writer.wait_closed()
             del self._subscribers[info.id]
 
     async def sync(self) -> None:

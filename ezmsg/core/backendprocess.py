@@ -246,7 +246,6 @@ class DefaultBackendProcess(BackendProcess):
         self.term_ev.wait()
         logger.debug(f"Detected term_ev")
         for task in tasks:
-            # logger.debug(f"Cancelling {task.get_name()}")
             loop.call_soon_threadsafe(task.cancel)
 
     def task_wrapper(
@@ -340,7 +339,6 @@ def run_loop(loop: asyncio.AbstractEventLoop):
         loop.run_forever()
     except KeyboardInterrupt:
         logger.info("Stopping event loop.")
-        ...
 
 
 @contextmanager
