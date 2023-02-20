@@ -15,11 +15,16 @@ from .stream import Stream
 from .unit import Unit, PROCESS_ATTR
 
 from .graphcontext import GraphContext
-from .backendprocess import BackendProcess, DefaultBackendProcess, new_threaded_event_loop
+from .backendprocess import (
+    BackendProcess,
+    DefaultBackendProcess,
+    new_threaded_event_loop,
+)
 
 from typing import List, Callable, Tuple, Optional, Type, Set, Union
 
-logger = logging.getLogger( 'ezmsg' )
+logger = logging.getLogger("ezmsg")
+
 
 class ExecutionContext:
 
@@ -29,11 +34,11 @@ class ExecutionContext:
     connections: List[Tuple[str, str]]
 
     def __init__(
-        self, 
-        processes: List[List[Unit]], 
+        self,
+        processes: List[List[Unit]],
         connections: List[Tuple[str, str]] = [],
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
-        graph_address: AddressType = GRAPHSERVER_ADDR
+        graph_address: AddressType = GRAPHSERVER_ADDR,
     ) -> None:
 
         if not processes:
@@ -47,11 +52,11 @@ class ExecutionContext:
 
         self.processes = [
             backend_process(
-                graph_address, 
-                process_units, 
-                self.term_ev, 
-                self.start_barrier, 
-                self.stop_barrier
+                graph_address,
+                process_units,
+                self.term_ev,
+                self.start_barrier,
+                self.stop_barrier,
             )
             for process_units in processes
         ]
@@ -61,7 +66,7 @@ def run_system(
     system: Collection,
     num_buffers: int = 32,
     init_buf_size: int = DEFAULT_SHM_SIZE,
-    backend_process: Type[BackendProcess] = DefaultBackendProcess
+    backend_process: Type[BackendProcess] = DefaultBackendProcess,
 ) -> None:
     """ Deprecated; just use run any component (unit, collection) """
     run(system, backend_process=backend_process)
@@ -73,18 +78,18 @@ def run(
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
     graph_address: AddressType = GRAPHSERVER_ADDR,
-    force_single_process: bool = False
+    force_single_process: bool = False,
 ) -> None:
 
     execution_context = setup(
-        component, 
-        name, 
-        connections, 
-        backend_process, 
+        component,
+        name,
+        connections,
+        backend_process,
         graph_address,
-        force_single_process
+        force_single_process,
     )
-    
+
     if execution_context is None:
         return
 
@@ -106,7 +111,7 @@ def run(
 
         sentinels: Set[Union[Connection, socket, int]] = set()
         if other_processes:
-            logger.info(f'Spinning up {len(other_processes)} extra processes.')
+            logger.info(f"Spinning up {len(other_processes)} extra processes.")
 
         for proc in other_processes:
             proc.start()
@@ -121,17 +126,19 @@ def run(
         try:
             main_process.process(loop)
             join_all_other_processes()
-            logger.info('All processes exited normally')
+            logger.info("All processes exited normally")
 
         except KeyboardInterrupt:
-            logger.info('Attempting graceful shutdown, interrupt again to force quit...')
+            logger.info(
+                "Attempting graceful shutdown, interrupt again to force quit..."
+            )
             execution_context.term_ev.set()
 
             try:
                 join_all_other_processes()
 
             except KeyboardInterrupt:
-                logger.warning('Interrupt intercepted, force quitting')
+                logger.warning("Interrupt intercepted, force quitting")
                 execution_context.start_barrier.abort()
                 execution_context.stop_barrier.abort()
                 for proc in other_processes:
@@ -139,7 +146,10 @@ def run(
 
         finally:
             join_all_other_processes()
-            asyncio.run_coroutine_threadsafe(cleanup_graph(graph_context), loop).result()
+            asyncio.run_coroutine_threadsafe(
+                cleanup_graph(graph_context), loop
+            ).result()
+            loop.call_soon_threadsafe(loop.stop)
 
 
 def setup(
@@ -148,7 +158,7 @@ def setup(
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
     graph_address: AddressType = GRAPHSERVER_ADDR,
-    force_single_process: bool = False
+    force_single_process: bool = False,
 ) -> Optional[ExecutionContext]:
 
     component._set_name(name)
@@ -164,7 +174,9 @@ def setup(
                 to_topic = to_topic.address
             graph_connections.append((from_topic, to_topic))
 
-    def crawl_components(component: Component, callback: Callable[[Component], None]) -> None:
+    def crawl_components(
+        component: Component, callback: Callable[[Component], None]
+    ) -> None:
         search: List[Component] = [component]
         while len(search):
             comp = search.pop()
@@ -190,6 +202,7 @@ def setup(
         def configure_collections(comp: Component):
             if isinstance(comp, Collection):
                 comp.configure()
+
         crawl_components(component, configure_collections)
     elif isinstance(component, Unit):
         processes = [[component]]
@@ -199,15 +212,12 @@ def setup(
 
     try:
         return ExecutionContext(
-            processes, 
-            graph_connections, 
-            backend_process, 
-            graph_address
+            processes, graph_connections, backend_process, graph_address
         )
     except ValueError:
         return None
 
-            
+
 def collect_processes(collection: Collection) -> List[List[Unit]]:
     process_units, units = _collect_processes(collection)
     if len(units):
@@ -237,5 +247,3 @@ def _collect_processes(collection: Collection) -> Tuple[List[List[Unit]], List[U
                 else:
                     units.append(comp)
     return process_units, units
-
-
