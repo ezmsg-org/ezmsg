@@ -4,6 +4,7 @@ import logging
 import time
 import traceback
 import threading
+import signal
 
 from collections import defaultdict
 from functools import wraps
@@ -22,7 +23,17 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 
-from typing import List, Dict, Callable, Any, Set, Coroutine, DefaultDict, Generator
+from typing import (
+    List,
+    Dict,
+    Callable,
+    Any,
+    Optional,
+    Set,
+    Coroutine,
+    DefaultDict,
+    Generator,
+)
 
 logger = logging.getLogger("ezmsg")
 
@@ -56,9 +67,11 @@ class BackendProcess(Process):
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
         self.graph_address = graph_address
+        self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
-        with new_threaded_event_loop() as loop:
+        self.task_finished_ev = threading.Event()
+        with new_threaded_event_loop(self.task_finished_ev) as loop:
             try:
                 self.process(loop)
             except KeyboardInterrupt:
@@ -156,21 +169,18 @@ class DefaultBackendProcess(BackendProcess):
         for pub in self.pubs.values():
             pub.resume()
 
-        logger.info(f"loop thread id: {loop._thread_id} ")
-        logger.info(f"backendprocess thread id: {threading.get_ident()} ")
-        # tasks = [loop.create_task(coro, name=name) for name, coro in coros.items()]
-        tasks = [
-            asyncio.run_coroutine_threadsafe(coro, loop) for name, coro in coros.items()
+        async def coro_wrapper(coro):
+            with suppress(Complete, NormalTermination, asyncio.CancelledError):
+                await coro
+
+        complete_tasks = [
+            asyncio.run_coroutine_threadsafe(coro_wrapper(coro), loop)
+            for name, coro in coros.items()
         ]
 
-        # async def _complete_tasks() -> None:
-        #     for task in concurrent.futures.as_completed(tasks):
-        #         with suppress(Complete, NormalTermination, asyncio.CancelledError):
-        #             await task
-
-        # complete_tasks = asyncio.run_coroutine_threadsafe(_complete_tasks(), loop=loop)
-
-        monitor = loop.run_in_executor(None, self.monitor_termination, tasks, loop)
+        monitor = loop.run_in_executor(
+            None, self.monitor_termination, complete_tasks, loop
+        )
 
         try:
             if main_func is not None:
@@ -182,8 +192,7 @@ class DefaultBackendProcess(BackendProcess):
 
             while True:
                 try:
-                    # complete_tasks.result(timeout=0.1)
-                    concurrent.futures.wait(tasks, timeout=0.1)
+                    concurrent.futures.wait(complete_tasks, timeout=0.1)
                     break
                 except TimeoutError:
                     pass
@@ -194,10 +203,16 @@ class DefaultBackendProcess(BackendProcess):
             # from getting destroyed before all other processes have
             # drained communication channels
             logger.debug(f"Waiting at stop barrier")
-            self.stop_barrier.wait()
+            while True:
+                try:
+                    self.stop_barrier.wait()
+                    break
+                except KeyboardInterrupt:
+                    ...
+
             self.term_ev.set()
 
-            # complete_tasks.result()
+            # concurrent.futures.wait(complete_tasks).result()
 
             # TODO: Currently, threads have no shutdown mechanism...
             # We should really change the call signature for @ez.thread
@@ -214,6 +229,12 @@ class DefaultBackendProcess(BackendProcess):
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
             asyncio.run_coroutine_threadsafe(context.revert(), loop=loop).result()
+
+            logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")
+
+            if self.task_finished_ev is not None:
+                logger.debug("Setting task finished event")
+                self.task_finished_ev.set()
 
         # logger.debug(
         #     f"Process Completed. All Done: {[task.get_name() for task in tasks]}"
@@ -313,17 +334,31 @@ async def handle_subscriber(
             await asyncio.sleep(0)
 
 
+def run_loop(loop: asyncio.AbstractEventLoop):
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Stopping event loop.")
+        ...
+
+
 @contextmanager
-def new_threaded_event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+def new_threaded_event_loop(
+    ev: Optional[threading.Event] = None,
+) -> Generator[asyncio.AbstractEventLoop, None, None]:
 
     loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, name="TaskThread")
+    thread = threading.Thread(target=run_loop, name="TaskThread", args=(loop,))
     thread.start()
 
     try:
         yield loop
 
     finally:
+        if ev is not None:
+            logger.debug("Waiting at event...")
+            ev.wait()
         logger.debug("Stopping and closing task thread")
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
