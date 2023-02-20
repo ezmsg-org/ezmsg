@@ -9,7 +9,7 @@ from typing import AsyncGenerator, Optional
 import ezmsg.core as ez
 from ezmsg.testing.lfo import LFO, LFOSettings
 
-logger = logging.getLogger("ezmsg")
+logger = logging.getLogger('ezmsg')
 
 # MESSAGE DEFINITIONS
 
@@ -167,16 +167,13 @@ class TestSystem(ez.System):
             (self.PING.OUTPUT, self.FOOSUB.INPUT),
         )
 
-    def process_components(self):
-        return (self.PING, self.FOOSUB, self.MODIFIER_COLLECTION, self.PINGSUB1)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
 
     # import multiprocessing as mp
     # mp.set_start_method( 'fork', force = True )
 
-    system = TestSystem(TestSystemSettings(name="A"))
+    system = TestSystem(TestSystemSettings(name='A'))
 
     ez.run_system(
         system,
