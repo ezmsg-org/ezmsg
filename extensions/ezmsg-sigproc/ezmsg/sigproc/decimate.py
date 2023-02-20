@@ -28,11 +28,9 @@ class Decimate(ez.Collection):
             filt = FilterCoefficients()
         else:
             # See scipy.signal.decimate for IIR Filter Condition
-            system = scipy.signal.dlti(
-                *scipy.signal.cheby1(8, 0.05, 0.8 / self.SETTINGS.factor)
-            )
-
-            filt = FilterCoefficients(b=system.num, a=system.den)
+            b, a = scipy.signal.cheby1(8, 0.05, 0.8 / self.SETTINGS.factor)
+            system = scipy.signal.dlti(b, a)
+            filt = FilterCoefficients(b=system.num, a=system.den) #type: ignore
 
         self.FILTER.apply_settings(FilterSettings(filt=filt))
 

@@ -9,8 +9,7 @@ from typing import Optional
 
 # UPCOMING: TSMessage Deprecation
 # TSMessage is deprecated because it doesn't handle multiple time axes well.
-# AxisArray has an incompatible API but supports a superset of functionality
-# including messages with multiple time axes and dimensional or categorical axes.
+# AxisArray has an incompatible API but supports a superset of functionality.
 warnings.warn( 
     "TimeSeriesMessage/TSMessage is deprecated.  Please use ezmsg.utils.AxisArray", 
     DeprecationWarning, 
