@@ -90,9 +90,7 @@ class GraphServer(Process):
 
         async def monitor_shutdown() -> None:
             await loop.run_in_executor(None, self._shutdown.wait)
-            await GraphServer.Connection(self.address).shutdown()
             server.close()
-            await server.wait_closed()
 
         monitor_task = loop.create_task(monitor_shutdown())
 
@@ -220,10 +218,6 @@ class GraphServer(Process):
 
                     await writer.drain()
 
-                    if req == Command.DISCONNECT.value:
-                        writer.close()
-                        await writer.wait_closed()
-
                 elif req == Command.SYNC.value:
                     for pub in self._publishers():
                         try:
@@ -251,9 +245,6 @@ class GraphServer(Process):
 
         writer.close()
         await writer.wait_closed()
-        # finally:
-        #     writer.close()
-        #     await writer.wait_closed()
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
@@ -356,4 +347,3 @@ class GraphServer(Process):
         async def shutdown(self) -> None:
             async with self._open() as (reader, writer):
                 writer.write(Command.SHUTDOWN.value)
-                await writer.drain()
