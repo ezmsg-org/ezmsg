@@ -88,11 +88,14 @@ class Filter(ez.Unit):
             self.update_filter()
 
         # Ensure filter is defined
+        # TODO: Maybe have me be a passthrough filter until coefficients are received
         if self.STATE.filt is None:
             self.STATE.filt_set.clear()
             ez.logger.info("Awaiting filter coefficients...")
             await self.STATE.filt_set.wait()
             ez.logger.info("Filter coefficients received.")
+
+        assert self.STATE.filt is not None
 
         arr_in = msg.data
 
