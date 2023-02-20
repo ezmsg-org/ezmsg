@@ -149,7 +149,6 @@ def run(
             asyncio.run_coroutine_threadsafe(
                 cleanup_graph(graph_context), loop
             ).result()
-            loop.call_soon_threadsafe(loop.stop)
 
 
 def setup(

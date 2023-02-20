@@ -130,6 +130,7 @@ class SHMContext:
         async def monitor() -> None:
             try:
                 await reader.read()
+                logger.debug("Read from SHMContext monitor reader")
             except asyncio.CancelledError:
                 pass
             finally:
@@ -290,7 +291,6 @@ class SHMServer(Process):
         await writer.drain()
         writer.close()
         await writer.wait_closed()
-        logger.debug("Shutting down SHMServer...")
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -336,7 +336,6 @@ class SHMServer(Process):
 
             with suppress(asyncio.CancelledError):
                 await info.lease(reader, writer)
-
         finally:
             writer.close()
             await writer.wait_closed()
