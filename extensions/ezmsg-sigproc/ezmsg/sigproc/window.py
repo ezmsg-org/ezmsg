@@ -2,9 +2,9 @@ from dataclasses import dataclass, replace
 
 import ezmsg.core as ez
 import numpy as np
+import numpy.typing as npt
 
-from ezmsg.util.messages import view2d, shape2d
-from ezmsg.sigproc.messages import TSMessage
+from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import (
     AsyncGenerator,
@@ -12,8 +12,9 @@ from typing import (
     Tuple
 )
 
-@dataclass( frozen = True )
+@dataclass
 class WindowSettingsMessage:
+    axis: Optional[str] = None
     window_dur: Optional[float] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
     window_shift: Optional[float] = None  # Sec.  If "None", activate "1:1 mode"
 
@@ -23,11 +24,11 @@ class WindowSettings(WindowSettingsMessage, ez.Settings):
 
 
 class WindowState(ez.State):
-    cur_settings: Optional[ WindowSettingsMessage ] = None
+    cur_settings: WindowSettingsMessage
 
     samp_shape: Optional[Tuple[int, ...]] = None  # Shape of individual sample
     out_fs: Optional[float] = None
-    buffer: Optional[np.ndarray] = None
+    buffer: Optional[npt.NDArray] = None
     window_samples: Optional[int] = None
     window_shift_samples: Optional[int] = None
 
@@ -37,8 +38,8 @@ class Window(ez.Unit):
     STATE: WindowState
     SETTINGS: WindowSettings
 
-    INPUT_SIGNAL = ez.InputStream(TSMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TSMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
     INPUT_SETTINGS = ez.InputStream(WindowSettingsMessage)
 
     def initialize(self) -> None:
@@ -51,20 +52,28 @@ class Window(ez.Unit):
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def on_signal(self, msg: TSMessage) -> AsyncGenerator:
+    async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
+
+        # TODO: Handle axes appropriately!
 
         if self.STATE.cur_settings.window_dur is None:
             yield self.OUTPUT_SIGNAL, msg
             return
 
+        axis_name = msg.dims[0] if self.STATE.cur_settings.axis is None else self.STATE.cur_settings.axis
+        axis_idx = msg.get_axis_idx(axis_name)
+        axis = msg.get_axis(axis_name)
+        
+        fs = 1.0 / axis.gain
+
         # Create a view of data with time axis at dim 0
-        time_view = np.moveaxis(msg.data, msg.time_dim, 0)
+        time_view = np.moveaxis(msg.data, axis_idx, 0)
         samp_shape = time_view.shape[1:]
 
-        if (self.STATE.samp_shape != samp_shape) or (self.STATE.out_fs != msg.fs):
+        if (self.STATE.samp_shape != samp_shape) or (self.STATE.out_fs != fs):
             # Pre(re?)allocate window data
             self.STATE.samp_shape = samp_shape
-            self.STATE.out_fs = msg.fs
+            self.STATE.out_fs = fs
             self.STATE.window_samples = int(
                 self.STATE.cur_settings.window_dur * self.STATE.out_fs
             )
@@ -83,6 +92,9 @@ class Window(ez.Unit):
                 extra_samples = np.zeros(tuple([extra_samples] + list(self.STATE.samp_shape)))
                 self.STATE.buffer = np.concatenate((extra_samples, self.STATE.buffer), axis=0)
 
+        assert self.STATE.buffer is not None
+        assert self.STATE.window_samples is not None
+
         # Currently we just concatenate the new time samples and clip the output
         # np.roll actually returns a copy, and there's no way to construct a
         # rolling view of the data.  In current numpy implementations, np.concatenate
@@ -95,7 +107,7 @@ class Window(ez.Unit):
             self.STATE.buffer = self.STATE.buffer[-self.STATE.window_samples:, ...]
 
             # Finally, move time axis back into location before yielding
-            out_view = np.moveaxis(self.STATE.buffer, 0, msg.time_dim)
+            out_view = np.moveaxis(self.STATE.buffer, 0, axis_idx)
             yield (self.OUTPUT_SIGNAL, replace(msg, data=out_view))
 
         else:  # slightly more complicated window shifting
@@ -105,7 +117,7 @@ class Window(ez.Unit):
 
                 # Yield if possible
                 out_view = self.STATE.buffer[:self.STATE.window_samples, ...]
-                out_view = np.moveaxis(out_view, 0, msg.time_dim)
+                out_view = np.moveaxis(out_view, 0, axis_idx)
                 yield (self.OUTPUT_SIGNAL, replace(msg, data=out_view))
 
                 # Shift window

@@ -2,7 +2,6 @@ from dataclasses import field
 
 import os
 import json
-import logging
 
 import pytest
 import numpy as np
@@ -18,8 +17,6 @@ from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
 from ezmsg.testing.debuglog import DebugLog
 
 from typing import Optional, Dict, Any, List
-
-logger = logging.getLogger('ezmsg')
 
 
 class WindowSystemSettings(ez.Settings):
@@ -85,7 +82,7 @@ def test_window_system(
     num_msgs = int((in_fs / block_size) * 4.0)  # Ensure 4 seconds of data
 
     test_filename = get_test_fn(test_name)
-    logger.info(test_filename)
+    ez.logger.info(test_filename)
 
     settings = WindowSystemSettings(
         num_msgs=num_msgs,
@@ -117,7 +114,7 @@ def test_window_system(
 
     os.remove(test_filename)
 
-    logger.info(f'Analyzing recording of { len( messages ) } messages...')
+    ez.logger.info(f'Analyzing recording of { len( messages ) } messages...')
 
     fs: Optional[float] = None
     time_dim: Optional[int] = None
@@ -141,14 +138,14 @@ def test_window_system(
         # Window should always output the same shape data
         assert data[0].shape == msg.get('data').shape
 
-    logger.info('Consistent metadata!')
+    ez.logger.info('Consistent metadata!')
 
     # If this test was performed in "one-to-one" mode, we should
     # have one window output per message pushed to Window
     if win_shift is None:
         assert len(data) == num_msgs
 
-    logger.info('Test Complete.')
+    ez.logger.info('Test Complete.')
 
 
 if __name__ == '__main__':

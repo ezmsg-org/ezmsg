@@ -2,17 +2,18 @@ import ezmsg.core as ez
 
 import scipy.signal
 
+from ezmsg.util.messages.axisarray import AxisArray
+
 from .downsample import Downsample, DownsampleSettings
 from .filter import Filter, FilterCoefficients, FilterSettings
-from .messages import TSMessage as TimeSeriesMessage
 
 
 class Decimate(ez.Collection):
 
     SETTINGS: DownsampleSettings
 
-    INPUT_SIGNAL = ez.InputStream(TimeSeriesMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TimeSeriesMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     FILTER = Filter()
     DOWNSAMPLE = Downsample()
