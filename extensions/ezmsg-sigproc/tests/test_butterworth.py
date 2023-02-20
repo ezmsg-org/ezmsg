@@ -1,6 +1,5 @@
 import os
 import json
-import logging
 
 import pytest
 import numpy as np
@@ -19,8 +18,6 @@ from ezmsg.testing import get_test_fn
 from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
 
 from typing import Optional
-
-logger = logging.getLogger('ezmsg')
 
 
 class ButterworthSystemSettings(ez.Settings):
@@ -78,7 +75,7 @@ def test_butterworth_system(
     num_msgs = int((in_fs / block_size) * seconds_of_data)
 
     test_filename = get_test_fn(test_name)
-    logger.info(test_filename)
+    ez.logger.info(test_filename)
 
     settings = ButterworthSystemSettings(
         noise_settings=WhiteNoiseSettings(
@@ -103,7 +100,7 @@ def test_butterworth_system(
 
     os.remove(test_filename)
 
-    logger.info(f"Analyzing recording of { len( messages ) } messages...")
+    ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
     data = np.concatenate([msg.get("data") for msg in messages], axis=0)
 
@@ -116,7 +113,7 @@ def test_butterworth_system(
     specs = settings.butter_settings.filter_specs()
     assert specs is not None
     btype, cut = specs
-    logger.info(f"Testing {btype}...")
+    ez.logger.info(f"Testing {btype}...")
 
     if btype == "lowpass":
         zeroed_values = [val[1] for val in all_vals if val[0] > cutoff]
@@ -141,7 +138,7 @@ def test_butterworth_system(
 
     assert np.mean(zeroed_values) < np.mean(white_values)
 
-    logger.info("Test Complete.")
+    ez.logger.info("Test Complete.")
 
 
 if __name__ == "__main__":
