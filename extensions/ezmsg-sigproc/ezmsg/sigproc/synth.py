@@ -92,7 +92,7 @@ class Counter(ez.Unit):
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: CounterSettingsMessage) -> None:
-        self.validate_settings(self.SETTINGS)
+        self.validate_settings(msg)
 
     def validate_settings(self, settings: CounterSettingsMessage) -> None:
         if isinstance(settings.dispatch_rate, str) and \
@@ -183,8 +183,7 @@ class SinGenerator(ez.Unit):
         axis_name = self.SETTINGS.time_axis
         if axis_name is None:
             axis_name = msg.dims[0]
-
-        fs = msg.get_axis(axis_name).gain
+        fs = 1.0 / msg.get_axis(axis_name).gain
         t_sec = msg.data / fs
         w = self.STATE.ang_freq * t_sec
         out_data = self.SETTINGS.amp * np.sin(w + self.SETTINGS.phase)
@@ -435,7 +434,7 @@ class EEGSynth(ez.Collection):
                 fs = self.SETTINGS.fs,
                 n_ch = self.SETTINGS.n_ch,
                 dispatch_rate = 'ext_clock',
-                scale = 0.1
+                scale = 1.0
             )
         )
 
@@ -443,8 +442,7 @@ class EEGSynth(ez.Collection):
         return (
             (self.CLOCK.OUTPUT_CLOCK, self.OSC.INPUT_CLOCK),
             (self.CLOCK.OUTPUT_CLOCK, self.NOISE.INPUT_CLOCK),
-            # (self.OSC.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_A),
-            # (self.NOISE.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_B),
-            # (self.ADD.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
-            (self.OSC.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
+            (self.OSC.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_A),
+            (self.NOISE.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_B),
+            (self.ADD.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
         )
