@@ -16,11 +16,16 @@ class FilterCoefficients:
     a: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
 
 
-class FilterSettings(ez.Settings):
+@dataclass
+class FilterSettingsMessage:
     # If you'd like to statically design a filter, define it in settings
     axis: Optional[str] = None
     filt: Optional[FilterCoefficients] = None
     fs: Optional[float] = None
+    
+
+class FilterSettings(ez.Settings, FilterSettingsMessage):
+    ...
 
 
 class FilterState(ez.State):
