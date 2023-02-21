@@ -35,6 +35,8 @@ WINDOWS = {
 
 class SpectralTransform(OptionsEnum):
     RAW_COMPLEX = "Complex FFT Output"
+    REAL = "Real Component of FFT"
+    IMAG = "Imaginary Component of FFT"
     REL_POWER = "Relative Power"
     REL_DB = "Log Power (Relative dB)"
 
@@ -99,11 +101,16 @@ class Spectrum(ez.Unit):
 
         if self.STATE.cur_settings.transform != SpectralTransform.RAW_COMPLEX:
 
-            scale = np.sum(window ** 2.0) / axis.gain
-            spectrum = (2.0 * (np.abs(spectrum) ** 2.0)) / scale
+            if self.STATE.cur_settings.transform == SpectralTransform.REAL:
+                spectrum = spectrum.real
+            elif self.STATE.cur_settings.transform == SpectralTransform.IMAG:
+                spectrum = spectrum.imag
+            else:
+                scale = np.sum(window ** 2.0) / axis.gain
+                spectrum = (2.0 * (np.abs(spectrum) ** 2.0)) / scale
 
-            if self.STATE.cur_settings.transform == SpectralTransform.REL_DB:
-                spectrum = 10 * np.log10(spectrum)
+                if self.STATE.cur_settings.transform == SpectralTransform.REL_DB:
+                    spectrum = 10 * np.log10(spectrum)
         
         axis_offset = freqs[0]
         if self.STATE.cur_settings.output == SpectralOutput.POSITIVE:
