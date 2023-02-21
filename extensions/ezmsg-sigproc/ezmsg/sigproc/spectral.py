@@ -106,7 +106,7 @@ class Spectrum(ez.Unit):
             elif self.STATE.cur_settings.transform == SpectralTransform.IMAG:
                 spectrum = spectrum.imag
             else:
-                scale = np.sum(window ** 2.0) / axis.gain
+                scale = np.sum(window ** 2.0) * axis.gain
                 spectrum = (2.0 * (np.abs(spectrum) ** 2.0)) / scale
 
                 if self.STATE.cur_settings.transform == SpectralTransform.REL_DB:
