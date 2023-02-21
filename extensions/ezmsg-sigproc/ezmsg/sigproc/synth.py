@@ -364,3 +364,61 @@ class Add(ez.Unit):
                 self.OUTPUT_SIGNAL, 
                 replace(a, data = a.data + b.data)
             )
+
+@dataclass
+class EEGSynthSettingsMessage:
+    fs: float = 500.0 # Hz
+    n_time: int = 100
+    alpha_freq: float = 10.5 # Hz
+    n_ch: int = 8
+
+
+class EEGSynthSettings(ez.Settings, EEGSynthSettingsMessage):
+    ...
+
+
+class EEGSynth(ez.Collection):
+    SETTINGS: EEGSynthSettings
+
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
+    CLOCK = Clock()
+    NOISE = PinkNoise()
+    OSC = Oscillator()
+    ADD = Add()
+
+    def configure(self) -> None:
+
+        self.CLOCK.apply_settings(
+            ClockSettings(
+                dispatch_rate = self.SETTINGS.fs / self.SETTINGS.n_time
+            )
+        )
+
+        self.OSC.apply_settings(
+            OscillatorSettings( 
+                n_time = self.SETTINGS.n_time, 
+                fs = self.SETTINGS.fs, 
+                n_ch = self.SETTINGS.n_ch, 
+                dispatch_rate = 'ext_clock', 
+                freq = self.SETTINGS.alpha_freq
+            )
+        )
+
+        self.NOISE.apply_settings(
+            PinkNoiseSettings(
+                n_time = self.SETTINGS.n_time,
+                fs = self.SETTINGS.fs,
+                n_ch = self.SETTINGS.n_ch,
+                dispatch_rate = 'ext_clock'
+            )
+        )
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.CLOCK.OUTPUT_CLOCK, self.OSC.INPUT_CLOCK),
+            (self.CLOCK.OUTPUT_CLOCK, self.NOISE.INPUT_CLOCK),
+            (self.OSC.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_A),
+            (self.NOISE.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_B),
+            (self.ADD.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
+        )
