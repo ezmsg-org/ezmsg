@@ -1,4 +1,5 @@
 import math
+import time
 
 from contextlib import contextmanager
 from dataclasses import field, dataclass, replace
@@ -6,7 +7,7 @@ from dataclasses import field, dataclass, replace
 import numpy as np
 import numpy.typing as npt
 
-from typing import Generator, Tuple, Optional, List, Dict, Any, Union, Iterable
+from typing import Generator, Tuple, Optional, List, Dict, Union, Iterable
 
 @dataclass
 class AxisArray:
@@ -21,9 +22,13 @@ class AxisArray:
         offset: float = 0.0
 
         @classmethod
-        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
-            """ Creates a time axis with dimension of seconds """
-            return cls(unit = 's', gain = 1.0 / fs, offset = offset)
+        def TimeAxis(cls, fs: float, offset: Optional[float] = None) -> "AxisArray.Axis":
+            """ 
+            Creates a time axis with dimension of seconds. 
+            Specify fs in units of Hz (1.0/sec)
+            If offset is left as "None", time.time() is used.
+            """
+            return cls(unit = 's', gain = 1.0 / fs, offset = time.time() if offset is None else offset)
 
     def __post_init__(self):
         self.data = np.array(self.data, ndmin=1)
