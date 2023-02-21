@@ -434,7 +434,7 @@ class EEGSynth(ez.Collection):
                 fs = self.SETTINGS.fs,
                 n_ch = self.SETTINGS.n_ch,
                 dispatch_rate = 'ext_clock',
-                scale = 1.0
+                scale = 5.0
             )
         )
 
