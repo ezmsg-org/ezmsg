@@ -253,15 +253,30 @@ class Oscillator(ez.Collection):
         )
 
 
+@dataclass
+class RandomGeneratorSettingsMessage:
+    loc: float = 0.0
+    scale: float = 1.0
+    
+class RandomGeneratorSettings(ez.Settings, RandomGeneratorSettingsMessage):
+    ...
+
 class RandomGenerator(ez.Unit):
+    SETTINGS: RandomGeneratorSettings
+
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     async def generate(self, msg: AxisArray) -> AsyncGenerator:
-        random_data = np.random.normal(size=msg.shape)
-        yield (self.OUTPUT_SIGNAL, replace(msg, data=random_data))
+        random_data = np.random.normal(
+            size = msg.shape, 
+            loc = self.SETTINGS.loc, 
+            scale = self.SETTINGS.scale
+        )
+
+        yield self.OUTPUT_SIGNAL, replace(msg, data = random_data)
 
 @dataclass
 class NoiseSettingsMessage:
@@ -269,6 +284,8 @@ class NoiseSettingsMessage:
     fs: float  # Sampling rate of signal output in Hz
     n_ch: int = 1 # Number of channels to output
     dispatch_rate: Optional[Union[float, str]] = None  # (Hz), 'realtime', or 'ext_clock'
+    loc: float = 0.0 # DC offset
+    scale: float = 1.0 # Scale (in standard deviations)
 
 class NoiseSettings(ez.Settings, NoiseSettingsMessage):
     ...
@@ -286,6 +303,13 @@ class WhiteNoise(ez.Collection):
     RANDOM = RandomGenerator()
 
     def configure(self) -> None:
+        
+        self.RANDOM.apply_settings(
+            RandomGeneratorSettings(
+                loc = self.SETTINGS.loc,
+                scale = self.SETTINGS.scale
+            )
+        )
 
         self.COUNTER.apply_settings(
             CounterSettings(
@@ -410,7 +434,8 @@ class EEGSynth(ez.Collection):
                 n_time = self.SETTINGS.n_time,
                 fs = self.SETTINGS.fs,
                 n_ch = self.SETTINGS.n_ch,
-                dispatch_rate = 'ext_clock'
+                dispatch_rate = 'ext_clock',
+                scale = 0.1
             )
         )
 
@@ -418,7 +443,8 @@ class EEGSynth(ez.Collection):
         return (
             (self.CLOCK.OUTPUT_CLOCK, self.OSC.INPUT_CLOCK),
             (self.CLOCK.OUTPUT_CLOCK, self.NOISE.INPUT_CLOCK),
-            (self.OSC.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_A),
-            (self.NOISE.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_B),
-            (self.ADD.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
+            # (self.OSC.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_A),
+            # (self.NOISE.OUTPUT_SIGNAL, self.ADD.INPUT_SIGNAL_B),
+            # (self.ADD.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
+            (self.OSC.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
         )
