@@ -191,7 +191,15 @@ class DefaultBackendProcess(BackendProcess):
                 except NormalTermination:
                     self.term_ev.set()
 
-            concurrent.futures.wait(complete_tasks)
+            while True:
+                try:
+                    _, not_done_set = concurrent.futures.wait(
+                        complete_tasks, timeout=1.0
+                    )
+                    if len(not_done_set) == 0:
+                        break
+                except TimeoutError:
+                    pass
 
         finally:
 
