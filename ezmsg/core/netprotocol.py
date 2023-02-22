@@ -1,4 +1,5 @@
 import asyncio
+from asyncio.base_events import Server
 import enum
 import os
 
@@ -116,6 +117,26 @@ async def read_str(reader: asyncio.StreamReader) -> str:
     str_size = await read_int(reader)
     str_bytes = await reader.readexactly(str_size)
     return str_bytes.decode("utf-8")
+
+
+async def close_stream_writer(writer: asyncio.StreamWriter):
+    writer.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await writer.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
+
+
+async def close_server(server: Server):
+    server.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await server.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
 
 
 class Command(enum.Enum):

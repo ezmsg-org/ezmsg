@@ -19,6 +19,8 @@ from .netprotocol import (
     read_int,
     read_str,
     encode_str,
+    close_stream_writer,
+    close_server,
     Command,
     SubscriberInfo,
     GRAPHSERVER_ADDR,
@@ -88,8 +90,7 @@ class Publisher:
             except asyncio.CancelledError:  # FIXME: Poor form?
                 logger.debug("pubclient serve is Cancelled...")
             finally:
-                server.close()
-                await server.wait_closed()
+                await close_server(server)
 
         pub._connection_task = asyncio.create_task(serve(), name=f"pub_{str(id)}")
 
@@ -176,8 +177,7 @@ class Publisher:
             logger.debug(f"Publisher {self.id} lost connection to graph server")
 
         finally:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer)
 
     async def _on_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -220,8 +220,7 @@ class Publisher:
 
         finally:
             self._backpressure.free(info.id)
-            self._subscribers[info.id].writer.close()
-            await self._subscribers[info.id].writer.wait_closed()
+            await close_stream_writer(self._subscribers[info.id].writer)
             del self._subscribers[info.id]
 
     async def sync(self) -> None:

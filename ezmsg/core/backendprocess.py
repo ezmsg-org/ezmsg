@@ -158,6 +158,7 @@ class DefaultBackendProcess(BackendProcess):
                         loop=loop,
                     ).result()
 
+        logger.debug("Waiting at start barrier!")
         self.start_barrier.wait()
 
         threads = [
@@ -190,12 +191,7 @@ class DefaultBackendProcess(BackendProcess):
                 except NormalTermination:
                     self.term_ev.set()
 
-            while True:
-                try:
-                    concurrent.futures.wait(complete_tasks, timeout=0.1)
-                    break
-                except TimeoutError:
-                    pass
+            concurrent.futures.wait(complete_tasks)
 
         finally:
 

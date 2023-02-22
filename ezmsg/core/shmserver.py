@@ -12,6 +12,8 @@ from uuid import getnode
 from .netprotocol import (
     DEFAULT_SHM_SIZE,
     SHMSERVER_ADDR,
+    close_stream_writer,
+    close_server,
     Command,
     Address,
     encode_str,
@@ -134,8 +136,7 @@ class SHMContext:
             except asyncio.CancelledError:
                 pass
             finally:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
 
         def close(_: asyncio.Future) -> None:
             context.close()
@@ -188,8 +189,7 @@ class SHMInfo:
             try:
                 await reader.read()
             finally:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
 
         lease = asyncio.create_task(_wait_for_eof())
         lease.add_done_callback(self._release)
@@ -238,10 +238,13 @@ class SHMServer(Process):
         server = await asyncio.start_server(self.api, *SHMSERVER_ADDR)
 
         async def monitor_shutdown() -> None:
-            await loop.run_in_executor(None, self._shutdown.wait)
-            await SHMServer.shutdown_server()
-            server.close()
-            await server.wait_closed()
+            try:
+                await loop.run_in_executor(None, self._shutdown.wait)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await SHMServer.shutdown_server()
+                await close_server(server)
 
         monitor_task = loop.create_task(monitor_shutdown())
 
@@ -272,8 +275,7 @@ class SHMServer(Process):
         address = Address(*SHMSERVER_ADDR)
         try:
             _, writer = await asyncio.open_connection(*address)
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer)
             logger.debug(f"SHMServer Exists: {address.host}:{address.port}")
         except ConnectionRefusedError:
             shm_server = cls()
@@ -289,8 +291,7 @@ class SHMServer(Process):
         _, writer = await asyncio.open_connection(*address)
         writer.write(Command.SHUTDOWN.value)
         await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+        await close_stream_writer(writer)
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -299,14 +300,10 @@ class SHMServer(Process):
         try:
             cmd = await reader.read(1)
             if len(cmd) == 0:
-                writer.close()
-                await writer.wait_closed()
                 return
 
             if cmd == Command.SHUTDOWN.value:
                 self._shutdown.set()
-                writer.close()
-                await writer.wait_closed()
                 return
 
             info: Optional[SHMInfo] = None
@@ -337,5 +334,4 @@ class SHMServer(Process):
             with suppress(asyncio.CancelledError):
                 await info.lease(reader, writer)
         finally:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer)
