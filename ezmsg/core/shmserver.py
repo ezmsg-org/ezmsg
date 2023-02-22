@@ -130,6 +130,7 @@ class SHMContext:
         async def monitor() -> None:
             try:
                 await reader.read()
+                logger.debug("Read from SHMContext monitor reader")
             except asyncio.CancelledError:
                 pass
             finally:
@@ -238,7 +239,9 @@ class SHMServer(Process):
 
         async def monitor_shutdown() -> None:
             await loop.run_in_executor(None, self._shutdown.wait)
+            await SHMServer.shutdown_server()
             server.close()
+            await server.wait_closed()
 
         monitor_task = loop.create_task(monitor_shutdown())
 
@@ -296,10 +299,14 @@ class SHMServer(Process):
         try:
             cmd = await reader.read(1)
             if len(cmd) == 0:
+                writer.close()
+                await writer.wait_closed()
                 return
 
             if cmd == Command.SHUTDOWN.value:
                 self._shutdown.set()
+                writer.close()
+                await writer.wait_closed()
                 return
 
             info: Optional[SHMInfo] = None
@@ -329,7 +336,6 @@ class SHMServer(Process):
 
             with suppress(asyncio.CancelledError):
                 await info.lease(reader, writer)
-
         finally:
             writer.close()
             await writer.wait_closed()
