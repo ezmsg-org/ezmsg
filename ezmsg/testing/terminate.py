@@ -1,4 +1,3 @@
-
 import asyncio
 import time
 
@@ -35,4 +34,5 @@ class TerminateTest(ez.Unit):
             if self.STATE.last_msg_timestamp is not None:
                 age = time.time() - self.STATE.last_msg_timestamp
                 if age >= self.SETTINGS.time:
+                    ez.logger.info("Raising NormalTermination in TerminateTest!")
                     raise ez.NormalTermination

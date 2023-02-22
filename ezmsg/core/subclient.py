@@ -20,6 +20,7 @@ from .netprotocol import (
     read_int,
     read_str,
     encode_str,
+    close_stream_writer,
     Command,
     PublisherInfo,
     GRAPHSERVER_ADDR,
@@ -134,8 +135,7 @@ class Subscriber:
             logger.debug(f"Subscriber {self.id} lost connection to graph server")
 
         finally:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer)
 
     async def _handle_publisher(
         self, id: UUID, address: Address, connected: asyncio.Event
@@ -202,8 +202,7 @@ class Subscriber:
             logger.debug(f"connection fail: sub:{self.id} -> pub:{id}")
 
         finally:
-            self._publishers[id].writer.close()
-            await self._publishers[id].writer.wait_closed()
+            await close_stream_writer(self._publishers[id].writer)
             del self._publishers[id]
             logger.debug(f"disconnected: sub:{self.id} -> pub:{id}")
 
