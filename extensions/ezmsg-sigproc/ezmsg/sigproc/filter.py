@@ -16,7 +16,7 @@ class FilterCoefficients:
     a: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
 
 
-@dataclass
+@dataclass(frozen = True)
 class FilterSettingsMessage:
     # If you'd like to statically design a filter, define it in settings
     axis: Optional[str] = None

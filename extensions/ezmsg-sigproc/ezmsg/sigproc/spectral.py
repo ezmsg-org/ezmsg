@@ -47,7 +47,7 @@ class SpectralOutput(OptionsEnum):
     NEGATIVE = "Negative Frequencies"
 
 
-@dataclass
+@dataclass(frozen = True)
 class SpectrumSettingsMessage:
     axis: Optional[str] = None
     # n: Optional[int] = None # n parameter for fft

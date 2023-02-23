@@ -12,7 +12,7 @@ from .butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 from typing import Optional, AsyncGenerator, Union
 
 
-@dataclass
+@dataclass(frozen = True)
 class ClockSettingsMessage:
     # Message dispatch rate (Hz), or None (fast as possible)
     dispatch_rate: Optional[float]
@@ -45,7 +45,7 @@ class Clock(ez.Unit):
             yield self.OUTPUT_CLOCK, ez.Flag
 
 
-@dataclass
+@dataclass(frozen = True)
 class CounterSettingsMessage:
     """
     TODO: Adapt this to use ezmsg.util.rate?
@@ -147,7 +147,7 @@ class Counter(ez.Unit):
 
             yield self.OUTPUT_SIGNAL, out
 
-@dataclass
+@dataclass(frozen = True)
 class SinGeneratorSettingsMessage:
     time_axis: Optional[str] = 'time'
     freq: float = 1.0  # Oscillation frequency in Hz
@@ -190,7 +190,7 @@ class SinGenerator(ez.Unit):
         yield (self.OUTPUT_SIGNAL, replace(msg, data=out_data))
 
 
-@dataclass
+@dataclass(frozen = True)
 class OscillatorSettingsMessage:
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
@@ -252,7 +252,7 @@ class Oscillator(ez.Collection):
         )
 
 
-@dataclass
+@dataclass(frozen = True)
 class RandomGeneratorSettingsMessage:
     loc: float = 0.0
     scale: float = 1.0
@@ -277,7 +277,7 @@ class RandomGenerator(ez.Unit):
 
         yield self.OUTPUT_SIGNAL, replace(msg, data = random_data)
 
-@dataclass
+@dataclass(frozen = True)
 class NoiseSettingsMessage:
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
@@ -388,7 +388,7 @@ class Add(ez.Unit):
                 replace(a, data = a.data + b.data)
             )
 
-@dataclass
+@dataclass(frozen = True)
 class EEGSynthSettingsMessage:
     fs: float = 500.0 # Hz
     n_time: int = 100
