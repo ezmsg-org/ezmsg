@@ -8,7 +8,7 @@ from .filter import Filter, FilterState, FilterSettingsMessage, FilterSettings
 
 from typing import Optional, Tuple, Union
 
-@dataclass
+@dataclass(frozen = True)
 class ButterworthFilterSettingsMessage(FilterSettingsMessage):
     order: int = 0
     cuton: Optional[float] = None  # Hz

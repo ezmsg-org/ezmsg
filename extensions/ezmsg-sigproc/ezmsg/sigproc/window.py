@@ -13,7 +13,7 @@ from typing import (
     List
 )
 
-@dataclass
+@dataclass(frozen = True)
 class WindowSettingsMessage:
     axis: Optional[str] = None
     newaxis: Optional[str] = None # Optional new axis for output.  If "None" - no new axes on output

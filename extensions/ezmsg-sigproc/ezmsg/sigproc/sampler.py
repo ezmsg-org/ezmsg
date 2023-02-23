@@ -19,7 +19,7 @@ class SampleMessage:
     trigger: SampleTriggerMessage
     sample: AxisArray
 
-@dataclass
+@dataclass(frozen = True)
 class SamplerSettingsMessage:
     buffer_dur: float
     axis: Optional[str] = None
