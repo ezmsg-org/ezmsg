@@ -12,18 +12,20 @@ from uuid import getnode
 from .netprotocol import (
     DEFAULT_SHM_SIZE,
     SHMSERVER_ADDR,
+    close_stream_writer,
+    close_server,
     Command,
     Address,
     encode_str,
     uint64_to_bytes,
     bytes_to_uint,
     read_str,
-    read_int
+    read_int,
 )
 
 from typing import Generator, List, Dict, Set, Optional
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
 
 _std_register = resource_tracker.register
 
@@ -31,7 +33,7 @@ _std_register = resource_tracker.register
 def _ignore_shm(name, rtype):
     if rtype == "shared_memory":
         return
-    return resource_tracker._resource_tracker.register(self, name, rtype) # noqa: F821
+    return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
 
 
 @contextmanager
@@ -42,7 +44,7 @@ def _untracked_shm() -> Generator[None, None, None]:
     resource_tracker.register = _std_register
 
 
-class SHMContext():
+class SHMContext:
     """
     SHMContext manages the memory map of a block of shared memory, and
     exposes memoryview objects for reading and writing
@@ -86,12 +88,14 @@ class SHMContext():
         buf_stops = [buf_start + self.buf_size for buf_start in buf_starts]
         buf_data_block_starts = [buf_start + 16 for buf_start in buf_starts]
 
-        self._data_block_segs = [slice(*seg) for seg in
-                                 zip(buf_data_block_starts, buf_stops)
-                                 ]
+        self._data_block_segs = [
+            slice(*seg) for seg in zip(buf_data_block_starts, buf_stops)
+        ]
 
     @classmethod
-    async def create(cls, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE) -> "SHMContext":
+    async def create(
+        cls, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE
+    ) -> "SHMContext":
         reader, writer = await asyncio.open_connection(*SHMSERVER_ADDR)
         writer.write(Command.SHM_CREATE.value)
         writer.write(uint64_to_bytes(num_buffers))
@@ -114,33 +118,37 @@ class SHMContext():
 
         response = await reader.read(1)
         if response != Command.COMPLETE.value:
-            raise ValueError('Invalid SHM Name')
+            raise ValueError("Invalid SHM Name")
 
         shm_name = await read_str(reader)
         return SHMContext._create(shm_name, reader, writer)
 
     @classmethod
-    def _create(cls, shm_name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> "SHMContext":
+    def _create(
+        cls, shm_name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> "SHMContext":
         context = cls(shm_name)
 
         async def monitor() -> None:
             try:
                 await reader.read()
+                logger.debug("Read from SHMContext monitor reader")
             except asyncio.CancelledError:
                 pass
             finally:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
 
         def close(_: asyncio.Future) -> None:
             context.close()
 
-        context.monitor = asyncio.create_task(monitor(), name=f'{shm_name}_monitor')
+        context.monitor = asyncio.create_task(monitor(), name=f"{shm_name}_monitor")
         context.monitor.add_done_callback(close)
         return context
 
     @contextmanager
-    def buffer(self, idx: int, readonly: bool = False) -> Generator[memoryview, None, None]:
+    def buffer(
+        self, idx: int, readonly: bool = False
+    ) -> Generator[memoryview, None, None]:
         if self._shm.buf is None:
             raise BufferError(f"cannot access {self._shm.name}: SHMServer disconnected")
 
@@ -168,18 +176,21 @@ class SHMContext():
     def size(self) -> int:
         return self.buf_size - 16  # 16 byte header
 
+
 @dataclass
 class SHMInfo:
     shm: SharedMemory
-    leases: Set["asyncio.Task[None]"] = field(default_factory = set)
+    leases: Set["asyncio.Task[None]"] = field(default_factory=set)
 
-    def lease(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> "asyncio.Task[None]":
+    def lease(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> "asyncio.Task[None]":
         async def _wait_for_eof() -> None:
             try:
                 await reader.read()
             finally:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
+
         lease = asyncio.create_task(_wait_for_eof())
         lease.add_done_callback(self._release)
         self.leases.add(lease)
@@ -188,7 +199,7 @@ class SHMInfo:
     def _release(self, task: "asyncio.Task[None]"):
         self.leases.discard(task)
         if len(self.leases) == 0:
-            logger.debug(f'unlinking {self.shm.name}')
+            logger.debug(f"unlinking {self.shm.name}")
             self.shm.close()
             self.shm.unlink()
 
@@ -214,23 +225,28 @@ class SHMServer(Process):
     def run(self) -> None:
         handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        with suppress(asyncio.CancelledError):  
+        with suppress(asyncio.CancelledError):
             asyncio.run(self._serve())
         signal.signal(signal.SIGINT, handler)
 
     def stop(self) -> None:
         self._shutdown.set()
         self.join()
-        
+
     async def _serve(self) -> None:
         loop = asyncio.get_running_loop()
         server = await asyncio.start_server(self.api, *SHMSERVER_ADDR)
 
         async def monitor_shutdown() -> None:
-            await loop.run_in_executor( None, self._shutdown.wait )
-            server.close()
+            try:
+                await loop.run_in_executor(None, self._shutdown.wait)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await SHMServer.shutdown_server()
+                await close_server(server)
 
-        monitor_task = loop.create_task( monitor_shutdown() )
+        monitor_task = loop.create_task(monitor_shutdown())
 
         self._server_up.set()
 
@@ -246,7 +262,7 @@ class SHMServer(Process):
                 info.leases.clear()
 
             monitor_task.cancel()
-            with suppress( asyncio.CancelledError ):
+            with suppress(asyncio.CancelledError):
                 await monitor_task
 
     def start(self) -> None:
@@ -258,22 +274,28 @@ class SHMServer(Process):
         shm_server = None
         address = Address(*SHMSERVER_ADDR)
         try:
-            await asyncio.open_connection(*address)
-            logger.debug( f'SHMServer Exists: {address.host}:{address.port}' )
+            _, writer = await asyncio.open_connection(*address)
+            await close_stream_writer(writer)
+            logger.debug(f"SHMServer Exists: {address.host}:{address.port}")
         except ConnectionRefusedError:
             shm_server = cls()
             shm_server.start()
-            logger.info(f'Started SHMServer. PID:{shm_server.pid}@{address.host}:{address.port}')
+            logger.info(
+                f"Started SHMServer. PID:{shm_server.pid}@{address.host}:{address.port}"
+            )
         return shm_server
 
     @staticmethod
     async def shutdown_server() -> None:
         address = Address(*SHMSERVER_ADDR)
-        reader, writer = await asyncio.open_connection(*address)
+        _, writer = await asyncio.open_connection(*address)
         writer.write(Command.SHUTDOWN.value)
         await writer.drain()
+        await close_stream_writer(writer)
 
-    async def api(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def api(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
 
         try:
             cmd = await reader.read(1)
@@ -292,12 +314,12 @@ class SHMServer(Process):
 
                 # Create segment
                 shm = SharedMemory(size=num_buffers * buf_size, create=True)
-                shm.buf[:] = b'0' * len(shm.buf) # Guarantee zeros
+                shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
                 shm.buf[0:8] = uint64_to_bytes(num_buffers)
                 shm.buf[8:16] = uint64_to_bytes(buf_size)
                 info = SHMInfo(shm)
                 self.shms[shm.name] = info
-                logger.debug(f'created {shm.name}')
+                logger.debug(f"created {shm.name}")
 
             elif cmd == Command.SHM_ATTACH.value:
                 shm_name = await read_str(reader)
@@ -305,17 +327,11 @@ class SHMServer(Process):
 
             if info is None:
                 return
-            
+
             writer.write(Command.COMPLETE.value)
             writer.write(encode_str(info.shm.name))
 
             with suppress(asyncio.CancelledError):
                 await info.lease(reader, writer)
-
         finally:
-            writer.close()
-            await writer.wait_closed()
-        
-
-
-
+            await close_stream_writer(writer)

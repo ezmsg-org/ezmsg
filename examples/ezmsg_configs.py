@@ -94,15 +94,15 @@ class PassthroughCollection(ez.Collection):
 
 # CORNER CASES
 
-class EmptySystem(ez.System):
+class EmptySystem(ez.Collection):
     ...
 
 
-class EmptyTerminateSystem(ez.System):
+class EmptyTerminateSystem(ez.Collection):
     TERMINATE = Terminator()
 
 
-class OnlyPassthroughSystem(ez.System):
+class OnlyPassthroughSystem(ez.Collection):
     TERMINATE = Terminator()
     PASSTHROUGH = PassthroughCollection()
 
@@ -112,13 +112,13 @@ class OnlyPassthroughSystem(ez.System):
 
 # SYSTEMS WITH HANGING PUBS AND SUBS
 
-class PubNoSubSystem(ez.System):
+class PubNoSubSystem(ez.Collection):
     TERMINATE = Terminator()
     GENERATE = Generator()
     LOG = DebugLog()
 
 
-class SubNoPubSystem(ez.System):
+class SubNoPubSystem(ez.Collection):
     TERMINATE = Terminator()
     LISTEN = Listener()
 
@@ -126,7 +126,7 @@ class SubNoPubSystem(ez.System):
         logger.info('No output expected')
 
 
-class NoPubNoSubSystem(ez.System):
+class NoPubNoSubSystem(ez.Collection):
     TERMINATE = Terminator()
     MODULUS = Modulus()
 
@@ -158,12 +158,12 @@ class SubNoPubCollection(ez.Collection):
         )
 
 
-class PubNoSubCollectionSystem(ez.System):
+class PubNoSubCollectionSystem(ez.Collection):
     TERMINATE = Terminator()
     COLLECTION = PubNoSubCollection()
 
 
-class SubNoPubCollectionSystem(ez.System):
+class SubNoPubCollectionSystem(ez.Collection):
     TERMINATE = Terminator()
     COLLECTION = SubNoPubCollection()
 
@@ -199,12 +199,12 @@ class SubNoPubPassthroughCollection(ez.Collection):
         )
 
 
-class PubNoSubPassthroughCollectionSystem(ez.System):
+class PubNoSubPassthroughCollectionSystem(ez.Collection):
     TERMINATE = Terminator()
     COLLECTION = PubNoSubPassthroughCollection()
 
 
-class SubNoPubPassthroughCollectionSystem(ez.System):
+class SubNoPubPassthroughCollectionSystem(ez.Collection):
     TERMINATE = Terminator()
     COLLECTION = SubNoPubPassthroughCollection()
 
@@ -212,7 +212,7 @@ class SubNoPubPassthroughCollectionSystem(ez.System):
         logger.info('No output expected')
 
 
-class PassthroughSystem(ez.System):
+class PassthroughSystem(ez.Collection):
     TERMINATE = Terminator()
     GENERATE = Generator()
     PASSTHROUGH = PassthroughCollection()

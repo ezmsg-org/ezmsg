@@ -1,19 +1,15 @@
-from dataclasses import dataclass, field
-import logging
+from dataclasses import dataclass
 
 import ezmsg.core as ez
 import scipy.signal
 import numpy as np
 
-from .filter import Filter, FilterState, FilterSettings
+from .filter import Filter, FilterState, FilterSettingsMessage, FilterSettings
 
 from typing import Optional, Tuple, Union
 
-logger = logging.getLogger('ezmsg')
-
-
-@dataclass( frozen = True )
-class ButterworthFilterDesign:
+@dataclass
+class ButterworthFilterSettingsMessage(FilterSettingsMessage):
     order: int = 0
     cuton: Optional[float] = None  # Hz
     cutoff: Optional[float] = None  # Hz
@@ -31,19 +27,19 @@ class ButterworthFilterDesign:
             else: return 'bandstop', ( self.cutoff, self.cuton )
 
 
-class ButterworthFilterSettings(ButterworthFilterDesign, FilterSettings):
+class ButterworthFilterSettings(ButterworthFilterSettingsMessage, FilterSettings):
     ...
 
 
 class ButterworthFilterState(FilterState):
-    design: ButterworthFilterDesign
+    design: ButterworthFilterSettingsMessage
 
 
 class ButterworthFilter(Filter):
     SETTINGS: ButterworthFilterSettings
     STATE: ButterworthFilterState
 
-    INPUT_FILTER = ez.InputStream(ButterworthFilterDesign)
+    INPUT_FILTER = ez.InputStream(ButterworthFilterSettingsMessage)
 
     def initialize(self) -> None:
         self.STATE.design = self.SETTINGS
@@ -66,7 +62,7 @@ class ButterworthFilter(Filter):
 
 
     @ez.subscriber(INPUT_FILTER)
-    async def redesign(self, message: ButterworthFilterDesign) -> None:
+    async def redesign(self, message: ButterworthFilterSettingsMessage) -> None:
         if self.STATE.design.order != message.order:
             self.STATE.zi = None
         self.STATE.design = message

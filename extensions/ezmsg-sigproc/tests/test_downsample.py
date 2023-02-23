@@ -1,6 +1,5 @@
 import os
 import json
-import logging
 
 import pytest
 import numpy as np
@@ -16,8 +15,6 @@ from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
 from ezmsg.testing.debuglog import DebugLog
 
 from typing import Optional, List
-
-logger = logging.getLogger('ezmsg')
 
 
 class DownsampleSystemSettings(ez.Settings):
@@ -80,7 +77,7 @@ def test_downsample_system(
     num_msgs = int((in_fs / block_size) * 4.0)
 
     test_filename = get_test_fn(test_name)
-    logger.info(test_filename)
+    ez.logger.info(test_filename)
 
     settings = DownsampleSystemSettings(
         num_msgs=num_msgs,
@@ -113,7 +110,7 @@ def test_downsample_system(
 
     os.remove(test_filename)
 
-    logger.info(f'Analyzing recording of { len( messages ) } messages...')
+    ez.logger.info(f'Analyzing recording of { len( messages ) } messages...')
 
     fs: Optional[float] = None
     time_dim: Optional[int] = None
@@ -134,11 +131,11 @@ def test_downsample_system(
 
         data.append(msg.get('data'))
 
-    logger.info('Consistent metadata!')
+    ez.logger.info('Consistent metadata!')
 
     # TODO: Write meaningful analyses of the recording to test functionality
 
-    logger.info('Test Complete.')
+    ez.logger.info('Test Complete.')
 
 
 if __name__ == '__main__':

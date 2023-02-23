@@ -1,15 +1,14 @@
 from dataclasses import dataclass, replace, field
-import logging
 import time
 
 import ezmsg.core as ez
 import numpy as np
 
-from .messages import TSMessage
+from ezmsg.util.messages.axisarray import AxisArray
 
-from typing import Optional, Any, Tuple, List, Dict
+from typing import Optional, Any, Tuple, List, Dict, AsyncGenerator
 
-@dataclass( frozen = True )
+@dataclass(frozen = True)
 class SampleTriggerMessage:
     timestamp: float = field( default_factory = time.time )
     period: Optional[ Tuple[ float, float ] ] = None
@@ -18,10 +17,12 @@ class SampleTriggerMessage:
 @dataclass
 class SampleMessage:
     trigger: SampleTriggerMessage
-    sample: TSMessage
+    sample: AxisArray
 
-class SamplerSettings( ez.Settings ):
+@dataclass
+class SamplerSettingsMessage:
     buffer_dur: float
+    axis: Optional[str] = None
     period: Optional[ Tuple[ float, float ] ] = None # Optional default period if unspecified in SampleTriggerMessage
     value: Any = None # Optional default value if unspecified in SampleTriggerMessage
 
@@ -32,26 +33,45 @@ class SamplerSettings( ez.Settings ):
     # NOTE: For faster-than-realtime playback --  Incoming timestamps must reflect
     # "realtime" operation for estimate_alignment to operate correctly.
 
-class SamplerState( ez.State ):
-    triggers: Dict[ SampleTriggerMessage, int ] = field( default_factory = dict )
-    last_msg: Optional[ TSMessage ] = None
-    buffer: Optional[ np.ndarray ] = None
+class SamplerSettings(ez.Settings, SamplerSettingsMessage):
+    ...
 
-class Sampler( ez.Unit ):
+class SamplerState(ez.State):
+    cur_settings: SamplerSettingsMessage
+    triggers: Dict[SampleTriggerMessage, int] = field(default_factory = dict)
+    last_msg: Optional[AxisArray] = None
+    buffer: Optional[np.ndarray] = None
+
+class Sampler(ez.Unit):
     SETTINGS: SamplerSettings
     STATE: SamplerState
 
-    INPUT_TRIGGER = ez.InputStream( SampleTriggerMessage )
-    INPUT_SIGNAL = ez.InputStream( TSMessage )
-    OUTPUT_SAMPLE = ez.OutputStream( SampleMessage )
+    INPUT_TRIGGER = ez.InputStream(SampleTriggerMessage)
+    INPUT_SETTINGS = ez.InputStream(SamplerSettingsMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SAMPLE = ez.OutputStream(SampleMessage)
+
+    def initialize(self) -> None:
+        self.STATE.cur_settings = self.SETTINGS
+
+    @ez.subscriber(INPUT_SETTINGS)
+    async def on_settings(self, msg: SamplerSettingsMessage) -> None:
+        self.STATE.cur_settings = msg
 
     @ez.subscriber( INPUT_TRIGGER )
     async def on_trigger( self, msg: SampleTriggerMessage ) -> None:
-        if self.STATE.last_msg is not None:
-            fs = self.STATE.last_msg.fs
 
-            period = msg.period if msg.period is not None else self.SETTINGS.period
-            value = msg.value if msg.value is not None else self.SETTINGS.value
+        if self.STATE.last_msg is not None:
+            axis_name = self.STATE.cur_settings.axis
+            if axis_name is None:
+                axis_name = self.STATE.last_msg.dims[0]
+            axis = self.STATE.last_msg.get_axis(axis_name)
+
+            fs = 1.0 / axis.gain
+            last_msg_timestamp = axis.offset
+
+            period = msg.period if msg.period is not None else self.STATE.cur_settings.period
+            value = msg.value if msg.value is not None else self.STATE.cur_settings.value
 
             if period is None:
                 ez.logger.warning( f'Sampling failed: period not specified' )
@@ -65,45 +85,50 @@ class Sampler( ez.Unit ):
                 return
 
             # Check that period is compatible with buffer duration
-            max_buf_len = int( self.SETTINGS.buffer_dur * fs )
+            max_buf_len = int( self.STATE.cur_settings.buffer_dur * fs )
             req_buf_len = int( ( period[1] - period[0] ) * fs )
             if req_buf_len >= max_buf_len:
-                ez.logger.warning( f'Sampling failed: {period=} >= {self.SETTINGS.buffer_dur=}' )
+                ez.logger.warning( f'Sampling failed: {period=} >= {self.STATE.cur_settings.buffer_dur=}' )
                 return
 
             offset: int = 0
-            if self.SETTINGS.estimate_alignment:
+            if self.STATE.cur_settings.estimate_alignment:
                 # Do what we can with the wall clock to determine sample alignment
-                wall_delta = msg.timestamp - self.STATE.last_msg.timestamp
+                wall_delta = msg.timestamp - last_msg_timestamp
                 offset = int( wall_delta * fs )
 
             # Check that current buffer accumulation allows for offset - period start
-            if -min( offset + start_offset, 0 ) >= self.STATE.buffer.shape[0]:
+            if self.STATE.buffer is None or -min( offset + start_offset, 0 ) >= self.STATE.buffer.shape[0]:
                 ez.logger.warning( 'Sampling failed: insufficient buffer accumulation for requested sample period' )
                 return
 
-            trigger = replace( msg, period = period, value = value )
-            self.STATE.triggers[ trigger ] = offset 
+            self.STATE.triggers[ replace( msg, period = period ) ] = offset 
 
         else: ez.logger.warning( 'Sampling failed: no signal to sample yet' )
 
     @ez.subscriber( INPUT_SIGNAL )
     @ez.publisher( OUTPUT_SAMPLE )
-    async def on_signal( self, msg: TSMessage ) -> None:
+    async def on_signal( self, msg: AxisArray ) -> AsyncGenerator:
+
+        axis_name = self.STATE.cur_settings.axis
+        if axis_name is None:
+            axis_name = msg.dims[0]            
+        axis = msg.get_axis(axis_name)
+
+        fs = 1.0 / axis.gain
 
         if self.STATE.last_msg is None:
             self.STATE.last_msg = msg
 
         # Easier to deal with timeseries on axis 0
         last_msg = self.STATE.last_msg
-        msg_data = np.swapaxes( msg.data, msg.time_dim, 0 )
-        last_msg_data = np.swapaxes( last_msg.data, last_msg.time_dim, 0 )
+        msg_data = np.moveaxis( msg.data, msg.get_axis_idx(axis_name), 0 )
+        last_msg_data = np.moveaxis( last_msg.data, last_msg.get_axis_idx(axis_name), 0 )
+        last_msg_axis = last_msg.get_axis(axis_name)
+        last_msg_fs = 1.0 / last_msg_axis.gain
         
-        if ( # Check if signal properties have changed in a breaking way
-            msg.fs != last_msg.fs or \
-            msg.time_dim != last_msg.time_dim or \
-            msg_data.shape[1:] != last_msg_data.shape[1:]
-        ):
+        # Check if signal properties have changed in a breaking way
+        if fs != last_msg_fs or msg_data.shape[1:] != last_msg_data.shape[1:]:
             # Data stream changed meaningfully -- flush buffer, stop sampling
             if len( self.STATE.triggers ) > 0:
                 ez.logger.warning( 'Sampling failed: Discarding all triggers' )
@@ -115,22 +140,33 @@ class Sampler( ez.Unit ):
         self.STATE.buffer = msg_data if self.STATE.buffer is None else \
             np.concatenate( ( self.STATE.buffer, msg_data ), axis = 0 )
 
+        buffer_offset = np.arange(self.STATE.buffer.shape[0] + msg_data.shape[0])
+        buffer_offset -= self.STATE.buffer.shape[0] + 1
+        buffer_offset = (buffer_offset * axis.gain) + axis.offset
+
         pub_samples: List[ SampleMessage ] = []
         remaining_triggers: Dict[ SampleTriggerMessage, int ] = dict()
         for trigger, offset in self.STATE.triggers.items():
 
+            if trigger.period is None:
+                continue
+
             # trigger_offset points to t = 0 within buffer
-            offset = offset - msg.n_time
-            start = offset + int( trigger.period[0] * msg.fs )
-            stop = offset + int( trigger.period[1] * msg.fs )
+            offset -= msg_data.shape[0]
+            start = offset + int( trigger.period[0] * fs )
+            stop = offset + int( trigger.period[1] * fs )
 
             if stop < 0: # We should be able to dispatch a sample
-                sample_data = self.STATE.buffer[ start : stop, ... ]
-                sample_data = np.swapaxes( sample_data, msg.time_dim, 0 )
+                sample_data = self.STATE.buffer[start:stop, ...]
+                sample_data = np.moveaxis( sample_data, msg.get_axis_idx(axis_name), 0 )
+
+                sample_offset = buffer_offset[start]
+                sample_axis = replace(axis, offset = sample_offset)
+                sample_axes = {**msg.axes, **{axis_name: sample_axis}}
                 
                 pub_samples.append( SampleMessage( 
                     trigger = trigger,
-                    sample = replace( msg, data = sample_data )
+                    sample = replace( msg, data = sample_data, axes = sample_axes )
                 ) )
 
             else: remaining_triggers[ trigger ] = offset
@@ -140,7 +176,7 @@ class Sampler( ez.Unit ):
             
         self.STATE.triggers = remaining_triggers
 
-        buf_len = int( self.SETTINGS.buffer_dur * msg.fs )
+        buf_len = int( self.STATE.cur_settings.buffer_dur * fs )
         self.STATE.buffer = self.STATE.buffer[ -buf_len:, ... ]
         self.STATE.last_msg = msg
 
@@ -152,23 +188,6 @@ from ezmsg.testing.debuglog import DebugLog
 from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
 
 from typing import AsyncGenerator
-
-class SampleFormatter( ez.Unit ):
-
-    INPUT = ez.InputStream( SampleMessage )
-    OUTPUT = ez.OutputStream( str )
-
-    @ez.subscriber( INPUT )
-    @ez.publisher( OUTPUT )
-    async def format( self, msg: SampleMessage ) -> AsyncGenerator:
-        str_msg = f'Trigger: {msg.trigger.value}, '
-        str_msg += f'{msg.sample.n_time} samples @ {msg.sample.fs} Hz, '
-        
-        time_axis = np.arange(msg.sample.n_time) / msg.sample.fs
-        time_axis = time_axis + msg.trigger.period[0]
-        str_msg += f'[{time_axis[0]},{time_axis[-1]})'
-        
-        yield self.OUTPUT, str_msg
 
 class TriggerGeneratorSettings( ez.Settings ):
     period: Tuple[ float, float ] # sec
@@ -206,7 +225,6 @@ class SamplerTestSystem( ez.System ):
     OSC = Oscillator()
     SAMPLER = Sampler()
     TRIGGER = TriggerGenerator()
-    FORMATTER = SampleFormatter()
     DEBUG = DebugLog()
 
     def configure( self ) -> None:
@@ -229,8 +247,7 @@ class SamplerTestSystem( ez.System ):
             ( self.TRIGGER.OUTPUT_TRIGGER, self.SAMPLER.INPUT_TRIGGER ),
 
             ( self.TRIGGER.OUTPUT_TRIGGER, self.DEBUG.INPUT ),
-            ( self.SAMPLER.OUTPUT_SAMPLE, self.FORMATTER.INPUT ),
-            ( self.FORMATTER.OUTPUT, self.DEBUG.INPUT )
+            ( self.SAMPLER.OUTPUT_SAMPLE, self.DEBUG.INPUT )
         )
 
 if __name__ == '__main__':

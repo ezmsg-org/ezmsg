@@ -1,4 +1,5 @@
 import asyncio
+from asyncio.base_events import Server
 import enum
 import os
 
@@ -8,26 +9,28 @@ from contextlib import asynccontextmanager
 
 from typing import Tuple, NamedTuple, Union, AsyncGenerator, Optional
 
-VERSION = b'1'
+VERSION = b"1"
 UINT64_SIZE = 8
 DEFAULT_SHM_SIZE = 2 ** 16
-BYTEORDER = 'little'
+BYTEORDER = "little"
 
-GRAPHSERVER_PORT_ENV = 'EZMSG_GRAPHSERVER_PORT'
+GRAPHSERVER_PORT_ENV = "EZMSG_GRAPHSERVER_PORT"
 GRAPHSERVER_PORT_DEFAULT = 25978
 GRAPHSERVER_PORT = int(os.getenv(GRAPHSERVER_PORT_ENV, GRAPHSERVER_PORT_DEFAULT))
-GRAPHSERVER_ADDR = ('127.0.0.1', GRAPHSERVER_PORT)
+GRAPHSERVER_ADDR = ("127.0.0.1", GRAPHSERVER_PORT)
 
 # SHMServer must reside on localhost because it manages shared memory
 # for local processes.  GraphServer may live elsewhere
-SHMSERVER_PORT_ENV = 'EZMSG_SHMSERVER_PORT'
+SHMSERVER_PORT_ENV = "EZMSG_SHMSERVER_PORT"
 SHMSERVER_PORT_DEFAULT = 25979
 SHMSERVER_PORT = int(os.getenv(SHMSERVER_PORT_ENV, SHMSERVER_PORT_DEFAULT))
-SHMSERVER_ADDR = ('127.0.0.1', SHMSERVER_PORT)
+SHMSERVER_ADDR = ("127.0.0.1", SHMSERVER_PORT)
 
-PUBLISHER_START_PORT_ENV = 'EZMSG_PUBLISHER_PORT_START'
+PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
-PUBLISHER_START_PORT = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
+PUBLISHER_START_PORT = int(
+    os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
+)
 
 
 class Address(NamedTuple):
@@ -41,14 +44,14 @@ class Address(NamedTuple):
 
     @classmethod
     def from_string(cls, address: str) -> "Address":
-        host, port = address.split(':')
+        host, port = address.split(":")
         return cls(host, int(port))
 
     def to_stream(self, writer: asyncio.StreamWriter) -> None:
         writer.write(encode_str(str(self)))
 
     def __str__(self):
-        return f'{self.host}:{self.port}'
+        return f"{self.host}:{self.port}"
 
 
 AddressType = Union[Tuple[str, int], Address]
@@ -61,7 +64,7 @@ class ClientInfo:
     pid: int
     topic: str
 
-    _pending: asyncio.Event = field(default_factory=asyncio.Event, init = False)
+    _pending: asyncio.Event = field(default_factory=asyncio.Event, init=False)
 
     def __post_init__(self) -> None:
         self.set_sync()
@@ -79,7 +82,7 @@ class ClientInfo:
             await self._pending.wait()
         finally:
             self._pending.set()
-        
+
 
 @dataclass
 class PublisherInfo(ClientInfo):
@@ -90,6 +93,7 @@ class PublisherInfo(ClientInfo):
 class SubscriberInfo(ClientInfo):
     ...
 
+
 def uint64_to_bytes(i: int) -> bytes:
     return i.to_bytes(UINT64_SIZE, BYTEORDER, signed=False)
 
@@ -99,7 +103,7 @@ def bytes_to_uint(b: bytes) -> int:
 
 
 def encode_str(string: str) -> bytes:
-    str_bytes = string.encode('utf-8')
+    str_bytes = string.encode("utf-8")
     str_len_bytes = uint64_to_bytes(len(str_bytes))
     return str_len_bytes + str_bytes
 
@@ -112,7 +116,27 @@ async def read_int(reader: asyncio.StreamReader) -> int:
 async def read_str(reader: asyncio.StreamReader) -> str:
     str_size = await read_int(reader)
     str_bytes = await reader.readexactly(str_size)
-    return str_bytes.decode('utf-8')
+    return str_bytes.decode("utf-8")
+
+
+async def close_stream_writer(writer: asyncio.StreamWriter):
+    writer.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await writer.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
+
+
+async def close_server(server: Server):
+    server.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await server.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
 
 
 class Command(enum.Enum):
@@ -143,4 +167,3 @@ class Command(enum.Enum):
     SHM_ATTACH = enum.auto()
 
     SHUTDOWN = enum.auto()
-
