@@ -22,11 +22,11 @@ class AxisArray:
         offset: float = 0.0
 
         @classmethod
-        def TimeAxis(cls, fs: float, offset: Optional[float] = None) -> "AxisArray.Axis":
+        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
             """ 
             Creates a time axis with dimension of seconds. 
             Specify fs in units of Hz (1.0/sec)
-            If offset is left as "None", time.time() is used.
+            NOTE: offset corresponds to idx[0] on this dimension!
             """
             return cls(unit = 's', gain = 1.0 / fs, offset = time.time() if offset is None else offset)
 

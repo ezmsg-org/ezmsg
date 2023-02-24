@@ -134,13 +134,15 @@ class Counter(ez.Unit):
 
             t_samp = np.tile( t_samp, ( 1, self.STATE.cur_settings.n_ch ) )
 
+            offset_adj = self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
+
             out = AxisArray(
                 t_samp,
                 dims = ['time', 'ch'],
                 axes = dict( 
                     time = AxisArray.Axis.TimeAxis(
                         fs = self.STATE.cur_settings.fs, 
-                        offset = time.time()
+                        offset = time.time() - offset_adj
                     )
                 )
             )

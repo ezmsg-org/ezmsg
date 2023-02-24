@@ -66,9 +66,10 @@ class Sampler(ez.Unit):
             if axis_name is None:
                 axis_name = self.STATE.last_msg.dims[0]
             axis = self.STATE.last_msg.get_axis(axis_name)
+            axis_idx = self.STATE.last_msg.get_axis_idx(axis_name)
 
             fs = 1.0 / axis.gain
-            last_msg_timestamp = axis.offset
+            last_msg_timestamp = axis.offset + (self.STATE.last_msg.shape[axis_idx] / fs)
 
             period = msg.period if msg.period is not None else self.STATE.cur_settings.period
             value = msg.value if msg.value is not None else self.STATE.cur_settings.value
@@ -102,7 +103,7 @@ class Sampler(ez.Unit):
                 ez.logger.warning( 'Sampling failed: insufficient buffer accumulation for requested sample period' )
                 return
 
-            self.STATE.triggers[ replace( msg, period = period ) ] = offset 
+            self.STATE.triggers[ replace( msg, period = period, value = value ) ] = offset 
 
         else: ez.logger.warning( 'Sampling failed: no signal to sample yet' )
 
