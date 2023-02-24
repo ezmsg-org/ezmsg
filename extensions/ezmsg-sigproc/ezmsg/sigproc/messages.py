@@ -20,6 +20,7 @@ def TSMessage( data: npt.NDArray, fs: float = 1.0, time_dim: int = 0, timestamp:
     dims = [f'dim_{i}' for i in range(data.ndim)]
     dims[time_dim] = 'time'
     offset = time.time() if timestamp is None else timestamp
-    axis = AxisArray.Axis.TimeAxis(fs, offset = offset)
+    offset_adj = data.shape[time_dim] / fs # offset corresponds to idx[0] on time_dim
+    axis = AxisArray.Axis.TimeAxis(fs, offset = offset - offset_adj)
     return AxisArray( data, dims = dims, axes = dict( time = axis ) )
 
