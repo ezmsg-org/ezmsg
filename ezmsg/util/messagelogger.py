@@ -1,14 +1,16 @@
 import json
 import base64
+import importlib
 
 from io import TextIOWrapper
-from dataclasses import dataclass, is_dataclass, field, asdict
+from dataclasses import dataclass, is_dataclass, field, fields
+from functools import reduce
 
 from pathlib import Path
 
 import ezmsg.core as ez
 
-from typing import Optional, Any, Dict, Iterable, AsyncGenerator, List
+from typing import Optional, Any, Dict, Iterable, AsyncGenerator, List, Any, Generator
 
 try:
     import numpy as np
@@ -22,15 +24,32 @@ NDARRAY_DTYPE = 'dtype'
 NDARRAY_SHAPE = 'shape'
 NDARRAY_DATA = 'data'
 
+def type_str(obj: Any) -> str:
+    t = type(obj)
+    name = getattr(t, '__qualname__', t.__name__)
+    return f'{t.__module__}:{name}'
+
+def import_type(typestr: str) -> type:
+    module, name = typestr.split(':')
+    module = importlib.import_module(module)
+    ty = reduce(lambda t, n: getattr(t, n), [module] + name.split('.'))
+
+    if not isinstance(ty, type):
+        raise ImportError(f"{typestr} does not resolve to type")
+
+    return ty
 
 class MessageEncoder(json.JSONEncoder):
     def default(self, obj: Any):
         if is_dataclass(obj):
-            return { **asdict(obj), **{ TYPE: obj.__class__.__name__ }}
+            return { 
+                **{f.name: getattr(obj, f.name) for f in fields(obj)}, 
+                **{TYPE: type_str(obj)}
+            }
 
         elif np and isinstance(obj, np.ndarray):
             contig_obj = np.ascontiguousarray(obj)
-            buf = base64.b64decode(contig_obj.data)
+            buf = base64.b64encode(contig_obj.data)
             return {
                 TYPE: NDARRAY_TYPE,
                 NDARRAY_DTYPE: str(obj.dtype),
@@ -46,7 +65,7 @@ class MessageDecoder(json.JSONDecoder):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
 
     def object_hook(self, obj: Dict[str, Any]) -> Any:
-        obj_type = obj.get(TYPE)
+        obj_type: Optional[str] = obj.get(TYPE)
 
         if obj_type is None:
             return obj
@@ -63,6 +82,11 @@ class MessageDecoder(json.JSONDecoder):
             ):
                 buf = base64.b64decode(data_bytes.encode('ascii'))
                 return np.frombuffer(buf, dtype = data_dtype).reshape(data_shape)
+            
+        else:
+            cls = import_type(obj_type)
+            del obj[TYPE]
+            return cls(**obj)
 
         return obj
 
@@ -202,10 +226,6 @@ class MessageReplay(ez.Unit):
                     ez.logger.info(f'{type_dict}')
                     continue
 
-                if obj_type is None:
-                    ez.logger.warning(f'File contains unknown message type: {obj_type_str}')
-                    continue
-
                 del obj[TYPE]
                 obj = obj_type(**obj)
                 total_msgs += 1
@@ -282,3 +302,9 @@ class MessageLoader(ez.Collection):
     @property
     def messages(self) -> List[Any]:
         return self.COLLECTOR.messages
+    
+def message_log(fname: Path) -> Generator[Any, None, None]:
+    with open(fname, 'r') as f:
+        for l in f:
+            obj = json.loads(l, cls = MessageDecoder)
+            yield obj
