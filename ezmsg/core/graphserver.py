@@ -14,6 +14,8 @@ from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
     AddressType,
+    close_server,
+    close_stream_writer,
     encode_str,
     read_int,
     read_str,
@@ -90,7 +92,8 @@ class GraphServer(Process):
 
         async def monitor_shutdown() -> None:
             await loop.run_in_executor(None, self._shutdown.wait)
-            server.close()
+            await GraphServer.Connection(self.address).shutdown()
+            await close_server(server)
 
         monitor_task = loop.create_task(monitor_shutdown())
 
@@ -140,8 +143,7 @@ class GraphServer(Process):
         finally:
             self.clients[id].set_sync()
             del self.clients[id]
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer)
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -157,14 +159,12 @@ class GraphServer(Process):
             # This happens frequently when future clients are just pinging
             # GraphServer to check if server is up
             if not req:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
                 return
 
             if req == Command.SHUTDOWN.value:
                 self._shutdown.set()
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
                 return
 
             # We only want to handle one command at a time
@@ -218,6 +218,9 @@ class GraphServer(Process):
 
                     await writer.drain()
 
+                    if req == Command.DISCONNECT.value:
+                        await close_stream_writer(writer)
+
                 elif req == Command.SYNC.value:
                     for pub in self._publishers():
                         try:
@@ -243,8 +246,7 @@ class GraphServer(Process):
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("GraphServer connection fail mid-command")
 
-        writer.close()
-        await writer.wait_closed()
+        await close_stream_writer(writer)
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
@@ -308,8 +310,7 @@ class GraphServer(Process):
             try:
                 yield reader, writer
             finally:
-                writer.close()
-                await writer.wait_closed()
+                await close_stream_writer(writer)
 
         async def connect(self, from_topic: str, to_topic: str) -> None:
             async with self._open() as (reader, writer):
@@ -347,3 +348,4 @@ class GraphServer(Process):
         async def shutdown(self) -> None:
             async with self._open() as (reader, writer):
                 writer.write(Command.SHUTDOWN.value)
+                await writer.drain()
