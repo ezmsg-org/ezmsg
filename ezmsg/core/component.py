@@ -80,7 +80,7 @@ class Component(Addressable, metaclass=ComponentMeta):
     _tasks: Dict[str, Callable]  # Only Units will have tasks
     _streams: Dict[str, Stream]  # All Components can have streams
     _components: Dict[str, "Component"]  # Only Collections will have components
-    _main: Optional[Callable]
+    _main: Optional[Callable[..., None]]
     _threads: Dict[str, Callable]
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -152,7 +152,7 @@ class Component(Addressable, metaclass=ComponentMeta):
         return self._components
 
     @property
-    def main(self) -> Optional[Callable]:
+    def main(self) -> Optional[Callable[..., None]]:
         return self._main
 
     @property

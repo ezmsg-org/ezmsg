@@ -6,7 +6,7 @@ import traceback
 import threading
 
 from collections import defaultdict
-from functools import wraps
+from functools import wraps, partial
 from copy import deepcopy
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
@@ -86,82 +86,82 @@ class DefaultBackendProcess(BackendProcess):
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
 
-        self.pubs = dict()
-
-        async def setup_state():
-            for unit in self.units:
-                unit.setup()
-
-        future = asyncio.run_coroutine_threadsafe(setup_state(), loop)
-        try:
-            future.result()
-        except Exception as e:
-            self.start_barrier.abort()
-            self.stop_barrier.wait()
-            raise e
-
-        main_func = [(unit, unit.main) for unit in self.units if unit.main is not None]
-
-        if len(main_func) > 1:
-            details = "".join(
-                [f"\t* {unit.name}:{main_fn.__name__}\n" for unit, main_fn in main_func]
-            )
-            suggestion = f"Use a Collection and define process_components to separate these units."
-            raise Exception(
-                "Process has more than one main-thread functions\n"
-                + details
-                + suggestion
-            )
-
-        elif len(main_func) == 1:
-            main_func = main_func[0]
-        else:
-            main_func = None
-
+        main_func = None
         context = GraphContext(self.graph_address)
-        coros: Dict[str, Coroutine[Any, Any, None]] = dict()
+        coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
 
-        for unit in self.units:
+        try:
+            self.pubs = dict()
 
-            sub_callables: DefaultDict[
-                str, Set[Callable[..., Coroutine[Any, Any, None]]]
-            ] = defaultdict(set)
-            for task in unit.tasks.values():
-                task_callable = self.task_wrapper(unit, task)
-                if hasattr(task, SUBSCRIBES_ATTR):
-                    sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
-                    sub_topic = unit.streams[sub_stream.name].address
-                    sub_callables[sub_topic].add(task_callable)
-                else:
-                    task_name = f"TASK|{unit.address}:{task.__name__}"
-                    coros[task_name] = task_callable()
+            async def setup_state():
+                for unit in self.units:
+                    unit.setup()
 
-            for stream in unit.streams.values():
+            asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
 
-                if isinstance(stream, InputStream):
-                    logger.debug(f"Creating Subscriber from {stream}")
-                    sub = asyncio.run_coroutine_threadsafe(
-                        context.subscriber(stream.address), loop
-                    ).result()
-                    task_name = f"SUBSCRIBER|{stream.address}"
-                    coros[task_name] = handle_subscriber(
-                        sub, sub_callables[stream.address]
-                    )
+            main_funcs = [(unit, unit.main) for unit in self.units if unit.main is not None]
 
-                elif isinstance(stream, OutputStream):
-                    logger.debug(f"Creating Publisher from {stream}")
-                    self.pubs[stream.address] = asyncio.run_coroutine_threadsafe(
-                        context.publisher(
-                            stream.address,
-                            host=stream.host,
-                            port=stream.port,
-                            num_buffers=stream.num_buffers,
-                            buf_size=stream.buf_size,
-                            start_paused=True,
-                            force_tcp=stream.force_tcp,
-                        ),
-                        loop=loop,
-                    ).result()
+            if len(main_funcs) > 1:
+                details = "".join(
+                    [f"\t* {unit.name}:{main_fn.__name__}\n" for unit, main_fn in main_funcs]
+                )
+                suggestion = f"Use a Collection and define process_components to separate these units."
+                raise Exception(
+                    "Process has more than one main-thread functions\n"
+                    + details
+                    + suggestion
+                )
+
+            elif len(main_funcs) == 1:
+                main_func = main_funcs[0]
+            else:
+                main_func = None
+
+            for unit in self.units:
+
+                sub_callables: DefaultDict[
+                    str, Set[Callable[..., Coroutine[Any, Any, None]]]
+                ] = defaultdict(set)
+                for task in unit.tasks.values():
+                    task_callable = self.task_wrapper(unit, task)
+                    if hasattr(task, SUBSCRIBES_ATTR):
+                        sub_stream: Stream = getattr(task, SUBSCRIBES_ATTR)
+                        sub_topic = unit.streams[sub_stream.name].address
+                        sub_callables[sub_topic].add(task_callable)
+                    else:
+                        task_name = f"TASK|{unit.address}:{task.__name__}"
+                        coro_callables[task_name] = task_callable
+
+                for stream in unit.streams.values():
+
+                    if isinstance(stream, InputStream):
+                        logger.debug(f"Creating Subscriber from {stream}")
+                        sub = asyncio.run_coroutine_threadsafe(
+                            context.subscriber(stream.address), loop
+                        ).result()
+                        task_name = f"SUBSCRIBER|{stream.address}"
+                        coro_callables[task_name] = partial(
+                            handle_subscriber, sub, sub_callables[stream.address]
+                        )
+
+                    elif isinstance(stream, OutputStream):
+                        logger.debug(f"Creating Publisher from {stream}")
+                        self.pubs[stream.address] = asyncio.run_coroutine_threadsafe(
+                            context.publisher(
+                                stream.address,
+                                host=stream.host,
+                                port=stream.port,
+                                num_buffers=stream.num_buffers,
+                                buf_size=stream.buf_size,
+                                start_paused=True,
+                                force_tcp=stream.force_tcp,
+                            ),
+                            loop=loop,
+                        ).result()
+        except:
+            self.start_barrier.abort()
+            logger.error(f'{traceback.format_exc()}')
+
 
         try:
             logger.debug("Waiting at start barrier!")
@@ -181,8 +181,8 @@ class DefaultBackendProcess(BackendProcess):
                     await coro
 
             complete_tasks = [
-                asyncio.run_coroutine_threadsafe(coro_wrapper(coro), loop)
-                for name, coro in coros.items()
+                asyncio.run_coroutine_threadsafe(coro_wrapper(coro()), loop)
+                for name, coro in coro_callables.items()
             ]
 
             monitor = loop.run_in_executor(
@@ -205,6 +205,9 @@ class DefaultBackendProcess(BackendProcess):
                         break
                 except TimeoutError:
                     pass
+
+        except threading.BrokenBarrierError:
+            logger.info('Process exiting due to error on startup')
 
         finally:
 
