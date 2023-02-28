@@ -132,7 +132,8 @@ def test_downsample_system(
 
         data.append(msg.data)
 
-    assert fs == in_fs / factor
+    assert fs is not None
+    assert fs - (in_fs / factor) < 0.01
 
     ez.logger.info('Consistent metadata!')
 

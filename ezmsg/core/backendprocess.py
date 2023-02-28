@@ -4,7 +4,6 @@ import logging
 import time
 import traceback
 import threading
-import signal
 
 from collections import defaultdict
 from functools import wraps
