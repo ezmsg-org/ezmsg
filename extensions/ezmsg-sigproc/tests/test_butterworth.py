@@ -5,6 +5,7 @@ import pytest
 import numpy as np
 
 import ezmsg.core as ez
+from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import (
     MessageDecoder,
@@ -17,7 +18,7 @@ from ezmsg.sigproc.butterworthfilter import ButterworthFilter, ButterworthFilter
 from ezmsg.testing import get_test_fn
 from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
 
-from typing import Optional
+from typing import Optional, List
 
 
 class ButterworthSystemSettings(ez.Settings):
@@ -93,7 +94,7 @@ def test_butterworth_system(
 
     ez.run_system(system)
 
-    messages = []
+    messages: List[AxisArray] = []
     with open(test_filename, "r") as file:
         for line in file:
             messages.append(json.loads(line, cls=MessageDecoder))
@@ -102,13 +103,12 @@ def test_butterworth_system(
 
     ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
-    data = np.concatenate([msg.get("data") for msg in messages], axis=0)
+    data = np.concatenate([msg.data for msg in messages], axis=0)
 
     # Assert that graph has correct values
     freqs = np.fft.fftfreq(data.size, d=(1 / in_fs))
     fft_vals = np.log10(np.abs(np.fft.fft(data, axis=0)))
     all_vals = list(zip(freqs, fft_vals))
-
 
     specs = settings.butter_settings.filter_specs()
     assert specs is not None

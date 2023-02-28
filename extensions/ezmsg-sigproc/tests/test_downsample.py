@@ -5,6 +5,7 @@ import pytest
 import numpy as np
 
 import ezmsg.core as ez
+from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import MessageDecoder, MessageLogger, MessageLoggerSettings
 from ezmsg.sigproc.downsample import Downsample, DownsampleSettings
@@ -103,7 +104,7 @@ def test_downsample_system(
 
     ez.run_system(system)
 
-    messages = []
+    messages: List[AxisArray] = []
     with open(test_filename, "r") as file:
         for line in file:
             messages.append(json.loads(line, cls=MessageDecoder))
@@ -113,23 +114,25 @@ def test_downsample_system(
     ez.logger.info(f'Analyzing recording of { len( messages ) } messages...')
 
     fs: Optional[float] = None
-    time_dim: Optional[int] = None
+    dims: Optional[List[str]] = None
     data: List[np.ndarray] = []
     for msg in messages:
 
         # In this test, fs should change by factor
+        msg_fs = 1.0 / msg.axes['time'].gain
         if fs is None:
-            fs = msg.get('fs')
-        assert fs == msg.get('fs')
-        assert fs == in_fs / factor
+            fs = msg_fs
+        assert fs == msg_fs
 
         # In this test, we should have consistent time dimension
-        if time_dim is None:
-            time_dim = msg.get('time_dim')
+        if dims is None:
+            dims = msg.dims
         else:
-            assert time_dim == msg.get('time_dim')
+            assert dims == msg.dims
 
-        data.append(msg.get('data'))
+        data.append(msg.data)
+
+    assert fs == in_fs / factor
 
     ez.logger.info('Consistent metadata!')
 
