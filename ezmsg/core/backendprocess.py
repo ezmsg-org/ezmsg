@@ -93,7 +93,13 @@ class DefaultBackendProcess(BackendProcess):
             for unit in self.units:
                 unit.setup()
 
-        asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
+        future = asyncio.run_coroutine_threadsafe(setup_state(), loop)
+        try:
+            future.result()
+        except Exception as e:
+            self.start_barrier.abort()
+            self.stop_barrier.wait()
+            raise e
 
         main_func = [(unit, unit.main) for unit in self.units if unit.main is not None]
 
@@ -158,32 +164,32 @@ class DefaultBackendProcess(BackendProcess):
                         loop=loop,
                     ).result()
 
-        logger.debug("Waiting at start barrier!")
-        self.start_barrier.wait()
-
-        threads = [
-            loop.run_in_executor(None, thread_fn, unit)
-            for unit in self.units
-            for thread_fn in unit.threads.values()
-        ]
-
-        for pub in self.pubs.values():
-            pub.resume()
-
-        async def coro_wrapper(coro):
-            with suppress(Complete, NormalTermination, asyncio.CancelledError):
-                await coro
-
-        complete_tasks = [
-            asyncio.run_coroutine_threadsafe(coro_wrapper(coro), loop)
-            for name, coro in coros.items()
-        ]
-
-        monitor = loop.run_in_executor(
-            None, self.monitor_termination, complete_tasks, loop
-        )
-
         try:
+            logger.debug("Waiting at start barrier!")
+            self.start_barrier.wait()
+
+            threads = [
+                loop.run_in_executor(None, thread_fn, unit)
+                for unit in self.units
+                for thread_fn in unit.threads.values()
+            ]
+
+            for pub in self.pubs.values():
+                pub.resume()
+
+            async def coro_wrapper(coro):
+                with suppress(Complete, NormalTermination, asyncio.CancelledError):
+                    await coro
+
+            complete_tasks = [
+                asyncio.run_coroutine_threadsafe(coro_wrapper(coro), loop)
+                for name, coro in coros.items()
+            ]
+
+            monitor = loop.run_in_executor(
+                None, self.monitor_termination, complete_tasks, loop
+            )
+
             if main_func is not None:
                 unit, fn = main_func
                 try:
@@ -360,7 +366,7 @@ def new_threaded_event_loop(
     finally:
         if ev is not None:
             logger.debug("Waiting at event...")
-            ev.wait()
+            # ev.wait()
         logger.debug("Stopping and closing task thread")
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
