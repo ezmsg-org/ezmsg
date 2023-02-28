@@ -20,14 +20,15 @@ from .netprotocol import (
     read_int,
     read_str,
     encode_str,
+    close_stream_writer,
     Command,
     PublisherInfo,
-    GRAPHSERVER_ADDR
+    GRAPHSERVER_ADDR,
 )
 
 from typing import Tuple, Dict, Any, AsyncGenerator
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
 
 
 class Subscriber:
@@ -44,7 +45,9 @@ class Subscriber:
     _incoming: "asyncio.Queue[Tuple[UUID, int]]"
 
     @classmethod
-    async def create(cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs) -> "Subscriber":
+    async def create(
+        cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs
+    ) -> "Subscriber":
         reader, writer = await GraphServer.open(address)
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
@@ -82,7 +85,9 @@ class Subscriber:
         for shm in self._shms.values():
             await shm.wait_closed()
 
-    async def _graph_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _graph_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             while True:
                 cmd = await reader.read(1)
@@ -96,10 +101,10 @@ class Subscriber:
 
                     pub_addresses: Dict[UUID, Address] = {}
                     connections = await read_str(reader)
-                    connections = connections.strip(',')
+                    connections = connections.strip(",")
                     if len(connections):
-                        for connection in connections.split(','):
-                            pub_id, pub_address = connection.split('@')
+                        for connection in connections.split(","):
+                            pub_id, pub_address = connection.split("@")
                             pub_id = UUID(pub_id)
                             pub_address = Address.from_string(pub_address)
                             pub_addresses[pub_id] = pub_address
@@ -107,8 +112,10 @@ class Subscriber:
                     for id in set(pub_addresses.keys() - self._publishers.keys()):
                         connected = asyncio.Event()
                         coro = self._handle_publisher(id, pub_addresses[id], connected)
-                        task_name = f'sub{self.id}:_handle_publisher({id})'
-                        self._publisher_tasks[id] = asyncio.create_task(coro, name = task_name)
+                        task_name = f"sub{self.id}:_handle_publisher({id})"
+                        self._publisher_tasks[id] = asyncio.create_task(
+                            coro, name=task_name
+                        )
                         await connected.wait()
 
                     for id in set(self._publishers.keys() - pub_addresses.keys()):
@@ -120,15 +127,19 @@ class Subscriber:
                     await writer.drain()
 
                 else:
-                    logger.warning(f'Subscriber {self.id} rx unknown command from GraphServer: {cmd}')
+                    logger.warning(
+                        f"Subscriber {self.id} rx unknown command from GraphServer: {cmd}"
+                    )
 
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f'Subscriber {self.id} lost connection to graph server')
+            logger.debug(f"Subscriber {self.id} lost connection to graph server")
 
         finally:
-            writer.close()
+            await close_stream_writer(writer)
 
-    async def _handle_publisher(self, id: UUID, address: Address, connected: asyncio.Event) -> None:
+    async def _handle_publisher(
+        self, id: UUID, address: Address, connected: asyncio.Event
+    ) -> None:
 
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
@@ -171,7 +182,9 @@ class Subscriber:
                         try:
                             self._shms[id] = await SHMContext.attach(shm_name)
                         except ValueError:
-                            logger.info('Invalid SHM received from publisher; may be dead')
+                            logger.info(
+                                "Invalid SHM received from publisher; may be dead"
+                            )
                             raise
 
                 # FIXME: TCP connections could be more efficient.
@@ -184,14 +197,14 @@ class Subscriber:
                         MessageCache[id].put(msg_id, obj)
 
                 self._incoming.put_nowait((id, msg_id))
-                
+
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f'connection fail: sub:{self.id} -> pub:{id}')
+            logger.debug(f"connection fail: sub:{self.id} -> pub:{id}")
 
         finally:
-            self._publishers[id].writer.close()
+            await close_stream_writer(self._publishers[id].writer)
             del self._publishers[id]
-            logger.debug(f'disconnected: sub:{self.id} -> pub:{id}')
+            logger.debug(f"disconnected: sub:{self.id} -> pub:{id}")
 
     async def recv(self) -> Any:
         out_msg = None
@@ -217,7 +230,4 @@ class Subscriber:
                     self._publishers[id].writer.write(ack)
                     await self._publishers[id].writer.drain()
                 except (BrokenPipeError, ConnectionResetError):
-                    logger.debug(f'ack fail: sub:{self.id} -> pub:{id}')
-
-
-            
+                    logger.debug(f"ack fail: sub:{self.id} -> pub:{id}")
