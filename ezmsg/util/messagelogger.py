@@ -176,7 +176,6 @@ class MessageLogger(ez.Unit):
 @dataclass(frozen = True)
 class MessageReplaySettingsMessage:
     filename: Path
-    message_types: List[type] = field(default_factory = list)
 
 
 class MessageReplaySettings(ez.Settings, MessageReplaySettingsMessage):
@@ -194,11 +193,6 @@ class MessageReplay(ez.Unit):
     async def pub_messages(self) -> AsyncGenerator:
         total_msgs = 0
 
-        type_dict = {
-            ty.__name__: ty 
-            for ty in self.SETTINGS.message_types
-        }
-
         with open(self.SETTINGS.filename, 'r') as f:
             for msg_idx, line in enumerate(f):
 
@@ -208,30 +202,9 @@ class MessageReplay(ez.Unit):
                     ez.logger.warning(f'Could not load message {msg_idx + 1} from {self.SETTINGS.filename}')
                     continue
 
-                if not isinstance(obj, dict):
-                    total_msgs += 1
-                    yield self.OUTPUT_MESSAGE, obj
-                    continue
-
-                obj_type_str = obj.get(TYPE)
-                if obj_type_str is None:
-                    total_msgs += 1
-                    yield self.OUTPUT_MESSAGE, obj
-                    continue
-
-                obj_type = type_dict.get(obj_type_str)
-
-                if obj_type is None:
-                    ez.logger.warning(f'Message {TYPE}: {obj_type_str} not in message_types')
-                    ez.logger.info(f'{type_dict}')
-                    continue
-
-                del obj[TYPE]
-                obj = obj_type(**obj)
                 total_msgs += 1
                 yield self.OUTPUT_MESSAGE, obj
 
-        
         ez.logger.info(f'Replayed {total_msgs} messages from {self.SETTINGS.filename}')
         yield self.OUTPUT_TOTAL, total_msgs
         raise ez.Complete
