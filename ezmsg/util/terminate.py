@@ -62,7 +62,7 @@ class TerminateOnTotal(ez.Unit):
     SETTINGS: TerminateOnTotalSettings
     STATE: TerminateOnTotalState
 
-    INPUT = ez.InputStream(Any)
+    INPUT_MESSAGE = ez.InputStream(Any)
     INPUT_TOTAL = ez.InputStream(int)
 
     def initialize(self) -> None:
@@ -73,11 +73,12 @@ class TerminateOnTotal(ez.Unit):
         self.STATE.total = msg
         self.maybe_terminate()
 
-    @ez.subscriber(INPUT)
+    @ez.subscriber(INPUT_MESSAGE)
     async def on_message(self, _: Any) -> None:
         self.STATE.n_messages += 1
         self.maybe_terminate()
 
     def maybe_terminate(self):
-        if self.STATE.total is not None and self.STATE.n_messages >= self.STATE.total:
-            raise ez.NormalTermination
+        if self.STATE.total is not None:
+            if self.STATE.n_messages >= self.STATE.total:
+                raise ez.NormalTermination
