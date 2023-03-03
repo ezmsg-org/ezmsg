@@ -52,7 +52,7 @@ class MessageCollectorState(ez.State):
     messages: List[Any] = field(default_factory = list)
 
 
-class MessageCollector(ez.Collection):
+class MessageCollector(ez.Unit):
     STATE: MessageCollectorState
 
     INPUT_MESSAGE = ez.InputStream(Any)
