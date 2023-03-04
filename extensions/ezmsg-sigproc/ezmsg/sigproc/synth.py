@@ -12,29 +12,25 @@ from .butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 from typing import Optional, AsyncGenerator, Union
 
 
-@dataclass(frozen = True)
-class ClockSettingsMessage:
+class ClockSettings(ez.Settings):
     # Message dispatch rate (Hz), or None (fast as possible)
     dispatch_rate: Optional[float]
 
-class ClockSettings(ez.Settings, ClockSettingsMessage):
-    ...
-
 class ClockState(ez.State):
-    cur_settings: ClockSettingsMessage
+    cur_settings: ClockSettings
 
 class Clock(ez.Unit):
     SETTINGS: ClockSettings
     STATE: ClockState
 
-    INPUT_SETTINGS = ez.InputStream(ClockSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(ClockSettings)
     OUTPUT_CLOCK = ez.OutputStream(ez.Flag)
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: ClockSettingsMessage) -> None:
+    async def on_settings(self, msg: ClockSettings) -> None:
         self.STATE.cur_settings = msg
 
     @ez.publisher(OUTPUT_CLOCK)
@@ -45,8 +41,7 @@ class Clock(ez.Unit):
             yield self.OUTPUT_CLOCK, ez.Flag
 
 
-@dataclass(frozen = True)
-class CounterSettingsMessage:
+class CounterSettings(ez.Settings):
     """
     TODO: Adapt this to use ezmsg.util.rate?
     NOTE: This module uses asyncio.sleep to delay appropriately in realtime mode.
@@ -65,12 +60,8 @@ class CounterSettingsMessage:
     mod: Optional[int] = None
 
 
-class CounterSettings(ez.Settings, CounterSettingsMessage):
-    ...
-
-
 class CounterState(ez.State):
-    cur_settings: CounterSettingsMessage
+    cur_settings: CounterSettings
     samp: int = 0  # current sample counter
     clock_event: asyncio.Event
 
@@ -82,7 +73,7 @@ class Counter(ez.Unit):
     STATE: CounterState
 
     INPUT_CLOCK = ez.InputStream(ez.Flag)
-    INPUT_SETTINGS = ez.InputStream(CounterSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(CounterSettings)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     def initialize(self) -> None:
@@ -91,10 +82,10 @@ class Counter(ez.Unit):
         self.validate_settings(self.SETTINGS)
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: CounterSettingsMessage) -> None:
+    async def on_settings(self, msg: CounterSettings) -> None:
         self.validate_settings(msg)
 
-    def validate_settings(self, settings: CounterSettingsMessage) -> None:
+    def validate_settings(self, settings: CounterSettings) -> None:
         if isinstance(settings.dispatch_rate, str) and \
             self.SETTINGS.dispatch_rate not in ['realtime', 'ext_clock']:
             raise ValueError(f'Unknown dispatch_rate: {self.SETTINGS.dispatch_rate}')
@@ -149,16 +140,11 @@ class Counter(ez.Unit):
 
             yield self.OUTPUT_SIGNAL, out
 
-@dataclass(frozen = True)
-class SinGeneratorSettingsMessage:
+class SinGeneratorSettings(ez.Settings):
     time_axis: Optional[str] = 'time'
     freq: float = 1.0  # Oscillation frequency in Hz
     amp: float = 1.0  # Amplitude
     phase: float = 0.0  # Phase offset (in radians)
-
-
-class SinGeneratorSettings(ez.Settings, SinGeneratorSettingsMessage):
-    ...
 
 
 class SinGeneratorState(ez.State):
@@ -192,8 +178,7 @@ class SinGenerator(ez.Unit):
         yield (self.OUTPUT_SIGNAL, replace(msg, data=out_data))
 
 
-@dataclass(frozen = True)
-class OscillatorSettingsMessage:
+class OscillatorSettings(ez.Settings):
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
     n_ch: int = 1 # Number of channels to output per block
@@ -202,10 +187,6 @@ class OscillatorSettingsMessage:
     amp: float = 1.0  # Amplitude
     phase: float = 0.0  # Phase offset (in radians)
     sync: bool = False  # Adjust `freq` to sync with sampling rate
-
-
-class OscillatorSettings(ez.Settings, OscillatorSettingsMessage):
-    ...
 
 
 class Oscillator(ez.Collection):
@@ -254,13 +235,10 @@ class Oscillator(ez.Collection):
         )
 
 
-@dataclass(frozen = True)
-class RandomGeneratorSettingsMessage:
+class RandomGeneratorSettings(ez.Settings):
     loc: float = 0.0
     scale: float = 1.0
-    
-class RandomGeneratorSettings(ez.Settings, RandomGeneratorSettingsMessage):
-    ...
+
 
 class RandomGenerator(ez.Unit):
     SETTINGS: RandomGeneratorSettings
@@ -279,8 +257,8 @@ class RandomGenerator(ez.Unit):
 
         yield self.OUTPUT_SIGNAL, replace(msg, data = random_data)
 
-@dataclass(frozen = True)
-class NoiseSettingsMessage:
+
+class NoiseSettings(ez.Settings):
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
     n_ch: int = 1 # Number of channels to output
@@ -288,10 +266,9 @@ class NoiseSettingsMessage:
     loc: float = 0.0 # DC offset
     scale: float = 1.0 # Scale (in standard deviations)
 
-class NoiseSettings(ez.Settings, NoiseSettingsMessage):
-    ...
     
 WhiteNoiseSettings = NoiseSettings
+
 
 class WhiteNoise(ez.Collection):
 
@@ -314,11 +291,11 @@ class WhiteNoise(ez.Collection):
 
         self.COUNTER.apply_settings(
             CounterSettings(
-                n_time=self.SETTINGS.n_time,
-                fs=self.SETTINGS.fs,
-                n_ch=self.SETTINGS.n_ch,
-                dispatch_rate=self.SETTINGS.dispatch_rate,
-                mod=None
+                n_time = self.SETTINGS.n_time,
+                fs = self.SETTINGS.fs,
+                n_ch = self.SETTINGS.n_ch,
+                dispatch_rate = self.SETTINGS.dispatch_rate,
+                mod = None
             )
         )
 
@@ -346,6 +323,7 @@ class PinkNoise(ez.Collection):
         self.WHITE_NOISE.apply_settings( self.SETTINGS )
         self.FILTER.apply_settings(
             ButterworthFilterSettings(
+                axis = 'time',
                 order = 1,
                 cutoff = self.SETTINGS.fs * 0.01 # Hz
             )
@@ -390,16 +368,11 @@ class Add(ez.Unit):
                 replace(a, data = a.data + b.data)
             )
 
-@dataclass(frozen = True)
-class EEGSynthSettingsMessage:
+class EEGSynthSettings(ez.Settings):
     fs: float = 500.0 # Hz
     n_time: int = 100
     alpha_freq: float = 10.5 # Hz
     n_ch: int = 8
-
-
-class EEGSynthSettings(ez.Settings, EEGSynthSettingsMessage):
-    ...
 
 
 class EEGSynth(ez.Collection):
