@@ -16,11 +16,14 @@ class FilterCoefficients:
     a: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
 
 
-class FilterSettings(ez.Settings):
-    # If you'd like to statically design a filter, define it in settings
+class FilterSettingsBase(ez.Settings):
     axis: Optional[str] = None
-    filt: Optional[FilterCoefficients] = None
     fs: Optional[float] = None
+
+
+class FilterSettings(FilterSettingsBase):
+    # If you'd like to statically design a filter, define it in settings
+    filt: Optional[FilterCoefficients] = None
 
 
 class FilterState(ez.State):
@@ -34,7 +37,7 @@ class FilterState(ez.State):
 
 
 class Filter(ez.Unit):
-    SETTINGS: FilterSettings
+    SETTINGS: FilterSettingsBase
     STATE: FilterState
 
     INPUT_FILTER = ez.InputStream(FilterCoefficients)
@@ -48,9 +51,11 @@ class Filter(ez.Unit):
     def initialize(self) -> None:
         if self.SETTINGS.axis is not None:
             self.STATE.axis = self.SETTINGS.axis
-        if self.SETTINGS.filt is not None:
-            self.STATE.filt = self.SETTINGS.filt
-            self.STATE.filt_set.set()
+
+        if isinstance(self.SETTINGS, FilterSettings):
+            if self.SETTINGS.filt is not None:
+                self.STATE.filt = self.SETTINGS.filt
+                self.STATE.filt_set.set()
         else:
             self.STATE.filt_set.clear()
 
