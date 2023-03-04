@@ -1,7 +1,7 @@
 import json
 
 from io import TextIOWrapper
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 
 import ezmsg.core as ez
@@ -10,13 +10,9 @@ from .messagecodec import MessageEncoder
 
 from typing import Optional, Any, Dict, AsyncGenerator, Any
 
-@dataclass(frozen = True)
-class MessageLoggerSettingsMessage:
+
+class MessageLoggerSettings(ez.Settings):
     output: Optional[Path] = None
-
-
-class MessageLoggerSettings(ez.Settings, MessageLoggerSettingsMessage):
-    ...
 
 
 class MessageLoggerState(ez.State):

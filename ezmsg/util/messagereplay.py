@@ -1,6 +1,6 @@
 import json
 
-from dataclasses import dataclass, field
+from dataclasses import field
 
 from pathlib import Path
 
@@ -11,14 +11,8 @@ from typing import Any, AsyncGenerator, Any, List
 from .messagecodec import MessageDecoder
 from .terminate import TerminateOnTotal
 
-@dataclass(frozen = True)
-class MessageReplaySettingsMessage:
+class MessageReplaySettings(ez.Settings):
     filename: Path
-
-
-class MessageReplaySettings(ez.Settings, MessageReplaySettingsMessage):
-    ...
-
 
 class MessageReplay(ez.Unit):
     SETTINGS: MessageReplaySettings

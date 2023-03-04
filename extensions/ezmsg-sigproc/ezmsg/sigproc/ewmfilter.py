@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import replace, dataclass
+from dataclasses import replace
 
 import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
@@ -14,14 +14,9 @@ from typing import (
 )
 
 
-@dataclass(frozen = True)
-class EWMSettingsMessage:
+class EWMSettings(ez.Settings):
     axis: Optional[str] = None
     zero_offset: bool = True  # If true, we assume zero DC offset
-
-
-class EWMSettings(ez.Settings, EWMSettingsMessage):
-    ...
 
 
 class EWMState(ez.State):
@@ -99,14 +94,10 @@ class EWM(ez.Unit):
 
             yield self.OUTPUT_SIGNAL, replace(signal, data=standardized)
 
-@dataclass(frozen = True)
-class EWMFilterSettingsMessage:
+class EWMFilterSettings(ez.Settings):
     history_dur: float  # previous data to accumulate for standardization
     axis: Optional[str] = None
     zero_offset: bool = True  # If true, we assume zero DC offset for input data
-
-class EWMFilterSettings(ez.Settings, EWMFilterSettingsMessage):
-    ...
 
 class EWMFilter(ez.Collection):
 
