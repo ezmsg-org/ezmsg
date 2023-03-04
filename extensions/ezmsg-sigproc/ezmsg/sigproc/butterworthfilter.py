@@ -2,11 +2,11 @@ import ezmsg.core as ez
 import scipy.signal
 import numpy as np
 
-from .filter import Filter, FilterState, FilterSettings
+from .filter import Filter, FilterState, FilterSettingsBase
 
 from typing import Optional, Tuple, Union
 
-class ButterworthFilterSettings(FilterSettings):
+class ButterworthFilterSettings(FilterSettingsBase):
     order: int = 0
     cuton: Optional[float] = None  # Hz
     cutoff: Optional[float] = None  # Hz
