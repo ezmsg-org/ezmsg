@@ -1,6 +1,6 @@
 from abc import ABCMeta
 from copy import deepcopy
-from dataclasses import fields, MISSING
+from dataclasses import fields, MISSING, is_dataclass
 
 from .settings import Settings
 from .state import State
@@ -112,14 +112,15 @@ class Component(Addressable, metaclass=ComponentMeta):
             self.apply_settings(settings)
 
     def _instantiate_state(self) -> None:
-        if self.STATE is not None:
-            raise AssertionError
+        assert self.STATE is None
         self.STATE = self.__class__.__state_type__()
+        assert is_dataclass(self.STATE)
         for field in fields(self.STATE):
             if field.default_factory is not MISSING and field.default is MISSING:
                 setattr(self.STATE, field.name, field.default_factory())
 
     def _check_state(self) -> None:
+        assert is_dataclass(self.STATE.__class__)
         for field in fields(self.STATE.__class__):
             if not hasattr(self.STATE, field.name):
                 raise AttributeError(
