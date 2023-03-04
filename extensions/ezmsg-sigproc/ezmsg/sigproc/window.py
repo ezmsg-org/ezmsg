@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import ezmsg.core as ez
 import numpy as np
@@ -13,20 +13,15 @@ from typing import (
     List
 )
 
-@dataclass(frozen = True)
-class WindowSettingsMessage:
+class WindowSettings(ez.Settings):
     axis: Optional[str] = None
     newaxis: Optional[str] = None # Optional new axis for output.  If "None" - no new axes on output
     window_dur: Optional[float] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
     window_shift: Optional[float] = None  # Sec.  If "None", activate "1:1 mode"
 
 
-class WindowSettings(WindowSettingsMessage, ez.Settings):
-    ...
-
-
 class WindowState(ez.State):
-    cur_settings: WindowSettingsMessage
+    cur_settings: WindowSettings
 
     samp_shape: Optional[Tuple[int, ...]] = None  # Shape of individual sample
     out_fs: Optional[float] = None
@@ -42,13 +37,13 @@ class Window(ez.Unit):
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
-    INPUT_SETTINGS = ez.InputStream(WindowSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(WindowSettings)
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: WindowSettingsMessage) -> None:
+    async def on_settings(self, msg: WindowSettings) -> None:
         self.STATE.cur_settings = msg
         self.STATE.out_fs = None # This should trigger a reallocation
 

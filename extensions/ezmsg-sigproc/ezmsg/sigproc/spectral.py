@@ -1,6 +1,6 @@
 import enum
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import numpy as np
 import ezmsg.core as ez
@@ -47,8 +47,7 @@ class SpectralOutput(OptionsEnum):
     NEGATIVE = "Negative Frequencies"
 
 
-@dataclass(frozen = True)
-class SpectrumSettingsMessage:
+class SpectrumSettings(ez.Settings):
     axis: Optional[str] = None
     # n: Optional[int] = None # n parameter for fft
     out_axis: Optional[str] = 'freq' # If none; don't change dim name
@@ -57,19 +56,15 @@ class SpectrumSettingsMessage:
     output: SpectralOutput = SpectralOutput.POSITIVE
 
 
-class SpectrumSettings(ez.Settings, SpectrumSettingsMessage):
-    ...
-
-
 class SpectrumState(ez.State):
-    cur_settings: SpectrumSettingsMessage
+    cur_settings: SpectrumSettings
 
 
 class Spectrum(ez.Unit):
     SETTINGS: SpectrumSettings
     STATE: SpectrumState
 
-    INPUT_SETTINGS = ez.InputStream(SpectrumSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(SpectrumSettings)
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
@@ -77,7 +72,7 @@ class Spectrum(ez.Unit):
         self.STATE.cur_settings = self.SETTINGS
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: SpectrumSettingsMessage):
+    async def on_settings(self, msg: SpectrumSettings):
         self.STATE.cur_settings = msg
 
     @ez.subscriber(INPUT_SIGNAL)

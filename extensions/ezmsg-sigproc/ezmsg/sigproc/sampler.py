@@ -19,8 +19,7 @@ class SampleMessage:
     trigger: SampleTriggerMessage
     sample: AxisArray
 
-@dataclass(frozen = True)
-class SamplerSettingsMessage:
+class SamplerSettings(ez.Settings):
     buffer_dur: float
     axis: Optional[str] = None
     period: Optional[ Tuple[ float, float ] ] = None # Optional default period if unspecified in SampleTriggerMessage
@@ -33,11 +32,8 @@ class SamplerSettingsMessage:
     # NOTE: For faster-than-realtime playback --  Incoming timestamps must reflect
     # "realtime" operation for estimate_alignment to operate correctly.
 
-class SamplerSettings(ez.Settings, SamplerSettingsMessage):
-    ...
-
 class SamplerState(ez.State):
-    cur_settings: SamplerSettingsMessage
+    cur_settings: SamplerSettings
     triggers: Dict[SampleTriggerMessage, int] = field(default_factory = dict)
     last_msg: Optional[AxisArray] = None
     buffer: Optional[np.ndarray] = None
@@ -47,7 +43,7 @@ class Sampler(ez.Unit):
     STATE: SamplerState
 
     INPUT_TRIGGER = ez.InputStream(SampleTriggerMessage)
-    INPUT_SETTINGS = ez.InputStream(SamplerSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(SamplerSettings)
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SAMPLE = ez.OutputStream(SampleMessage)
 
@@ -55,11 +51,11 @@ class Sampler(ez.Unit):
         self.STATE.cur_settings = self.SETTINGS
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: SamplerSettingsMessage) -> None:
+    async def on_settings(self, msg: SamplerSettings) -> None:
         self.STATE.cur_settings = msg
 
     @ez.subscriber( INPUT_TRIGGER )
-    async def on_trigger( self, msg: SampleTriggerMessage ) -> None:
+    async def on_trigger(self, msg: SampleTriggerMessage) -> None:
 
         if self.STATE.last_msg is not None:
             axis_name = self.STATE.cur_settings.axis
@@ -109,7 +105,7 @@ class Sampler(ez.Unit):
 
     @ez.subscriber( INPUT_SIGNAL )
     @ez.publisher( OUTPUT_SAMPLE )
-    async def on_signal( self, msg: AxisArray ) -> AsyncGenerator:
+    async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
 
         axis_name = self.STATE.cur_settings.axis
         if axis_name is None:
