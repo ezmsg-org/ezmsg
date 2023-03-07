@@ -34,7 +34,9 @@ def cmdline() -> None:
     )
 
     parser.add_argument(
-        "command", help="command for ezmsg", choices=["serve", "shutdown", "start"]
+        "command",
+        help="command for ezmsg",
+        choices=["serve", "shutdown", "start", "graphviz"],
     )
 
     parser.add_argument(
@@ -110,3 +112,6 @@ async def run_command(
                 await asyncio.sleep(0.1)
 
         logger.info(f"Forked ezmsg servers.")
+    elif cmd == "graphviz":
+        graph_dict = await GraphServer.Connection(address).dag()
+        print(graph_dict)
