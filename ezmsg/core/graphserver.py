@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+import pickle
 
 from dataclasses import dataclass
 from contextlib import suppress, asynccontextmanager
@@ -240,6 +241,14 @@ class GraphServer(Process):
                     for pub in self._publishers():
                         pub.writer.write(Command.RESUME.value)
 
+                elif req == Command.DAG.value:
+                    writer.write(Command.DAG.value)
+                    logger.info(f"Graph: {self.graph}")
+                    dag_bytes = pickle.dumps(self.graph)
+                    writer.write(uint64_to_bytes(len(dag_bytes)) + dag_bytes)
+                    logger.info(f"Wrote: {self.graph}")
+                    writer.write(Command.COMPLETE.value)
+
                 else:
                     logger.warn(f"GraphServer received unknown command {req}")
 
@@ -349,3 +358,24 @@ class GraphServer(Process):
             async with self._open() as (reader, writer):
                 writer.write(Command.SHUTDOWN.value)
                 await writer.drain()
+
+        async def dag(self, timeout: Optional[float] = None) -> str:
+            async with self._open() as (reader, writer):
+                writer.write(Command.DAG.value)
+                await writer.drain()
+                await asyncio.sleep(1.0)
+                await reader.readexactly(1)
+                dag_num_bytes = await read_int(reader)
+                dag_bytes = await reader.readexactly(dag_num_bytes)
+                dag: DAG = pickle.loads(dag_bytes)
+
+                graphviz_str = "digraph EZ {\n"
+                for node in dag.nodes:
+                    graphviz_str += f"\t{node}\n"
+                for node, conns in dag.graph.items():
+                    for conn in conns:
+                        graphviz_str += f"\t{node}->{conn}\n"
+                graphviz_str += "}"
+
+                await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
+                return graphviz_str
