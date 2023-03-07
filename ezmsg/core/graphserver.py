@@ -9,7 +9,7 @@ from multiprocessing.synchronize import Event as EventType
 
 from uuid import UUID, uuid1, getnode
 
-from .__version__ import __version__
+from ..version import __version__
 from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
