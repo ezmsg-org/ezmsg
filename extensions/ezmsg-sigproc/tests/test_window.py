@@ -9,7 +9,8 @@ import ezmsg.core as ez
 
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
-from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings, MessageDecoder
+from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
+from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.synth import Counter, CounterSettings
 from ezmsg.sigproc.window import Window, WindowSettings
 
