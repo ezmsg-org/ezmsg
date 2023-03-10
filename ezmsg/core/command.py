@@ -40,21 +40,16 @@ def cmdline() -> None:
         """,
     )
 
-    # parser.add_argument(
-    #     "command",
-    #     help="command for ezmsg",
-    #     choices=["serve", "shutdown", "start", "graphviz"],
-    # )
+    parser.add_argument(
+        "command",
+        help="command for ezmsg",
+        choices=["serve", "shutdown", "start", "graphviz"],
+    )
 
     parser.add_argument(
         "--hostname", type=str, help="hostname for GraphServer", default="127.0.0.1"
     )
-    subparsers = parser.add_subparsers(dest="command", help="command for ezmsg")
-    _ = subparsers.add_parser("serve")
-    _ = subparsers.add_parser("shutdown")
-    _ = subparsers.add_parser("start")
-    graphviz_parser = subparsers.add_parser("graphviz")
-    graphviz_parser.add_argument(
+    parser.add_argument(
         "--out",
         help="file to save graphviz output.",
         type=str,
@@ -65,8 +60,10 @@ def cmdline() -> None:
     class Args:
         command: str
         hostname: str
+        out: str
 
     args = parser.parse_args(namespace=Args)
+    args = parser.parse_args()
 
     logger.info(f"{GRAPHSERVER_PORT=}; use ${GRAPHSERVER_PORT_ENV} to change.")
     logger.info(f"{SHMSERVER_PORT=}; use ${SHMSERVER_PORT_ENV} to change.")
@@ -132,7 +129,13 @@ async def run_command(
 
         logger.info(f"Forked ezmsg servers.")
     elif cmd == "graphviz":
-        dag: DAG = await GraphServer.Connection(address).dag()
+        try:
+            dag: DAG = await GraphServer.Connection(address).dag()
+        except (ConnectionRefusedError, ConnectionResetError):
+            logger.info(
+                f"GraphServer not running @{address}, or host is refusing connections"
+            )
+            return
 
         # Let's come up with UUID node names
         node_map = {name: f'"{str(uuid4())}"' for name in dag.nodes}
