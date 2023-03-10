@@ -243,10 +243,8 @@ class GraphServer(Process):
 
                 elif req == Command.DAG.value:
                     writer.write(Command.DAG.value)
-                    logger.info(f"Graph: {self.graph}")
                     dag_bytes = pickle.dumps(self.graph)
                     writer.write(uint64_to_bytes(len(dag_bytes)) + dag_bytes)
-                    logger.info(f"Wrote: {self.graph}")
                     writer.write(Command.COMPLETE.value)
 
                 else:
@@ -359,7 +357,7 @@ class GraphServer(Process):
                 writer.write(Command.SHUTDOWN.value)
                 await writer.drain()
 
-        async def dag(self, timeout: Optional[float] = None) -> str:
+        async def dag(self, timeout: Optional[float] = None) -> DAG:
             async with self._open() as (reader, writer):
                 writer.write(Command.DAG.value)
                 await writer.drain()
@@ -378,4 +376,4 @@ class GraphServer(Process):
                 graphviz_str += "}"
 
                 await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
-                return graphviz_str
+                return dag
