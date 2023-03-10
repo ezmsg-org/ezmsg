@@ -7,7 +7,8 @@ import numpy as np
 import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
-from ezmsg.util.messagelogger import MessageDecoder, MessageLogger, MessageLoggerSettings
+from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
+from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.downsample import Downsample, DownsampleSettings
 from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
 

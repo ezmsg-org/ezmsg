@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from ezmsg.util.messages.axisarray import AxisArray
 
@@ -10,18 +10,13 @@ from typing import (
     Optional,
 )
 
-@dataclass( frozen = True )
-class DownsampleSettingsMessage:
+class DownsampleSettings(ez.Settings):
     axis: Optional[str] = None
     factor: int = 1
 
 
-class DownsampleSettings(DownsampleSettingsMessage, ez.Settings):
-    ...
-
-
 class DownsampleState(ez.State):
-    cur_settings: DownsampleSettingsMessage
+    cur_settings: DownsampleSettings
     s_idx: int = 0
 
 
@@ -30,7 +25,7 @@ class Downsample(ez.Unit):
     SETTINGS: DownsampleSettings
     STATE: DownsampleState
 
-    INPUT_SETTINGS = ez.InputStream(DownsampleSettingsMessage)
+    INPUT_SETTINGS = ez.InputStream(DownsampleSettings)
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
@@ -38,7 +33,7 @@ class Downsample(ez.Unit):
         self.STATE.cur_settings = self.SETTINGS
 
     @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: DownsampleSettingsMessage) -> None:
+    async def on_settings(self, msg: DownsampleSettings) -> None:
         self.STATE.cur_settings = msg
 
     @ez.subscriber(INPUT_SIGNAL, zero_copy = True)
