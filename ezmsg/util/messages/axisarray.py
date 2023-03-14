@@ -1,5 +1,6 @@
 import math
 import time
+import typing
 
 from contextlib import contextmanager
 from dataclasses import field, dataclass, replace
@@ -7,13 +8,11 @@ from dataclasses import field, dataclass, replace
 import numpy as np
 import numpy.typing as npt
 
-from typing import Generator, Tuple, Optional, List, Dict, Union, Iterable
-
 @dataclass
 class AxisArray:
     data: npt.NDArray
-    dims: List[str]
-    axes: Dict[str, "AxisArray.Axis"] = field(default_factory = dict)
+    dims: typing.List[str]
+    axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory = dict)
 
     @dataclass
     class Axis:
@@ -29,6 +28,29 @@ class AxisArray:
             NOTE: offset corresponds to idx[0] on this dimension!
             """
             return cls(unit = 's', gain = 1.0 / fs, offset = time.time() if offset is None else offset)
+        
+        def units(self, idx):
+            return (idx * self.gain) + self.offset
+        
+        def index(self, val):
+            return np.round((val - self.offset) / self.gain)
+        
+    @dataclass(frozen = True)
+    class AxisInfo:
+        axis: "AxisArray.Axis"
+        idx: int
+        size: int
+
+        def __len__(self) -> int:
+            return self.size
+        
+        @property
+        def indices(self) -> npt.NDArray[np.int_]:
+            return np.arange(self.size)
+
+        @property
+        def values(self) -> npt.NDArray:
+            return self.axis.units(self.indices)
 
     def __post_init__(self):
         self.data = np.array(self.data, ndmin=1)
@@ -37,13 +59,49 @@ class AxisArray:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
-   
+              
+    def isel(self, **indexers: slice) -> "AxisArray":
+        out_axes = {an: a for an, a in self.axes.items()}
+        out_data = self.data
+
+        for axis_name, ix in indexers.items():
+            if not isinstance(ix, slice):
+                raise ValueError("isel only supports slices for now")
+            ax = self.ax(axis_name)
+            indices = np.arange(*ix.indices(len(ax)))
+            if axis_name in out_axes:
+                out_axes[axis_name] = replace(ax.axis, offset = ax.axis.units(indices[0]))
+            out_data = np.take(out_data, indices, ax.idx)
+
+        return replace(self, data = out_data, axes = out_axes)
+
+    def sel(self, **indexers: slice) -> "AxisArray":
+        out_indexers = dict()
+        for axis_name, ix in indexers.items():
+            axis = self.get_axis(axis_name)
+            if not isinstance(ix, slice):
+                raise ValueError("sel only supports slices for now")
+            start = int(axis.index(ix.start)) if ix.start is not None else None
+            stop = int(axis.index(ix.stop)) if ix.stop is not None else None
+            step = int(ix.step / axis.gain) if ix.step is not None else None
+            out_indexers[axis_name] = slice(start, stop, step)
+        return self.isel(**out_indexers)
+
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> typing.Tuple[int, ...]:
         """ Shape of data """
         return self.data.shape
+    
+    def ax(self, dim: typing.Union[str, int]) -> AxisInfo:
+        axis_idx = dim if isinstance(dim, int) else self.get_axis_idx(dim)
+        axis_name = dim if isinstance(dim, str) else self.get_axis_name(dim)
+        return AxisArray.AxisInfo(
+            axis = self.get_axis(axis_name),
+            idx = axis_idx,
+            size = self.shape[axis_idx]
+        )
 
-    def get_axis(self, dim: Union[str, int]) -> Axis:
+    def get_axis(self, dim: typing.Union[str, int]) -> Axis:
         if isinstance(dim, int):
             dim = self.get_axis_name(dim)
         if dim not in self.dims:
@@ -59,22 +117,22 @@ class AxisArray:
         except ValueError:
             raise ValueError(f"{dim=} not present in object")
 
-    def _axis_idx(self, dim: Union[str, int]) -> int:
+    def _axis_idx(self, dim: typing.Union[str, int]) -> int:
         return self.get_axis_idx(dim) if isinstance(dim, str) else dim
 
-    def as2d(self, dim: Union[str, int]) -> npt.NDArray:
+    def as2d(self, dim: typing.Union[str, int]) -> npt.NDArray:
         return as2d(self.data, self._axis_idx(dim))
 
     @contextmanager
-    def view2d(self, dim: Union[str,int]) -> Generator[npt.NDArray, None, None]:
+    def view2d(self, dim: typing.Union[str,int]) -> typing.Generator[npt.NDArray, None, None]:
         with view2d(self.data, self._axis_idx(dim)) as arr:
             yield arr
 
-    def shape2d(self, dim: Union[str,int]) -> Tuple[int, int]:
+    def shape2d(self, dim: typing.Union[str,int]) -> typing.Tuple[int, int]:
         return shape2d(self.data, self._axis_idx(dim))
 
     @staticmethod
-    def concatenate( *aas: "AxisArray", dim: str, axis: Optional[Axis] = None) -> "AxisArray":
+    def concatenate( *aas: "AxisArray", dim: str, axis: typing.Optional[Axis] = None) -> "AxisArray":
         aa_0 = aas[0]
         for aa in aas[1:]:
             if aa.dims != aa_0.dims:
@@ -99,7 +157,7 @@ class AxisArray:
             return replace(aa_0, data = new_data, dims = new_dims, axes = new_axes)
 
     @staticmethod
-    def transpose(aa: "AxisArray", dims: Optional[Union[Iterable[str], Iterable[int]]] = None) -> "AxisArray":
+    def transpose(aa: "AxisArray", dims: typing.Optional[typing.Union[typing.Iterable[str], typing.Iterable[int]]] = None) -> "AxisArray":
         dims = reversed(range(aa.data.ndim)) if dims is None else dims
         dim_indices = [aa._axis_idx(d) for d in dims]
         new_dims = [aa.dims[d] for d in dim_indices]
@@ -107,7 +165,7 @@ class AxisArray:
         return replace(aa, data = new_data, dims = new_dims, axes = aa.axes)
 
 
-def _as2d(in_arr: npt.NDArray, axis: int = 0) -> Tuple[npt.NDArray, Tuple[int]]:
+def _as2d(in_arr: npt.NDArray, axis: int = 0) -> typing.Tuple[npt.NDArray, typing.Tuple[int]]:
     arr = in_arr
     if arr.ndim == 0:
         arr = arr.reshape(1, 1)
@@ -124,7 +182,7 @@ def as2d(in_arr: npt.NDArray, axis: int = 0) -> npt.NDArray:
     return arr
 
 @contextmanager
-def view2d(in_arr: npt.NDArray, axis: int = 0) -> Generator[npt.NDArray, None, None]:
+def view2d(in_arr: npt.NDArray, axis: int = 0) -> typing.Generator[npt.NDArray, None, None]:
     """ 
     2D-View (el x ch) of the array, no matter what input dimensionality is.
     Yields a view of underlying data when possible, changes to data in yielded 
@@ -141,8 +199,10 @@ def view2d(in_arr: npt.NDArray, axis: int = 0) -> Generator[npt.NDArray, None, N
         arr = np.moveaxis(arr, 0, axis)
         in_arr[:] = arr
 
-def shape2d(arr: npt.NDArray, axis: int = 0) -> Tuple[int, int]:
+def shape2d(arr: npt.NDArray, axis: int = 0) -> typing.Tuple[int, int]:
     return (
         arr.shape[axis],
         math.prod(v for idx, v in enumerate(arr.shape) if idx != axis)
     )
+
+

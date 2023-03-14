@@ -102,3 +102,21 @@ def test_view2d( data: np.ndarray ):
         assert np.allclose(msg.data, data + 1)
         assert msg.data.shape == data.shape
 
+def test_sel():
+    gain = 0.25
+    offset = -50
+    data = (np.arange(400) * gain) + offset
+    aa = AxisArray(
+        data,
+        dims = ['dim0'],
+        axes = dict(
+            dim0 = AxisArray.Axis(gain = gain, offset = offset)
+        )
+    )
+
+    aa_sl = aa.sel(dim0 = slice(None, -10.75, 1.5)) # slice based on axis info
+    print(aa_sl)
+
+
+if __name__ == '__main__':
+    test_sel()
