@@ -155,6 +155,7 @@ class Command(enum.Enum):
     SYNC = enum.auto()
     RESUME = enum.auto()
     UPDATE = enum.auto()
+    DAG = enum.auto()
 
     # Pub<->Sub Commands
     TX_LOCAL = enum.auto()
