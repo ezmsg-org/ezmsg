@@ -330,6 +330,8 @@ async def handle_subscriber(
 ):
     while True:
         if not callables:
+            sub.close()
+            await sub.wait_closed()
             break
         async with sub.recv_zero_copy() as msg:
             try:
