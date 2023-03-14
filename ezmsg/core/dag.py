@@ -1,4 +1,3 @@
-
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -16,10 +15,7 @@ GraphType = DefaultDict[str, Set[str]]
 @dataclass
 class DAG:
 
-    graph: GraphType = field(
-        default_factory=lambda: defaultdict(set),
-        init=False
-    )
+    graph: GraphType = field(default_factory=lambda: defaultdict(set), init=False)
 
     @property
     def nodes(self) -> Set[str]:
@@ -84,6 +80,7 @@ class DAG:
 def _leaves(graph: GraphType) -> Set[str]:
     return set([f for f, t in graph.items() if len(t) == 0])
 
+
 # Bredth First Search of a graph
 
 
@@ -91,9 +88,6 @@ def _bfs(graph: GraphType, node: str) -> List[str]:
     connected: Set[str] = set()
     queue = [node]
     while queue:
-        queue += [
-            t for t in graph.get(queue.pop(0), set())
-            if t not in connected
-        ]
+        queue += [t for t in graph.get(queue.pop(0), set()) if t not in connected]
         connected.update(queue)
     return list(connected)
