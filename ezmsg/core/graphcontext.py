@@ -1,14 +1,14 @@
 import asyncio
 import logging
+import typing
 
 from .shmserver import SHMServer
 from .graphserver import GraphServer
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .netprotocol import AddressType, GRAPHSERVER_ADDR, Address
+from .netprotocol import AddressType, Address
 
 from types import TracebackType
-from typing import Optional, Tuple, Set, Type, Any, Union
 
 logger = logging.getLogger("ezmsg")
 
@@ -24,16 +24,18 @@ class GraphContext:
     graph and SHMServer are up.
     """
 
-    _address: Address
-    _clients: Set[Union[Publisher, Subscriber]]
-    _edges: Set[Tuple[str, str]]
+    _address: typing.Optional[Address]
+    _clients: typing.Set[typing.Union[Publisher, Subscriber]]
+    _edges: typing.Set[typing.Tuple[str, str]]
 
-    _shm_server: Optional[SHMServer]
-    _graph_server: Optional[GraphServer]
+    _shm_server: typing.Optional[SHMServer]
+    _graph_server: typing.Optional[GraphServer]
     _connection: GraphServer.Connection
 
-    def __init__(self, address: AddressType = GRAPHSERVER_ADDR) -> None:
-        self._address = Address(*address)
+    def __init__(self, address: typing.Optional[AddressType] = None) -> None:
+        if address is not None:
+            address = Address(*address)
+        self._address = address
         self._clients = set()
         self._edges = set()
         self._shm_server = None
@@ -58,7 +60,7 @@ class GraphContext:
         await self._connection.disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
-    async def sync(self, timeout: Optional[float] = None) -> None:
+    async def sync(self, timeout: typing.Optional[float] = None) -> None:
         await self._connection.sync(timeout)
 
     async def pause(self) -> None:
@@ -68,8 +70,8 @@ class GraphContext:
         await self._connection.resume()
 
     async def _ensure_servers(self) -> None:
-        self._shm_server = await SHMServer.ensure_running()
-        self._graph_server = await GraphServer.ensure_running(self._address)
+        self._shm_server = await SHMServer.connect()
+        self._graph_server = await GraphServer.connect(self._address)
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
@@ -88,9 +90,9 @@ class GraphContext:
 
     async def __aexit__(
         self,
-        exc_t: Optional[Type[Exception]],
-        exc_v: Optional[Any],
-        exc_tb: Optional[TracebackType],
+        exc_t: typing.Optional[typing.Type[Exception]],
+        exc_v: typing.Optional[typing.Any],
+        exc_tb: typing.Optional[TracebackType],
     ) -> bool:
 
         await self.revert()

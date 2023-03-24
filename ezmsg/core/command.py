@@ -1,24 +1,24 @@
+import os
 import asyncio
 import argparse
 import logging
 import subprocess
+import typing
+
 from collections import defaultdict
 from uuid import uuid4
 from textwrap import indent
-
 
 from .graphserver import GraphServer
 from .shmserver import SHMServer
 from .netprotocol import (
     Address,
-    AddressType,
-    GRAPHSERVER_PORT_ENV,
+    GRAPHSERVER_ADDR_ENV,
     GRAPHSERVER_PORT_DEFAULT,
-    GRAPHSERVER_PORT,
-    GRAPHSERVER_ADDR,
-    SHMSERVER_PORT_ENV,
+    SHMSERVER_ADDR_ENV,
     SHMSERVER_PORT_DEFAULT,
-    SHMSERVER_PORT,
+    PUBLISHER_START_PORT_ENV,
+    PUBLISHER_START_PORT_DEFAULT,
 )
 from .dag import DAG
 
@@ -26,17 +26,16 @@ logger = logging.getLogger("ezmsg")
 
 IND = "  "
 
-
 def cmdline() -> None:
 
     parser = argparse.ArgumentParser(
         "ezmsg.core",
         description="start and stop core ezmsg server processes",
         epilog=f"""
-            Change server ports with environment variables.
-            GraphServer will be hosted on ${GRAPHSERVER_PORT_ENV} (default {GRAPHSERVER_PORT_DEFAULT}).  
-            SHMServer will be hosted on ${SHMSERVER_PORT_ENV} (default {SHMSERVER_PORT_DEFAULT}).
-            Publishers will be assigned available ports starting from {SHMSERVER_PORT_ENV}.
+            Change server configuration with environment variables.
+            GraphServer will be hosted on ${GRAPHSERVER_ADDR_ENV} (default port: {GRAPHSERVER_PORT_DEFAULT}).  
+            SHMServer will be hosted on ${SHMSERVER_ADDR_ENV} (default port: {SHMSERVER_PORT_DEFAULT}).
+            Publishers will be assigned available ports starting from {PUBLISHER_START_PORT_DEFAULT}. (Change with ${PUBLISHER_START_PORT_ENV})
         """,
     )
 
@@ -47,37 +46,28 @@ def cmdline() -> None:
     )
 
     parser.add_argument(
-        "--hostname", type=str, help="hostname for GraphServer", default="127.0.0.1"
-    )
-    parser.add_argument(
-        "--out",
-        help="file to save graphviz output.",
-        type=str,
-        default=None,
-        required=False,
+        "--address",
+        type = str, 
+        help="Address for GraphServer", 
+        default=f'127.0.0.1:{GRAPHSERVER_PORT_DEFAULT}'
     )
 
     class Args:
         command: str
-        hostname: str
-        out: str
+        address: str
 
     args = parser.parse_args(namespace=Args)
-    args = parser.parse_args()
 
-    logger.info(f"{GRAPHSERVER_PORT=}; use ${GRAPHSERVER_PORT_ENV} to change.")
-    logger.info(f"{SHMSERVER_PORT=}; use ${SHMSERVER_PORT_ENV} to change.")
+    address = Address.from_string(args.address)
+    logger.info(f"GraphServer Address: {address}")
 
-    asyncio.run(
-        run_command(args.command, (args.hostname, GRAPHSERVER_PORT), **vars(args))
-    )
+    shmserver_address_str = os.environ.get(SHMSERVER_ADDR_ENV, f'127.0.0.1:{SHMSERVER_PORT_DEFAULT}')
+    logger.info(f'SHMServer Address: {shmserver_address_str} use ${SHMSERVER_ADDR_ENV} to change.')
+
+    asyncio.run(run_command(args.command, **vars(args)))
 
 
-async def run_command(
-    cmd: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs
-) -> None:
-
-    address = Address(*address)
+async def run_command(cmd: str, address: Address, **kwargs) -> None:
 
     if cmd == "shutdown":
         try:
@@ -96,9 +86,9 @@ async def run_command(
 
     elif cmd == "serve":
         graph_server = None
-        shm_server = await SHMServer.ensure_running()
+        shm_server = await SHMServer.connect()
         try:
-            graph_server = await GraphServer.ensure_running(address)
+            graph_server = await GraphServer.connect(address)
 
             if graph_server is None:
                 logger.info(f"GraphServer already running @ {address}")
@@ -117,7 +107,7 @@ async def run_command(
 
     elif cmd == "start":
         popen = subprocess.Popen(
-            ["python", "-m", "ezmsg.core", "serve", f"--hostname={address.host}"]
+            ["python", "-m", "ezmsg.core", "serve", f"--address={address}"]
         )
 
         while True:
@@ -128,6 +118,7 @@ async def run_command(
                 await asyncio.sleep(0.1)
 
         logger.info(f"Forked ezmsg servers.")
+
     elif cmd == "graphviz":
         try:
             dag: DAG = await GraphServer.Connection(address).dag()
@@ -192,8 +183,4 @@ async def run_command(
             ]
         )
 
-        if "out" in kwargs and kwargs["out"] is not None:
-            with open(kwargs["out"], "w") as fh:
-                fh.write(graphviz_out)
-        else:
-            print(graphviz_out)
+        print(graphviz_out)
