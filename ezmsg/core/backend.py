@@ -7,7 +7,7 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
 
-from .netprotocol import DEFAULT_SHM_SIZE, AddressType, GRAPHSERVER_ADDR
+from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
 from .component import Component
@@ -38,7 +38,7 @@ class ExecutionContext:
         processes: List[List[Unit]],
         connections: List[Tuple[str, str]] = [],
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
-        graph_address: AddressType = GRAPHSERVER_ADDR,
+        graph_address: Optional[AddressType] = None,
     ) -> None:
 
         if not processes:
@@ -52,11 +52,11 @@ class ExecutionContext:
 
         self.processes = [
             backend_process(
-                graph_address,
                 process_units,
                 self.term_ev,
                 self.start_barrier,
                 self.stop_barrier,
+                graph_address,
             )
             for process_units in processes
         ]
@@ -77,7 +77,7 @@ def run(
     name: Optional[str] = None,
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: AddressType = GRAPHSERVER_ADDR,
+    graph_address: Optional[AddressType] = None,
     force_single_process: bool = False,
 ) -> None:
 
@@ -156,7 +156,7 @@ def setup(
     name: Optional[str] = None,
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: AddressType = GRAPHSERVER_ADDR,
+    graph_address: Optional[AddressType] = None,
     force_single_process: bool = False,
 ) -> Optional[ExecutionContext]:
 

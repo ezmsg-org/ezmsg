@@ -1,150 +1,69 @@
+import os
 import asyncio
 import logging
-import signal
 import pickle
+import typing
 
 from dataclasses import dataclass
 from contextlib import suppress, asynccontextmanager
-from multiprocessing import Process, Event
+from threading import Thread
 from multiprocessing.synchronize import Event as EventType
+from concurrent.futures import Future
 
 from uuid import UUID, uuid1, getnode
 
+from .server import ThreadedAsyncServer
 from ..version import __version__
 from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
     AddressType,
-    close_server,
     close_stream_writer,
     encode_str,
     read_int,
     read_str,
     uint64_to_bytes,
     Command,
-    GRAPHSERVER_ADDR,
     ClientInfo,
     SubscriberInfo,
     PublisherInfo,
+    GRAPHSERVER_ADDR_ENV,
+    GRAPHSERVER_PORT_DEFAULT
 )
-
-from typing import Dict, List, Tuple, Optional, AsyncGenerator
 
 logger = logging.getLogger("ezmsg")
 
 
-class GraphServer(Process):
-    """ Pub-Sub Directed Acyclic Graph """
+class GraphServer(ThreadedAsyncServer):
+    """ 
+    Pub-Sub Directed Acyclic Graph 
+    Running as a process: start() and stop()
+    Running as a thread: start_server(), stop_server(), join_server()
+    """
 
-    address: Address
     graph: DAG
-    clients: Dict[UUID, ClientInfo]
-    _client_tasks: Dict[UUID, "asyncio.Task[None]"]
+    clients: typing.Dict[UUID, ClientInfo]
+    _client_tasks: typing.Dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
-    _server_up: EventType
 
-    def __init__(self, address: AddressType = GRAPHSERVER_ADDR) -> None:
-        super().__init__(daemon=True)
-        self.address = Address(*address)
+    ADDR_ENV = GRAPHSERVER_ADDR_ENV
+    PORT_DEFAULT = GRAPHSERVER_PORT_DEFAULT
+
+    def __init__(self) -> None:
+        super().__init__()
         self.graph = DAG()
         self.clients = dict()
         self._client_tasks = dict()
-        self._server_up = Event()
-        self._shutdown = Event()
 
-    @classmethod
-    async def ensure_running(
-        cls, address: AddressType = GRAPHSERVER_ADDR
-    ) -> Optional["GraphServer"]:
-        graph_server = None
-        address = Address(*address)
-        try:
-            _, writer = await cls.open(address)
-            logger.debug(f"GraphServer Exists: {address}")
-            writer.close()
-            await writer.wait_closed()
-        except ConnectionRefusedError as ref_e:
-            try:
-                graph_server = cls(address)
-                graph_server.start()
-                logger.info(f"Started GraphServer. PID:{graph_server.pid}@{address}")
-            except OSError as os_e:
-                logger.error(f"Could not connect to GraphServer - {ref_e}.")
-                logger.error(
-                    f"Additionally, could not start GraphServer@{address}: {os_e}"
-                )
-                raise ref_e
-        return graph_server
-
-    def run(self) -> None:
-        handler = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        asyncio.run(self._serve())
-        signal.signal(signal.SIGINT, handler)
-
-    def stop(self) -> None:
-        self._shutdown.set()
-        self.join()
-
-    async def _serve(self) -> None:
-        loop = asyncio.get_running_loop()
+    async def setup(self) -> None:
         self._command_lock = asyncio.Lock()
-        server = await asyncio.start_server(self.api, *self.address)
 
-        async def monitor_shutdown() -> None:
-            await loop.run_in_executor(None, self._shutdown.wait)
-            await GraphServer.Connection(self.address).shutdown()
-            await close_server(server)
-
-        monitor_task = loop.create_task(monitor_shutdown())
-
-        self._server_up.set()
-
-        try:
-            await server.serve_forever()
-
-        except asyncio.CancelledError:  # FIXME: Poor Form
-            pass
-
-        finally:
-
-            for task in self._client_tasks.values():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            self._client_tasks.clear()
-
-            monitor_task.cancel()
+    async def shutdown(self) -> None:
+        for task in self._client_tasks.values():
+            task.cancel()
             with suppress(asyncio.CancelledError):
-                await monitor_task
-
-    def start(self) -> None:
-        super().start()
-        self._server_up.wait()
-
-    async def handle_client(
-        self, id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-
-        logger.debug(f"Graph Server: Client connected: {id}")
-
-        try:
-            while True:
-                req = await reader.read(1)
-
-                if not req:
-                    break
-
-                if req == Command.COMPLETE.value:
-                    self.clients[id].set_sync()
-
-        except (ConnectionResetError, BrokenPipeError) as e:
-            logger.debug(f"Client {id} disconnected from GraphServer: {e}")
-
-        finally:
-            self.clients[id].set_sync()
-            del self.clients[id]
-            await close_stream_writer(writer)
+                await task
+        self._client_tasks.clear()
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -183,7 +102,7 @@ class GraphServer(Process):
                         info = SubscriberInfo(id, writer, pid, topic)
                         self.clients[id] = info
                         self._client_tasks[id] = asyncio.create_task(
-                            self.handle_client(id, reader, writer)
+                            self._handle_client(id, reader, writer)
                         )
                         await self._notify_subscriber(info)
 
@@ -192,7 +111,7 @@ class GraphServer(Process):
                         info = PublisherInfo(id, writer, pid, topic, address)
                         self.clients[id] = info
                         self._client_tasks[id] = asyncio.create_task(
-                            self.handle_client(id, reader, writer)
+                            self._handle_client(id, reader, writer)
                         )
                         for sub in self._downstream_subs(info.topic):
                             await self._notify_subscriber(sub)
@@ -255,6 +174,31 @@ class GraphServer(Process):
 
         await close_stream_writer(writer)
 
+    async def _handle_client(
+        self, id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+
+        logger.debug(f"Graph Server: Client connected: {id}")
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req == Command.COMPLETE.value:
+                    self.clients[id].set_sync()
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Client {id} disconnected from GraphServer: {e}")
+
+        finally:
+            self.clients[id].set_sync()
+            del self.clients[id]
+            await close_stream_writer(writer)
+
+
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
             notification = ""
@@ -270,30 +214,32 @@ class GraphServer(Process):
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")
 
-    def _publishers(self) -> List[PublisherInfo]:
+    def _publishers(self) -> typing.List[PublisherInfo]:
         return [
             info for info in self.clients.values() if isinstance(info, PublisherInfo)
         ]
 
-    def _subscribers(self) -> List[SubscriberInfo]:
+    def _subscribers(self) -> typing.List[SubscriberInfo]:
         return [
             info for info in self.clients.values() if isinstance(info, SubscriberInfo)
         ]
 
-    def _upstream_pubs(self, topic: str) -> List[PublisherInfo]:
+    def _upstream_pubs(self, topic: str) -> typing.List[PublisherInfo]:
         """ Given a topic, return a set of all publisher IDs upstream of that topic """
         upstream_topics = self.graph.upstream(topic)
         return [pub for pub in self._publishers() if pub.topic in upstream_topics]
 
-    def _downstream_subs(self, topic: str) -> List[SubscriberInfo]:
+    def _downstream_subs(self, topic: str) -> typing.List[SubscriberInfo]:
         """ Given a topic, return a set of all subscriber IDs upstream of that topic """
         downstream_topics = self.graph.downstream(topic)
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
 
     @staticmethod
     async def open(
-        address: AddressType = GRAPHSERVER_ADDR,
-    ) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        address: typing.Optional[AddressType] = None,
+    ) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        if address is None:
+            address = GraphServer.address()
         reader, writer = await asyncio.open_connection(*address)
         writer.write(uint64_to_bytes(getnode()))
         await writer.drain()
@@ -307,12 +253,12 @@ class GraphServer(Process):
     @dataclass
     class Connection:
 
-        address: Address
+        address: typing.Optional[Address] = None
 
         @asynccontextmanager
         async def _open(
             self,
-        ) -> AsyncGenerator[Tuple[asyncio.StreamReader, asyncio.StreamWriter], None]:
+        ) -> typing.AsyncGenerator[typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter], None]:
             reader, writer = await GraphServer.open(self.address)
             try:
                 yield reader, writer
@@ -337,7 +283,7 @@ class GraphServer(Process):
                 await writer.drain()
                 await reader.read(1)  # Complete
 
-        async def sync(self, timeout: Optional[float] = None) -> None:
+        async def sync(self, timeout: typing.Optional[float] = None) -> None:
             async with self._open() as (reader, writer):
                 reader, writer = await GraphServer.open(self.address)
                 writer.write(Command.SYNC.value)
@@ -357,7 +303,7 @@ class GraphServer(Process):
                 writer.write(Command.SHUTDOWN.value)
                 await writer.drain()
 
-        async def dag(self, timeout: Optional[float] = None) -> DAG:
+        async def dag(self, timeout: typing.Optional[float] = None) -> DAG:
             async with self._open() as (reader, writer):
                 writer.write(Command.DAG.value)
                 await writer.drain()

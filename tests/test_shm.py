@@ -6,7 +6,7 @@ from ezmsg.core.shmserver import SHMContext, SHMServer
 
 @pytest.mark.asyncio
 async def test_invalid_name() -> None:
-    await SHMServer.ensure_running()
+    await SHMServer.connect()
 
     with pytest.raises(ValueError):
         await SHMContext.attach('JERRY')
@@ -15,7 +15,7 @@ async def test_invalid_name() -> None:
 @pytest.mark.asyncio
 async def test_rw() -> None:
 
-    await SHMServer.ensure_running()
+    await SHMServer.connect()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
@@ -36,7 +36,7 @@ async def test_rw() -> None:
 @pytest.mark.asyncio
 async def test_shm_detach_order() -> None:
 
-    await SHMServer.ensure_running()
+    await SHMServer.connect()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
@@ -76,7 +76,7 @@ async def test_shm_detach_order() -> None:
 @pytest.mark.asyncio
 async def test_shmserver_shutdown() -> None:
 
-    await SHMServer.ensure_running()
+    await SHMServer.connect()
 
     shm = await SHMContext.create(4, 2**16)
     attach_shm = await SHMContext.attach(shm.name)
