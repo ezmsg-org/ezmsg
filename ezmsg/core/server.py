@@ -1,14 +1,11 @@
 import os
 import asyncio
 import logging
-import signal
 import socket
 import typing
 
 from contextlib import suppress
-from threading import Thread
-from multiprocessing import Process, Event
-from multiprocessing.synchronize import Event as EventType
+from threading import Thread, Event
 from concurrent.futures import Future
 
 from .netprotocol import (
@@ -23,17 +20,17 @@ from .netprotocol import (
 
 logger = logging.getLogger("ezmsg")
 
-class ThreadedAsyncServer(Process):
+class ThreadedAsyncServer(Thread):
     """ 
     A primitive for an asyncio server that runs in a dedicated loop
     either in a separate thread or as a separate process.
     Mix all of the parallelism together! YAY!
     """
 
-    _server_up: EventType
-    _shutdown: EventType
+    _server_up: Event
+    _shutdown: Event
 
-    _thread: Thread
+    _sock: socket.socket
     _loop: asyncio.AbstractEventLoop
     _serve_future: Future[None]
 
@@ -83,9 +80,8 @@ class ThreadedAsyncServer(Process):
                 sock = create_socket(start_port = start_port)
                 os.environ[cls.ADDR_ENV] = str(Address(*sock.getsockname()))
 
-                # Start server in a new threaded event loop
                 server = cls()
-                server.start_server(sock)
+                server.start(sock)
 
             except IOError:
                 logger.error(f"Could not connect to {cls.__name__} or find an open port to host it on")
@@ -93,53 +89,25 @@ class ThreadedAsyncServer(Process):
             
         return server
     
-
-    ## MULTIPROCESSING INTERFACE
-    def start(self, address: AddressType) -> None:
-        self._address = Address(*address)
+    def start(self, sock: socket.socket) -> None:
+        self._sock = sock
+        self._loop = asyncio.new_event_loop()
         super().start()
         self._server_up.wait()
 
     def stop(self) -> None:
-        self.stop_server()
-        self.join()
-
-    def run(self) -> None:
-        handler = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self.start_server(self._address)
-        self.join_server()
-        signal.signal(signal.SIGINT, handler)
-
-
-    ## THREADING INTERFACE
-    def start_server(self, endpoint: typing.Union[Address, socket.socket]) -> None:
-        if not isinstance(endpoint, socket.socket):
-            endpoint = endpoint.bind_socket()
-        self._loop = asyncio.new_event_loop()
-        self._thread = Thread(target = self._loop_thread, daemon = True)
-        self._thread.start()
-        self._serve_future = asyncio.run_coroutine_threadsafe(self._serve(endpoint), self._loop)
-        self._server_up.wait()
-
-    def stop_server(self) -> None:
         self._shutdown.set()
 
-    def join_server(self) -> None:
-        with suppress(asyncio.CancelledError):
-            self._serve_future.result()
-        self._loop.stop()
-        
-    def _loop_thread(self) -> None:
+    def run(self) -> None:
         asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
+        with suppress(asyncio.CancelledError):
+            self._loop.run_until_complete(self._serve())
+        self._loop.stop()
 
-
-    ## SERVER INTERNALS
-    async def _serve(self, sock: socket.socket) -> None:
+    async def _serve(self) -> None:
         await self.setup()
 
-        server = await asyncio.start_server(self.api, sock = sock)
+        server = await asyncio.start_server(self.api, sock = self._sock)
 
         async def monitor_shutdown() -> None:
             await self._loop.run_in_executor(None, self._shutdown.wait)
