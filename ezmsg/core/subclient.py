@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import typing
 
 from uuid import UUID
 from contextlib import asynccontextmanager, suppress
@@ -23,10 +24,8 @@ from .netprotocol import (
     close_stream_writer,
     Command,
     PublisherInfo,
-    GRAPHSERVER_ADDR,
 )
 
-from typing import Tuple, Dict, Any, AsyncGenerator
 
 logger = logging.getLogger("ezmsg")
 
@@ -39,14 +38,14 @@ class Subscriber:
 
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
-    _publishers: Dict[UUID, PublisherInfo]
-    _publisher_tasks: Dict[UUID, "asyncio.Task[None]"]
-    _shms: Dict[UUID, SHMContext]
-    _incoming: "asyncio.Queue[Tuple[UUID, int]]"
+    _publishers: typing.Dict[UUID, PublisherInfo]
+    _publisher_tasks: typing.Dict[UUID, "asyncio.Task[None]"]
+    _shms: typing.Dict[UUID, SHMContext]
+    _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
 
     @classmethod
     async def create(
-        cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs
+        cls, topic: str, address: typing.Optional[AddressType] = None, **kwargs
     ) -> "Subscriber":
         reader, writer = await GraphServer.open(address)
         writer.write(Command.SUBSCRIBE.value)
@@ -99,7 +98,7 @@ class Subscriber:
 
                 elif cmd == Command.UPDATE.value:
 
-                    pub_addresses: Dict[UUID, Address] = {}
+                    pub_addresses: typing.Dict[UUID, Address] = {}
                     connections = await read_str(reader)
                     connections = connections.strip(",")
                     if len(connections):
@@ -206,14 +205,14 @@ class Subscriber:
             del self._publishers[id]
             logger.debug(f"disconnected: sub:{self.id} -> pub:{id}")
 
-    async def recv(self) -> Any:
+    async def recv(self) -> typing.Any:
         out_msg = None
         async with self.recv_zero_copy() as msg:
             out_msg = deepcopy(msg)
         return out_msg
 
     @asynccontextmanager
-    async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
+    async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
 
         id, msg_id = await self._incoming.get()
         msg_id_bytes = uint64_to_bytes(msg_id)

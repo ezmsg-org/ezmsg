@@ -9,9 +9,9 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.shared_memory import SharedMemory
 from uuid import getnode
 
+from .server import ThreadedAsyncServer
 from .netprotocol import (
     DEFAULT_SHM_SIZE,
-    SHMSERVER_ADDR,
     close_stream_writer,
     close_server,
     Command,
@@ -21,6 +21,8 @@ from .netprotocol import (
     bytes_to_uint,
     read_str,
     read_int,
+    SHMSERVER_PORT_DEFAULT,
+    SHMSERVER_ADDR_ENV
 )
 
 from typing import Generator, List, Dict, Set, Optional
@@ -96,7 +98,7 @@ class SHMContext:
     async def create(
         cls, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE
     ) -> "SHMContext":
-        reader, writer = await asyncio.open_connection(*SHMSERVER_ADDR)
+        reader, writer = await asyncio.open_connection(*SHMServer.address())
         writer.write(Command.SHM_CREATE.value)
         writer.write(uint64_to_bytes(num_buffers))
         writer.write(uint64_to_bytes(buf_size))
@@ -111,7 +113,7 @@ class SHMContext:
 
     @classmethod
     async def attach(cls, name: str) -> "SHMContext":
-        reader, writer = await asyncio.open_connection(*SHMSERVER_ADDR)
+        reader, writer = await asyncio.open_connection(*SHMServer.address())
         writer.write(Command.SHM_ATTACH.value)
         writer.write(encode_str(name))
         await writer.drain()
@@ -204,7 +206,7 @@ class SHMInfo:
             self.shm.unlink()
 
 
-class SHMServer(Process):
+class SHMServer(ThreadedAsyncServer):
     """
     Lives in a dedicated process (one per machine)
     Handles SHMContext leases for this machine
@@ -213,85 +215,21 @@ class SHMServer(Process):
     node: int
     shms: Dict[str, SHMInfo]
 
-    _server_up: EventType
+    ADDR_ENV = SHMSERVER_ADDR_ENV
+    PORT_DEFAULT = SHMSERVER_PORT_DEFAULT
 
     def __init__(self) -> None:
-        super().__init__(daemon=True)
+        super().__init__()
         self.node = getnode()
         self.shms = dict()
-        self._server_up = Event()
-        self._shutdown = Event()
 
-    def run(self) -> None:
-        handler = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        with suppress(asyncio.CancelledError):
-            asyncio.run(self._serve())
-        signal.signal(signal.SIGINT, handler)
-
-    def stop(self) -> None:
-        self._shutdown.set()
-        self.join()
-
-    async def _serve(self) -> None:
-        loop = asyncio.get_running_loop()
-        server = await asyncio.start_server(self.api, *SHMSERVER_ADDR)
-
-        async def monitor_shutdown() -> None:
-            try:
-                await loop.run_in_executor(None, self._shutdown.wait)
-            except asyncio.CancelledError:
-                pass
-            finally:
-                await SHMServer.shutdown_server()
-                await close_server(server)
-
-        monitor_task = loop.create_task(monitor_shutdown())
-
-        self._server_up.set()
-
-        try:
-            await server.serve_forever()
-
-        finally:
-            for info in self.shms.values():
-                for lease_task in list(info.leases):
-                    lease_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await lease_task
-                info.leases.clear()
-
-            monitor_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await monitor_task
-
-    def start(self) -> None:
-        super().start()
-        self._server_up.wait()
-
-    @classmethod
-    async def ensure_running(cls) -> Optional["SHMServer"]:
-        shm_server = None
-        address = Address(*SHMSERVER_ADDR)
-        try:
-            _, writer = await asyncio.open_connection(*address)
-            await close_stream_writer(writer)
-            logger.debug(f"SHMServer Exists: {address.host}:{address.port}")
-        except ConnectionRefusedError:
-            shm_server = cls()
-            shm_server.start()
-            logger.info(
-                f"Started SHMServer. PID:{shm_server.pid}@{address.host}:{address.port}"
-            )
-        return shm_server
-
-    @staticmethod
-    async def shutdown_server() -> None:
-        address = Address(*SHMSERVER_ADDR)
-        _, writer = await asyncio.open_connection(*address)
-        writer.write(Command.SHUTDOWN.value)
-        await writer.drain()
-        await close_stream_writer(writer)
+    async def shutdown(self) -> None:
+        for info in self.shms.values():
+            for lease_task in list(info.leases):
+                lease_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await lease_task
+            info.leases.clear()
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -335,3 +273,10 @@ class SHMServer(Process):
                 await info.lease(reader, writer)
         finally:
             await close_stream_writer(writer)
+
+    @staticmethod
+    async def shutdown_server() -> None:
+        _, writer = await asyncio.open_connection(*SHMServer.address())
+        writer.write(Command.SHUTDOWN.value)
+        await writer.drain()
+        await close_stream_writer(writer)
