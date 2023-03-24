@@ -1,7 +1,6 @@
 import os
 import asyncio
 import logging
-import socket
 
 from uuid import UUID
 from contextlib import suppress
@@ -23,9 +22,10 @@ from .netprotocol import (
     close_server,
     Command,
     SubscriberInfo,
-    GRAPHSERVER_ADDR,
+    create_socket,
     DEFAULT_SHM_SIZE,
-    PUBLISHER_START_PORT,
+    PUBLISHER_START_PORT_ENV,
+    PUBLISHER_START_PORT_DEFAULT
 )
 
 from typing import Any, Dict, Optional
@@ -63,7 +63,7 @@ class Publisher:
     async def create(
         cls,
         topic: str,
-        address: AddressType = GRAPHSERVER_ADDR,
+        address: Optional[AddressType] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         buf_size: int = DEFAULT_SHM_SIZE,
@@ -78,9 +78,10 @@ class Publisher:
         writer.write(encode_str(pub.topic))
         pub._shm = await SHMContext.create(pub._num_buffers, buf_size)
 
-        sock = _create_socket(host, port)
+        start_port = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
+        sock = create_socket(host, port, start_port=start_port)
         server = await asyncio.start_server(pub._on_connection, sock=sock)
-        pub._address = Address(*server.sockets[0].getsockname())
+        pub._address = Address(*sock.getsockname())
         pub._address.to_stream(writer)
         pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
 
@@ -304,30 +305,3 @@ class Publisher:
                 continue
 
         self._msg_id += 1
-
-
-def _create_socket(
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    start_port: int = PUBLISHER_START_PORT,
-    max_port: int = 65535,
-) -> socket.socket:
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    if host is None:
-        host = "127.0.0.1"
-
-    if port is not None:
-        sock.bind((host, port))
-        return sock
-
-    port = start_port
-    while port <= max_port:
-        try:
-            sock.bind((host, port))
-            return sock
-        except OSError:
-            port += 1
-
-    raise IOError("Failed to bind socket; no free ports")

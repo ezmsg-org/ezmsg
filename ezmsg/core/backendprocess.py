@@ -50,15 +50,15 @@ class BackendProcess(Process):
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
-    graph_address: AddressType
+    graph_address: Optional[AddressType]
 
     def __init__(
         self,
-        graph_address: AddressType,
         units: List[Unit],
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
+        graph_address: Optional[AddressType] = None,
     ) -> None:
         super().__init__()
         self.units = units
