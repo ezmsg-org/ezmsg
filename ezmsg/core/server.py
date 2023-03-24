@@ -21,11 +21,7 @@ from .netprotocol import (
 logger = logging.getLogger("ezmsg")
 
 class ThreadedAsyncServer(Thread):
-    """ 
-    A primitive for an asyncio server that runs in a dedicated loop
-    either in a separate thread or as a separate process.
-    Mix all of the parallelism together! YAY!
-    """
+    """ An asyncio server that runs in a dedicated loop in a separate thread """
 
     _server_up: Event
     _shutdown: Event
