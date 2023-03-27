@@ -1,23 +1,17 @@
-import os
 import asyncio
 import logging
 import pickle
 import typing
 
-from dataclasses import dataclass
-from contextlib import suppress, asynccontextmanager
-from threading import Thread
-from multiprocessing.synchronize import Event as EventType
-from concurrent.futures import Future
+from contextlib import suppress
 
 from uuid import UUID, uuid1, getnode
 
-from .server import ThreadedAsyncServer
+from .server import ThreadedAsyncServer, ServiceManager
 from ..version import __version__
 from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
-    AddressType,
     close_stream_writer,
     encode_str,
     read_int,
@@ -45,9 +39,6 @@ class GraphServer(ThreadedAsyncServer):
     clients: typing.Dict[UUID, ClientInfo]
     _client_tasks: typing.Dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
-
-    ADDR_ENV = GRAPHSERVER_ADDR_ENV
-    PORT_DEFAULT = GRAPHSERVER_PORT_DEFAULT
 
     def __init__(self) -> None:
         super().__init__()
@@ -234,13 +225,15 @@ class GraphServer(ThreadedAsyncServer):
         downstream_topics = self.graph.downstream(topic)
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
 
-    @staticmethod
-    async def open(
-        address: typing.Optional[AddressType] = None,
-    ) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        if address is None:
-            address = GraphServer.address()
-        reader, writer = await asyncio.open_connection(*address)
+
+class GraphService(ServiceManager):
+
+    ADDR_ENV = GRAPHSERVER_ADDR_ENV
+    PORT_DEFAULT = GRAPHSERVER_PORT_DEFAULT
+    SERVER_TYPE = GraphServer
+
+    async def open_connection(self) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        reader, writer = await super().open_connection()
         writer.write(uint64_to_bytes(getnode()))
         await writer.drain()
         server_version = await read_str(reader)
@@ -250,76 +243,68 @@ class GraphServer(ThreadedAsyncServer):
             )
         return reader, writer
 
-    @dataclass
-    class Connection:
+    async def connect(self, from_topic: str, to_topic: str) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.CONNECT.value)
+        writer.write(encode_str(from_topic))
+        writer.write(encode_str(to_topic))
+        await writer.drain()
+        response = await reader.read(1)
+        if response == Command.CYCLIC.value:
+            raise CyclicException
+        await close_stream_writer(writer)
 
-        address: typing.Optional[Address] = None
+    async def disconnect(self, from_topic: str, to_topic: str) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.DISCONNECT.value)
+        writer.write(encode_str(from_topic))
+        writer.write(encode_str(to_topic))
+        await writer.drain()
+        await reader.read(1)  # Complete
+        await close_stream_writer(writer)
 
-        @asynccontextmanager
-        async def _open(
-            self,
-        ) -> typing.AsyncGenerator[typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter], None]:
-            reader, writer = await GraphServer.open(self.address)
-            try:
-                yield reader, writer
-            finally:
-                await close_stream_writer(writer)
+    async def sync(self, timeout: typing.Optional[float] = None) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.SYNC.value)
+        await writer.drain()
+        await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
+        await close_stream_writer(writer)
 
-        async def connect(self, from_topic: str, to_topic: str) -> None:
-            async with self._open() as (reader, writer):
-                writer.write(Command.CONNECT.value)
-                writer.write(encode_str(from_topic))
-                writer.write(encode_str(to_topic))
-                await writer.drain()
-                response = await reader.read(1)
-                if response == Command.CYCLIC.value:
-                    raise CyclicException
+    async def pause(self) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.PAUSE.value)
+        await close_stream_writer(writer)
 
-        async def disconnect(self, from_topic: str, to_topic: str) -> None:
-            async with self._open() as (reader, writer):
-                writer.write(Command.DISCONNECT.value)
-                writer.write(encode_str(from_topic))
-                writer.write(encode_str(to_topic))
-                await writer.drain()
-                await reader.read(1)  # Complete
+    async def resume(self) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.RESUME.value)
+        await close_stream_writer(writer)
 
-        async def sync(self, timeout: typing.Optional[float] = None) -> None:
-            async with self._open() as (reader, writer):
-                reader, writer = await GraphServer.open(self.address)
-                writer.write(Command.SYNC.value)
-                await writer.drain()
-                await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
+    async def shutdown(self) -> None:
+        reader, writer = await self.open_connection()
+        writer.write(Command.SHUTDOWN.value)
+        await writer.drain()
+        await close_stream_writer(writer)
 
-        async def pause(self) -> None:
-            async with self._open() as (reader, writer):
-                writer.write(Command.PAUSE.value)
+    async def dag(self, timeout: typing.Optional[float] = None) -> DAG:
+        reader, writer = await self.open_connection()
+        writer.write(Command.DAG.value)
+        await writer.drain()
+        await asyncio.sleep(1.0)
+        await reader.readexactly(1)
+        dag_num_bytes = await read_int(reader)
+        dag_bytes = await reader.readexactly(dag_num_bytes)
+        dag: DAG = pickle.loads(dag_bytes)
 
-        async def resume(self) -> None:
-            async with self._open() as (reader, writer):
-                writer.write(Command.RESUME.value)
+        graphviz_str = "digraph EZ {\n"
+        for node in dag.nodes:
+            graphviz_str += f"\t{node}\n"
+        for node, conns in dag.graph.items():
+            for conn in conns:
+                graphviz_str += f"\t{node}->{conn}\n"
+        graphviz_str += "}"
 
-        async def shutdown(self) -> None:
-            async with self._open() as (reader, writer):
-                writer.write(Command.SHUTDOWN.value)
-                await writer.drain()
-
-        async def dag(self, timeout: typing.Optional[float] = None) -> DAG:
-            async with self._open() as (reader, writer):
-                writer.write(Command.DAG.value)
-                await writer.drain()
-                await asyncio.sleep(1.0)
-                await reader.readexactly(1)
-                dag_num_bytes = await read_int(reader)
-                dag_bytes = await reader.readexactly(dag_num_bytes)
-                dag: DAG = pickle.loads(dag_bytes)
-
-                graphviz_str = "digraph EZ {\n"
-                for node in dag.nodes:
-                    graphviz_str += f"\t{node}\n"
-                for node, conns in dag.graph.items():
-                    for conn in conns:
-                        graphviz_str += f"\t{node}->{conn}\n"
-                graphviz_str += "}"
-
-                await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
-                return dag
+        await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
+        await close_stream_writer(writer)
+        return dag
+    
