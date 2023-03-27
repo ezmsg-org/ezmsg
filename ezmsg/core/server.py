@@ -6,7 +6,6 @@ import typing
 
 from contextlib import suppress
 from threading import Thread, Event
-from concurrent.futures import Future
 
 from .netprotocol import (
     Address,
@@ -28,76 +27,36 @@ class ThreadedAsyncServer(Thread):
 
     _sock: socket.socket
     _loop: asyncio.AbstractEventLoop
-    _serve_future: Future[None]
-
-    ADDR_ENV: str
-    PORT_DEFAULT: int
 
     def __init__(self) -> None:
         super().__init__(daemon=True)
         self._server_up = Event()
         self._shutdown = Event()
-
-    @classmethod
-    def address(cls) -> Address:
-        address_str = os.environ.get(cls.ADDR_ENV, f'127.0.0.1:{cls.PORT_DEFAULT}')
-        return Address.from_string(address_str)
-
-    @classmethod
-    async def connect(cls, address: typing.Optional[AddressType] = None):
-        f""" 
-        If address is None, check $cls.ADDR_ENV for an address
-        - If $cls.ADDR_ENV also not defined, check the default 
-          Server Address cls.ADDR_DEFAULT for a running server
-          and start a Server on a random (non-default) port if there isn't 
-          a Server running there.  We also set $cls.ADDR_ENV to the
-          new server's address
-        - If $cls.ADDR_ENV is defined; we force a connection to that server
-          and raise ConnectionRefusedError if that address can't be connected to.
-        """
-        server = None
-        ensure_server = False
-        if address is not None:
-            address = Address(*address)
-        else:
-            ensure_server = cls.ADDR_ENV not in os.environ
-            address = cls.address()
-        
-        try:
-            _, writer = await asyncio.open_connection(*address)
-            await close_stream_writer(writer)
-
-        except ConnectionRefusedError as ref_e:
-            if not ensure_server:
-                raise ref_e
-
-            try:
-                start_port = int(os.environ.get(SERVER_PORT_START_ENV, SERVER_PORT_START_DEFAULT))
-                sock = create_socket(start_port = start_port)
-                os.environ[cls.ADDR_ENV] = str(Address(*sock.getsockname()))
-
-                server = cls()
-                server.start(sock)
-
-            except IOError:
-                logger.error(f"Could not connect to {cls.__name__} or find an open port to host it on")
-                raise ref_e
-            
-        return server
     
-    def start(self, sock: socket.socket) -> None:
-        self._sock = sock
+    @property
+    def address(self) -> Address:
+        return Address(*self._sock.getsockname())
+    
+    def start(self, address: typing.Optional[AddressType] = None) -> None:
+        if address is not None:
+            self._sock = create_socket(*address)
+        else:
+            start_port = int(os.environ.get(SERVER_PORT_START_ENV, SERVER_PORT_START_DEFAULT))
+            self._sock = create_socket(start_port = start_port)
+
         self._loop = asyncio.new_event_loop()
         super().start()
         self._server_up.wait()
 
     def stop(self) -> None:
         self._shutdown.set()
+        self.join()
 
     def run(self) -> None:
         asyncio.set_event_loop(self._loop)
         with suppress(asyncio.CancelledError):
             self._loop.run_until_complete(self._serve())
+        self._loop.close()
         self._loop.stop()
 
     async def _serve(self) -> None:
@@ -132,4 +91,57 @@ class ThreadedAsyncServer(Thread):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         raise NotImplementedError
+
+T = typing.TypeVar('T', bound = ThreadedAsyncServer)
     
+class ServiceManager(typing.Generic[T]):
+    _address: typing.Optional[Address] = None
+
+    ADDR_ENV: str
+    PORT_DEFAULT: int
+    SERVER_TYPE: typing.Type[T]
+
+    def __init__(self, address: typing.Optional[AddressType] = None):
+        if address is not None:
+            self._address = Address(*address)
+
+    async def ensure(self) -> typing.Optional[T]:
+
+        server = None
+        ensure_server = False
+        if self._address is None:
+            ensure_server = self.ADDR_ENV not in os.environ
+        
+        try:
+            reader, writer = await self.open_connection()
+            await close_stream_writer(writer)
+
+        except ConnectionRefusedError as ref_e:
+            if not ensure_server:
+                raise ref_e
+            
+            server = self.create_server()
+            
+        return server
+    
+    @property
+    def address(self) -> Address:
+        return self._address if self._address is not None else self.default_address()
+
+    @classmethod
+    def default_address(cls) -> Address:
+        address_str = os.environ.get(cls.ADDR_ENV, f'127.0.0.1:{cls.PORT_DEFAULT}')
+        return Address.from_string(address_str)
+
+    def create_server(self) -> T:
+        server = self.SERVER_TYPE()
+        server.start(self._address)
+        self._address = server.address
+        return server
+
+    async def open_connection(self) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return await asyncio.open_connection(*(
+            self.default_address() 
+            if self._address is None 
+            else self._address
+        ))
