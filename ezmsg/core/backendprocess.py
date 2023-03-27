@@ -14,13 +14,17 @@ from multiprocessing.synchronize import Barrier as BarrierType
 from contextlib import suppress, contextmanager
 from concurrent.futures import TimeoutError
 
+import ezmsg.core as ez
+
 from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
+from .graphserver import GraphService
+from .shmserver import SHMService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .netprotocol import AddressType
+from .netprotocol import Address
 
 from typing import (
     List,
@@ -50,7 +54,8 @@ class BackendProcess(Process):
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
-    graph_address: Optional[AddressType]
+    graph_address: Address
+    shm_address: Address
 
     def __init__(
         self,
@@ -58,7 +63,8 @@ class BackendProcess(Process):
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
-        graph_address: Optional[AddressType] = None,
+        graph_address: Address,
+        shm_address: Address
     ) -> None:
         super().__init__()
         self.units = units
@@ -66,9 +72,12 @@ class BackendProcess(Process):
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
         self.graph_address = graph_address
+        self.shm_address = shm_address
         self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
+        ez.GRAPH = GraphService(self.graph_address)
+        ez.SHM = SHMService(self.shm_address)
         self.task_finished_ev = threading.Event()
         with new_threaded_event_loop(self.task_finished_ev) as loop:
             try:
@@ -87,7 +96,7 @@ class DefaultBackendProcess(BackendProcess):
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
 
         main_func = None
-        context = GraphContext(self.graph_address)
+        context = GraphContext()
         coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
 
         try:
