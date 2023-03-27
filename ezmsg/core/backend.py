@@ -17,6 +17,7 @@ from .stream import Stream
 from .unit import Unit, PROCESS_ATTR
 
 from .graphserver import GraphService
+from .shmserver import SHMService
 from .graphcontext import GraphContext
 from .backendprocess import (
     BackendProcess,
@@ -151,6 +152,7 @@ def run(
 ) -> None:
     
     ez.GRAPH = GraphService(graph_address)
+    ez.SHM = SHMService()
 
     with new_threaded_event_loop() as loop:
 
