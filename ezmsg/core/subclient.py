@@ -7,6 +7,8 @@ from uuid import UUID
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
+import ezmsg.core as ez
+
 from .graphserver import GraphServer
 from .shmserver import SHMContext
 from .messagecache import MessageCache, Cache
@@ -44,10 +46,8 @@ class Subscriber:
     _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
 
     @classmethod
-    async def create(
-        cls, topic: str, address: typing.Optional[AddressType] = None, **kwargs
-    ) -> "Subscriber":
-        reader, writer = await GraphServer.open(address)
+    async def create(cls, topic: str, **kwargs) -> "Subscriber":
+        reader, writer = await ez.GRAPH.open_connection()
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
         sub = cls(UUID(id_str), topic, **kwargs)
@@ -179,7 +179,7 @@ class Subscriber:
                             self._shms[id].close()
                             await self._shms[id].wait_closed()
                         try:
-                            self._shms[id] = await SHMContext.attach(shm_name)
+                            self._shms[id] = await ez.SHM.attach(shm_name)
                         except ValueError:
                             logger.info(
                                 "Invalid SHM received from publisher; may be dead"

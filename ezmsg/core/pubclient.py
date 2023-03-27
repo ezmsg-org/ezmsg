@@ -5,6 +5,8 @@ import logging
 from uuid import UUID
 from contextlib import suppress
 
+import ezmsg.core as ez
+
 from .backpressure import Backpressure
 from .shmserver import SHMContext
 from .graphserver import GraphServer
@@ -13,7 +15,6 @@ from .messagemarshal import MessageMarshal, UndersizedMemory
 
 from .netprotocol import (
     Address,
-    AddressType,
     uint64_to_bytes,
     read_int,
     read_str,
@@ -63,20 +64,19 @@ class Publisher:
     async def create(
         cls,
         topic: str,
-        address: Optional[AddressType] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         buf_size: int = DEFAULT_SHM_SIZE,
         **kwargs,
     ) -> "Publisher":
 
-        reader, writer = await GraphServer.open(address)
+        reader, writer = await ez.GRAPH.open_connection()
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
         pub = cls(id, topic, **kwargs)
         writer.write(uint64_to_bytes(pub.pid))
         writer.write(encode_str(pub.topic))
-        pub._shm = await SHMContext.create(pub._num_buffers, buf_size)
+        pub._shm = await ez.SHM.create(pub._num_buffers, buf_size)
 
         start_port = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
         sock = create_socket(host, port, start_port=start_port)
@@ -265,7 +265,7 @@ class Publisher:
                         self._cache.push(self._msg_id, self._shm)
 
                     except UndersizedMemory as e:
-                        new_shm = await SHMContext.create(
+                        new_shm = await ez.SHM.create(
                             self._num_buffers, e.req_size * 2
                         )
 

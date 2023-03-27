@@ -7,6 +7,8 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
 
+import ezmsg.core as ez
+
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
@@ -14,6 +16,7 @@ from .component import Component
 from .stream import Stream
 from .unit import Unit, PROCESS_ATTR
 
+from .graphserver import GraphService
 from .graphcontext import GraphContext
 from .backendprocess import (
     BackendProcess,
@@ -38,7 +41,6 @@ class ExecutionContext:
         processes: List[List[Unit]],
         connections: List[Tuple[str, str]] = [],
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
-        graph_address: Optional[AddressType] = None,
     ) -> None:
 
         if not processes:
@@ -56,11 +58,78 @@ class ExecutionContext:
                 self.term_ev,
                 self.start_barrier,
                 self.stop_barrier,
-                graph_address,
+                ez.GRAPH.address,
+                ez.SHM.address
             )
             for process_units in processes
         ]
 
+    @classmethod
+    def setup(
+        cls,
+        component: Component,
+        name: Optional[str] = None,
+        connections: Optional[NetworkDefinition] = None,
+        backend_process: Type[BackendProcess] = DefaultBackendProcess,
+        force_single_process: bool = False,
+    ) -> Optional["ExecutionContext"]:
+
+        component._set_name(name)
+        component._set_location()
+
+        graph_connections: List[Tuple[str, str]] = []
+
+        if connections is not None:
+            for from_topic, to_topic in connections:
+                if isinstance(from_topic, Stream):
+                    from_topic = from_topic.address
+                if isinstance(to_topic, Stream):
+                    to_topic = to_topic.address
+                graph_connections.append((from_topic, to_topic))
+
+        def crawl_components(
+            component: Component, callback: Callable[[Component], None]
+        ) -> None:
+            search: List[Component] = [component]
+            while len(search):
+                comp = search.pop()
+                search += list(comp.components.values())
+                callback(comp)
+
+        def gather_edges(comp: Component):
+            if isinstance(comp, Collection):
+                for from_stream, to_stream in comp.network():
+                    if isinstance(from_stream, Stream):
+                        from_stream = from_stream.address
+                    if isinstance(to_stream, Stream):
+                        to_stream = to_stream.address
+                    graph_connections.append((from_stream, to_stream))
+
+        if isinstance(component, Collection):
+            crawl_components(component, gather_edges)
+
+        processes = []
+        if isinstance(component, Collection):
+            processes = collect_processes(component)
+
+            def configure_collections(comp: Component):
+                if isinstance(comp, Collection):
+                    comp.configure()
+
+            crawl_components(component, configure_collections)
+        elif isinstance(component, Unit):
+            processes = [[component]]
+
+        if force_single_process:
+            processes = [[u for pu in processes for u in pu]]
+
+        try:
+            return cls(
+                processes, graph_connections, backend_process, 
+            )
+        except ValueError:
+            return None
+        
 
 def run_system(
     system: Collection,
@@ -80,31 +149,35 @@ def run(
     graph_address: Optional[AddressType] = None,
     force_single_process: bool = False,
 ) -> None:
-
-    execution_context = setup(
-        component,
-        name,
-        connections,
-        backend_process,
-        graph_address,
-        force_single_process,
-    )
-
-    if execution_context is None:
-        return
+    
+    ez.GRAPH = GraphService(graph_address)
 
     with new_threaded_event_loop() as loop:
 
-        async def setup_graph() -> GraphContext:
-            context = await GraphContext(graph_address).__aenter__()
+        async def create_graph_context() -> GraphContext:
+            return await GraphContext().__aenter__()
+        
+        graph_context = asyncio.run_coroutine_threadsafe(create_graph_context(), loop).result()
+
+        execution_context = ExecutionContext.setup(
+            component,
+            name,
+            connections,
+            backend_process,
+            force_single_process,
+        )
+
+        if execution_context is None:
+            return
+
+        async def setup_graph() -> None:
             for edge in execution_context.connections:
-                await context.connect(*edge)
-            return context
+                await graph_context.connect(*edge)
 
         async def cleanup_graph(context: GraphContext) -> None:
             await context.__aexit__(None, None, None)
 
-        graph_context = asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
+        asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
 
         main_process = execution_context.processes[0]
         other_processes = execution_context.processes[1:]
@@ -149,72 +222,6 @@ def run(
             asyncio.run_coroutine_threadsafe(
                 cleanup_graph(graph_context), loop
             ).result()
-
-
-def setup(
-    component: Component,
-    name: Optional[str] = None,
-    connections: Optional[NetworkDefinition] = None,
-    backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: Optional[AddressType] = None,
-    force_single_process: bool = False,
-) -> Optional[ExecutionContext]:
-
-    component._set_name(name)
-    component._set_location()
-
-    graph_connections: List[Tuple[str, str]] = []
-
-    if connections is not None:
-        for from_topic, to_topic in connections:
-            if isinstance(from_topic, Stream):
-                from_topic = from_topic.address
-            if isinstance(to_topic, Stream):
-                to_topic = to_topic.address
-            graph_connections.append((from_topic, to_topic))
-
-    def crawl_components(
-        component: Component, callback: Callable[[Component], None]
-    ) -> None:
-        search: List[Component] = [component]
-        while len(search):
-            comp = search.pop()
-            search += list(comp.components.values())
-            callback(comp)
-
-    def gather_edges(comp: Component):
-        if isinstance(comp, Collection):
-            for from_stream, to_stream in comp.network():
-                if isinstance(from_stream, Stream):
-                    from_stream = from_stream.address
-                if isinstance(to_stream, Stream):
-                    to_stream = to_stream.address
-                graph_connections.append((from_stream, to_stream))
-
-    if isinstance(component, Collection):
-        crawl_components(component, gather_edges)
-
-    processes = []
-    if isinstance(component, Collection):
-        processes = collect_processes(component)
-
-        def configure_collections(comp: Component):
-            if isinstance(comp, Collection):
-                comp.configure()
-
-        crawl_components(component, configure_collections)
-    elif isinstance(component, Unit):
-        processes = [[component]]
-
-    if force_single_process:
-        processes = [[u for pu in processes for u in pu]]
-
-    try:
-        return ExecutionContext(
-            processes, graph_connections, backend_process, graph_address
-        )
-    except ValueError:
-        return None
 
 
 def collect_processes(collection: Collection) -> List[List[Unit]]:
