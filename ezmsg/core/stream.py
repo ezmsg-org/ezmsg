@@ -12,13 +12,12 @@ class Stream(Addressable):
         self.msg_type = msg_type
 
     def __repr__(self) -> str:
-        return f'Stream:{self.address}[{self.msg_type}]'
+        return f"Stream:{self.address}[{self.msg_type}]"
 
 
 class InputStream(Stream):
-    
     def __repr__(self) -> str:
-        return f'Input{super().__repr__()}()'
+        return f"Input{super().__repr__()}()"
 
 
 class OutputStream(Stream):
@@ -29,13 +28,13 @@ class OutputStream(Stream):
     force_tcp: bool
 
     def __init__(
-        self, 
+        self,
         msg_type: Type,
         host: Optional[str] = None,
-        port: Optional[int] = None, 
-        num_buffers: int = 32, 
+        port: Optional[int] = None,
+        num_buffers: int = 32,
         buf_size: int = DEFAULT_SHM_SIZE,
-        force_tcp: bool = False 
+        force_tcp: bool = False,
     ) -> None:
         super().__init__(msg_type)
         self.host = host
@@ -45,5 +44,5 @@ class OutputStream(Stream):
         self.force_tcp = force_tcp
 
     def __repr__(self) -> str:
-        preamble = f'Output{super().__repr__()}'
-        return f'{preamble}({self.num_buffers=}, {self.force_tcp=})'
+        preamble = f"Output{super().__repr__()}"
+        return f"{preamble}({self.num_buffers=}, {self.force_tcp=})"

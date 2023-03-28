@@ -9,7 +9,6 @@ from .filter import Filter, FilterCoefficients, FilterSettings
 
 
 class Decimate(ez.Collection):
-
     SETTINGS: DownsampleSettings
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
@@ -19,7 +18,6 @@ class Decimate(ez.Collection):
     DOWNSAMPLE = Downsample()
 
     def configure(self) -> None:
-
         self.DOWNSAMPLE.apply_settings(self.SETTINGS)
 
         if self.SETTINGS.factor < 1:
@@ -30,7 +28,7 @@ class Decimate(ez.Collection):
             # See scipy.signal.decimate for IIR Filter Condition
             b, a = scipy.signal.cheby1(8, 0.05, 0.8 / self.SETTINGS.factor)
             system = scipy.signal.dlti(b, a)
-            filt = FilterCoefficients(b=system.num, a=system.den) #type: ignore
+            filt = FilterCoefficients(b=system.num, a=system.den)  # type: ignore
 
         self.FILTER.apply_settings(FilterSettings(filt=filt))
 

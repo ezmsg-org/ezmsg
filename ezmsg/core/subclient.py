@@ -31,7 +31,6 @@ logger = logging.getLogger("ezmsg")
 
 
 class Subscriber:
-
     id: UUID
     pid: int
     topic: str
@@ -46,7 +45,9 @@ class Subscriber:
     _shm_service: SHMService
 
     @classmethod
-    async def create(cls, topic: str, graph_service: GraphService, shm_service: SHMService, **kwargs) -> "Subscriber":
+    async def create(
+        cls, topic: str, graph_service: GraphService, shm_service: SHMService, **kwargs
+    ) -> "Subscriber":
         reader, writer = await graph_service.open_connection()
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
@@ -99,7 +100,6 @@ class Subscriber:
                     self._initialized.set()
 
                 elif cmd == Command.UPDATE.value:
-
                     pub_addresses: typing.Dict[UUID, Address] = {}
                     connections = await read_str(reader)
                     connections = connections.strip(",")
@@ -141,7 +141,6 @@ class Subscriber:
     async def _handle_publisher(
         self, id: UUID, address: Address, connected: asyncio.Event
     ) -> None:
-
         reader, writer = await asyncio.open_connection(*address)
         writer.write(encode_str(str(self.id)))
         writer.write(uint64_to_bytes(self.pid))
@@ -165,7 +164,6 @@ class Subscriber:
 
         try:
             while True:
-
                 msg = await reader.read(1)
                 if not msg:
                     break
@@ -215,7 +213,6 @@ class Subscriber:
 
     @asynccontextmanager
     async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
-
         id, msg_id = await self._incoming.get()
         msg_id_bytes = uint64_to_bytes(msg_id)
 
