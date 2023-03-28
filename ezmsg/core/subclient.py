@@ -1,13 +1,14 @@
 import os
 import asyncio
 import logging
+import typing
 
 from uuid import UUID
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
-from .graphserver import GraphServer
-from .shmserver import SHMContext
+from .graphserver import GraphService
+from .shmserver import SHMContext, SHMService
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal
 
@@ -23,10 +24,8 @@ from .netprotocol import (
     close_stream_writer,
     Command,
     PublisherInfo,
-    GRAPHSERVER_ADDR,
 )
 
-from typing import Tuple, Dict, Any, AsyncGenerator
 
 logger = logging.getLogger("ezmsg")
 
@@ -39,26 +38,26 @@ class Subscriber:
 
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
-    _publishers: Dict[UUID, PublisherInfo]
-    _publisher_tasks: Dict[UUID, "asyncio.Task[None]"]
-    _shms: Dict[UUID, SHMContext]
-    _incoming: "asyncio.Queue[Tuple[UUID, int]]"
+    _publishers: typing.Dict[UUID, PublisherInfo]
+    _publisher_tasks: typing.Dict[UUID, "asyncio.Task[None]"]
+    _shms: typing.Dict[UUID, SHMContext]
+    _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
+
+    _shm_service: SHMService
 
     @classmethod
-    async def create(
-        cls, topic: str, address: AddressType = GRAPHSERVER_ADDR, **kwargs
-    ) -> "Subscriber":
-        reader, writer = await GraphServer.open(address)
+    async def create(cls, topic: str, graph_service: GraphService, shm_service: SHMService, **kwargs) -> "Subscriber":
+        reader, writer = await graph_service.open_connection()
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
-        sub = cls(UUID(id_str), topic, **kwargs)
+        sub = cls(UUID(id_str), topic, shm_service, **kwargs)
         writer.write(uint64_to_bytes(sub.pid))
         writer.write(encode_str(sub.topic))
         sub._graph_task = asyncio.create_task(sub._graph_connection(reader, writer))
         await sub._initialized.wait()
         return sub
 
-    def __init__(self, id: UUID, topic: str) -> None:
+    def __init__(self, id: UUID, topic: str, shm_service: SHMService, **kwargs) -> None:
         self.id = id
         self.pid = os.getpid()
         self.topic = topic
@@ -68,6 +67,8 @@ class Subscriber:
         self._shms = dict()
         self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
+
+        self._shm_service = shm_service
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -99,7 +100,7 @@ class Subscriber:
 
                 elif cmd == Command.UPDATE.value:
 
-                    pub_addresses: Dict[UUID, Address] = {}
+                    pub_addresses: typing.Dict[UUID, Address] = {}
                     connections = await read_str(reader)
                     connections = connections.strip(",")
                     if len(connections):
@@ -180,7 +181,7 @@ class Subscriber:
                             self._shms[id].close()
                             await self._shms[id].wait_closed()
                         try:
-                            self._shms[id] = await SHMContext.attach(shm_name)
+                            self._shms[id] = await self._shm_service.attach(shm_name)
                         except ValueError:
                             logger.info(
                                 "Invalid SHM received from publisher; may be dead"
@@ -206,14 +207,14 @@ class Subscriber:
             del self._publishers[id]
             logger.debug(f"disconnected: sub:{self.id} -> pub:{id}")
 
-    async def recv(self) -> Any:
+    async def recv(self) -> typing.Any:
         out_msg = None
         async with self.recv_zero_copy() as msg:
             out_msg = deepcopy(msg)
         return out_msg
 
     @asynccontextmanager
-    async def recv_zero_copy(self) -> AsyncGenerator[Any, None]:
+    async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
 
         id, msg_id = await self._incoming.get()
         msg_id_bytes = uint64_to_bytes(msg_id)
