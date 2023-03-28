@@ -96,12 +96,18 @@ T = typing.TypeVar('T', bound = ThreadedAsyncServer)
     
 class ServiceManager(typing.Generic[T]):
     _address: typing.Optional[Address] = None
+    _factory: typing.Callable[[], T]
 
     ADDR_ENV: str
     PORT_DEFAULT: int
-    SERVER_TYPE: typing.Type[T]
 
-    def __init__(self, address: typing.Optional[AddressType] = None):
+    def __init__(
+        self, 
+        factory: typing.Callable[[], T],
+        address: typing.Optional[AddressType] = None
+    )-> None:
+        
+        self._factory = factory
         if address is not None:
             self._address = Address(*address)
 
@@ -134,7 +140,7 @@ class ServiceManager(typing.Generic[T]):
         return Address.from_string(address_str)
 
     def create_server(self) -> T:
-        server = self.SERVER_TYPE()
+        server = self._factory()
         server.start(self._address)
         self._address = server.address
         return server

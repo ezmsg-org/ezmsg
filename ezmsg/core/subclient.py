@@ -7,10 +7,8 @@ from uuid import UUID
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
-import ezmsg.core as ez
-
-from .graphserver import GraphServer
-from .shmserver import SHMContext
+from .graphserver import GraphService
+from .shmserver import SHMContext, SHMService
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal
 
@@ -45,19 +43,21 @@ class Subscriber:
     _shms: typing.Dict[UUID, SHMContext]
     _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
 
+    _shm_service: SHMService
+
     @classmethod
-    async def create(cls, topic: str, **kwargs) -> "Subscriber":
-        reader, writer = await ez.GRAPH.open_connection()
+    async def create(cls, topic: str, graph_service: GraphService, shm_service: SHMService, **kwargs) -> "Subscriber":
+        reader, writer = await graph_service.open_connection()
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
-        sub = cls(UUID(id_str), topic, **kwargs)
+        sub = cls(UUID(id_str), topic, shm_service, **kwargs)
         writer.write(uint64_to_bytes(sub.pid))
         writer.write(encode_str(sub.topic))
         sub._graph_task = asyncio.create_task(sub._graph_connection(reader, writer))
         await sub._initialized.wait()
         return sub
 
-    def __init__(self, id: UUID, topic: str) -> None:
+    def __init__(self, id: UUID, topic: str, shm_service: SHMService, **kwargs) -> None:
         self.id = id
         self.pid = os.getpid()
         self.topic = topic
@@ -67,6 +67,8 @@ class Subscriber:
         self._shms = dict()
         self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
+
+        self._shm_service = shm_service
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -179,7 +181,7 @@ class Subscriber:
                             self._shms[id].close()
                             await self._shms[id].wait_closed()
                         try:
-                            self._shms[id] = await ez.SHM.attach(shm_name)
+                            self._shms[id] = await self._shm_service.attach(shm_name)
                         except ValueError:
                             logger.info(
                                 "Invalid SHM received from publisher; may be dead"
