@@ -14,8 +14,6 @@ from multiprocessing.synchronize import Barrier as BarrierType
 from contextlib import suppress, contextmanager
 from concurrent.futures import TimeoutError
 
-import ezmsg.core as ez
-
 from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
@@ -54,8 +52,8 @@ class BackendProcess(Process):
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
-    graph_address: Address
-    shm_address: Address
+    graph_service: GraphService
+    shm_service: SHMService
 
     def __init__(
         self,
@@ -63,21 +61,19 @@ class BackendProcess(Process):
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
-        graph_address: Address,
-        shm_address: Address
+        graph_service: GraphService,
+        shm_service: SHMService
     ) -> None:
         super().__init__()
         self.units = units
         self.term_ev = term_ev
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
-        self.graph_address = graph_address
-        self.shm_address = shm_address
+        self.graph_service = graph_service
+        self.shm_service = shm_service
         self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
-        ez.GRAPH = GraphService(self.graph_address)
-        ez.SHM = SHMService(self.shm_address)
         self.task_finished_ev = threading.Event()
         with new_threaded_event_loop(self.task_finished_ev) as loop:
             try:
@@ -96,7 +92,7 @@ class DefaultBackendProcess(BackendProcess):
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
 
         main_func = None
-        context = GraphContext()
+        context = GraphContext(self.graph_service, self.shm_service)
         coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
 
         try:
