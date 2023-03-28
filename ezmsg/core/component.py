@@ -14,7 +14,6 @@ class ComponentMeta(ABCMeta):
     def __init__(
         cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
     ) -> None:
-
         super(ComponentMeta, cls).__init__(name, bases, fields)
 
         cls.__settings_type__ = Settings
@@ -73,7 +72,6 @@ class ComponentMeta(ABCMeta):
 
 
 class Component(Addressable, metaclass=ComponentMeta):
-
     SETTINGS: Settings
     STATE: State
 

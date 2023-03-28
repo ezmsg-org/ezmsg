@@ -27,7 +27,6 @@ class ButterworthSystemSettings(ez.Settings):
 
 
 class ButterworthSystem(ez.System):
-
     NOISE = WhiteNoise()
     GATE = MessageGate()
     BUTTER = ButterworthFilter()
@@ -64,7 +63,6 @@ class ButterworthSystem(ez.System):
 def test_butterworth_system(
     cutoff: float, cuton: float, test_name: Optional[str] = None
 ):
-
     in_fs = 128.0
     block_size = 128
 
@@ -77,7 +75,9 @@ def test_butterworth_system(
 
     settings = ButterworthSystemSettings(
         noise_settings=WhiteNoiseSettings(
-            n_time=block_size, fs=in_fs, dispatch_rate=None,
+            n_time=block_size,
+            fs=in_fs,
+            dispatch_rate=None,
         ),
         gate_settings=MessageGateSettings(
             start_open=True, default_open=False, default_after=num_msgs

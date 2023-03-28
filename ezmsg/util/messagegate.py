@@ -1,11 +1,7 @@
 from dataclasses import dataclass
 import ezmsg.core as ez
 
-from typing import (
-    Any,
-    AsyncGenerator,
-    Optional
-)
+from typing import Any, AsyncGenerator, Optional
 
 
 @dataclass
@@ -56,8 +52,8 @@ class MessageGate(ez.Unit):
             yield (self.OUTPUT, msg)
 
         if (  # Auto-revert to default state if necessary
-            (self.SETTINGS.default_after is not None) and \
-            (self.STATE.gate_open != self.SETTINGS.default_open) and \
-            (self.STATE.msgs >= self.SETTINGS.default_after)
+            (self.SETTINGS.default_after is not None)
+            and (self.STATE.gate_open != self.SETTINGS.default_open)
+            and (self.STATE.msgs >= self.SETTINGS.default_after)
         ):
             self.set_gate(self.SETTINGS.default_open)

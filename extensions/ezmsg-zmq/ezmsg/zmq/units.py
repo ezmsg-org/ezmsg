@@ -14,8 +14,8 @@ import ezmsg.core as ez
 POLL_TIME = 0.1
 STARTUP_WAIT_TIME = 0.1
 
-class ZeroCopyBytes(bytes):
 
+class ZeroCopyBytes(bytes):
     def __reduce_ex__(self, protocol):
         if protocol >= 5:
             return type(self)._reconstruct, (PickleBuffer(self),), None
@@ -35,10 +35,11 @@ class ZeroCopyBytes(bytes):
             else:
                 return cls(obj)
 
+
 @dataclass
 class ZMQMessage:
     data: bytes
-    
+
 
 class ZMQSenderSettings(ez.Settings):
     write_addr: str
@@ -97,12 +98,15 @@ class ZMQSenderUnit(ez.Unit):
             await asyncio.sleep(STARTUP_WAIT_TIME)
         if self.SETTINGS.multipart is True:
             await self.socket.send_multipart(
-                (bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data), flags=zmq.NOBLOCK
+                (bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data),
+                flags=zmq.NOBLOCK,
             )
         else:
             await self.socket.send(
-                b''.join((bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data)), flags=zmq.NOBLOCK
+                b"".join((bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data)),
+                flags=zmq.NOBLOCK,
             )
+
 
 class ZMQPollerSettings(ez.Settings):
     read_addr: str

@@ -2,9 +2,7 @@ import json
 import ezmsg.core as ez
 
 from ezmsg.testing.lfo import LFO, LFOSettings
-from ezmsg.websocket.units import (
-    WebsocketServer, WebsocketClient, WebsocketSettings
-)
+from ezmsg.websocket.units import WebsocketServer, WebsocketClient, WebsocketSettings
 
 from typing import Any, AsyncGenerator, Dict, Tuple
 
@@ -32,7 +30,7 @@ class DebugOutput(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def print(self, message: str) -> None:
-        print('DEBUG:', message)
+        print("DEBUG:", message)
 
 
 class WebsocketSystemSettings(ez.Settings):
@@ -41,7 +39,6 @@ class WebsocketSystemSettings(ez.Settings):
 
 
 class WebsocketSystem(ez.System):
-
     SETTINGS: WebsocketSystemSettings
 
     OSC = LFO()
@@ -51,23 +48,14 @@ class WebsocketSystem(ez.System):
     CLIENT = WebsocketClient()
 
     def configure(self) -> None:
-        self.OSC.apply_settings(
-            LFOSettings(
-                freq=0.2,
-                update_rate=1.0
-            ))
+        self.OSC.apply_settings(LFOSettings(freq=0.2, update_rate=1.0))
 
         self.SERVER.apply_settings(
-            WebsocketSettings(
-                host=self.SETTINGS.host,
-                port=self.SETTINGS.port
-            ))
+            WebsocketSettings(host=self.SETTINGS.host, port=self.SETTINGS.port)
+        )
 
         self.CLIENT.apply_settings(
-            WebsocketSettings(
-                host=self.SETTINGS.host,
-                port=self.SETTINGS.port
-            )
+            WebsocketSettings(host=self.SETTINGS.host, port=self.SETTINGS.port)
         )
 
     # Define Connections
@@ -75,24 +63,17 @@ class WebsocketSystem(ez.System):
         return (
             (self.OSC.OUTPUT, self.JSON.DICT_INPUT),
             (self.JSON.JSON_OUTPUT, self.SERVER.INPUT),
-
             (self.CLIENT.OUTPUT, self.CLIENT.INPUT),  # Relay
-
             (self.SERVER.OUTPUT, self.JSON.JSON_INPUT),
-            (self.JSON.DICT_OUTPUT, self.OUT.INPUT)
+            (self.JSON.DICT_OUTPUT, self.OUT.INPUT),
         )
 
     def process_components(self) -> Tuple[ez.Component, ...]:
-        return (
-            self.OSC,
-            self.CLIENT,
-            self.SERVER
-        )
+        return (self.OSC, self.CLIENT, self.SERVER)
 
 
-if __name__ == '__main__':
-
-    host = '127.0.0.1'
+if __name__ == "__main__":
+    host = "127.0.0.1"
     port = 5038
 
     # Run the websocket system

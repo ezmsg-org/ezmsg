@@ -12,8 +12,8 @@ from typing import AsyncGenerator, Optional, Tuple
 
 @dataclass
 class FilterCoefficients:
-    b: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
-    a: np.ndarray = field(default_factory = lambda: np.array([1.0, 0.0]))
+    b: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
+    a: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
 
 
 class FilterSettingsBase(ez.Settings):
@@ -72,7 +72,9 @@ class Filter(ez.Unit):
     def update_filter(self):
         try:
             coefs = self.design_filter()
-            self.STATE.filt = FilterCoefficients() if coefs is None else FilterCoefficients( *coefs )
+            self.STATE.filt = (
+                FilterCoefficients() if coefs is None else FilterCoefficients(*coefs)
+            )
             self.STATE.filt_set.set()
             self.STATE.filt_designed = True
         except NotImplementedError as e:
@@ -135,4 +137,4 @@ class Filter(ez.Unit):
         if one_dimensional:
             arr_out = np.squeeze(arr_out, axis=1)
 
-        yield self.OUTPUT_SIGNAL, replace(msg, data = arr_out), 
+        yield self.OUTPUT_SIGNAL, replace(msg, data=arr_out),
