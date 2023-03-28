@@ -115,19 +115,23 @@ class AxisArray:
         except ValueError:
             raise ValueError(f"{dim=} not present in object")
 
-    def _axis_idx(self, dim: typing.Union[str, int]) -> int:
+    def axis_idx(self, dim: typing.Union[str, int]) -> int:
         return self.get_axis_idx(dim) if isinstance(dim, str) else dim
+    
+    def _axis_idx(self, dim: typing.Union[str, int]) -> int:
+        """ Deprecated; use axis_idx instead """
+        return self.axis_idx(dim)
 
     def as2d(self, dim: typing.Union[str, int]) -> npt.NDArray:
-        return as2d(self.data, self._axis_idx(dim))
+        return as2d(self.data, self.axis_idx(dim))
 
     @contextmanager
     def view2d(self, dim: typing.Union[str,int]) -> typing.Generator[npt.NDArray, None, None]:
-        with view2d(self.data, self._axis_idx(dim)) as arr:
+        with view2d(self.data, self.axis_idx(dim)) as arr:
             yield arr
 
     def shape2d(self, dim: typing.Union[str,int]) -> typing.Tuple[int, int]:
-        return shape2d(self.data, self._axis_idx(dim))
+        return shape2d(self.data, self.axis_idx(dim))
 
     @staticmethod
     def concatenate( *aas: "AxisArray", dim: str, axis: typing.Optional[Axis] = None) -> "AxisArray":
@@ -145,7 +149,7 @@ class AxisArray:
         all_data = [aa.data for aa in aas]
 
         if dim in aa_0.dims:
-            dim_idx = aa_0._axis_idx(dim)
+            dim_idx = aa_0.axis_idx(dim)
             new_data = np.concatenate(all_data, axis = dim_idx)
             return replace(aa_0, data = new_data, dims = new_dims, axes = new_axes)
 
@@ -157,7 +161,7 @@ class AxisArray:
     @staticmethod
     def transpose(aa: "AxisArray", dims: typing.Optional[typing.Union[typing.Iterable[str], typing.Iterable[int]]] = None) -> "AxisArray":
         dims = reversed(range(aa.data.ndim)) if dims is None else dims
-        dim_indices = [aa._axis_idx(d) for d in dims]
+        dim_indices = [aa.axis_idx(d) for d in dims]
         new_dims = [aa.dims[d] for d in dim_indices]
         new_data = np.transpose(aa.data, dim_indices)
         return replace(aa, data = new_data, dims = new_dims, axes = aa.axes)
