@@ -2,10 +2,8 @@ import asyncio
 import logging
 import typing
 
-import ezmsg.core as ez
-
-from .shmserver import SHMServer
-from .graphserver import GraphServer
+from .shmserver import SHMServer, SHMService
+from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
 
@@ -27,45 +25,53 @@ class GraphContext:
     _clients: typing.Set[typing.Union[Publisher, Subscriber]]
     _edges: typing.Set[typing.Tuple[str, str]]
 
+    _shm_service: SHMService
     _shm_server: typing.Optional[SHMServer]
+    _graph_service: GraphService
     _graph_server: typing.Optional[GraphServer]
 
-    def __init__(self) -> None:
+    def __init__(
+        self, 
+        graph_service: typing.Optional[GraphService] = None, 
+        shm_service: typing.Optional[SHMService] = None
+    ) -> None:
         self._clients = set()
         self._edges = set()
+        self._shm_service = shm_service if shm_service is not None else SHMService()
         self._shm_server = None
+        self._graph_service = graph_service if graph_service is not None else GraphService()
         self._graph_server = None
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
-        pub = await Publisher.create(topic, **kwargs)
+        pub = await Publisher.create(topic, self._graph_service, self._shm_service, **kwargs)
         self._clients.add(pub)
         return pub
 
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
-        sub = await Subscriber.create(topic, **kwargs)
+        sub = await Subscriber.create(topic, self._graph_service, self._shm_service, **kwargs)
         self._clients.add(sub)
         return sub
 
     async def connect(self, from_topic: str, to_topic: str) -> None:
-        await ez.GRAPH.connect(from_topic, to_topic)
+        await self._graph_service.connect(from_topic, to_topic)
         self._edges.add((from_topic, to_topic))
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
-        await ez.GRAPH.disconnect(from_topic, to_topic)
+        await self._graph_service.disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
     async def sync(self, timeout: typing.Optional[float] = None) -> None:
-        await ez.GRAPH.sync(timeout)
+        await self._graph_service.sync(timeout)
 
     async def pause(self) -> None:
-        await ez.GRAPH.pause()
+        await self._graph_service.pause()
 
     async def resume(self) -> None:
-        await ez.GRAPH.resume()
+        await self._graph_service.resume()
 
     async def _ensure_servers(self) -> None:
-        self._shm_server = await ez.SHM.ensure()
-        self._graph_server = await ez.GRAPH.ensure()
+        self._shm_server = await self._shm_service.ensure()
+        self._graph_server = await self._graph_service.ensure()
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
@@ -101,6 +107,6 @@ class GraphContext:
 
         for edge in self._edges:
             try:
-                await ez.GRAPH.disconnect(*edge)
+                await self._graph_service.disconnect(*edge)
             except (ConnectionRefusedError, BrokenPipeError, ConnectionResetError) as e:
                 logger.warn(f"Could not remove edge {edge} from GraphServer: {e}")

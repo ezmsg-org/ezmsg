@@ -22,7 +22,8 @@ from .netprotocol import (
     SubscriberInfo,
     PublisherInfo,
     GRAPHSERVER_ADDR_ENV,
-    GRAPHSERVER_PORT_DEFAULT
+    GRAPHSERVER_PORT_DEFAULT,
+    AddressType
 )
 
 logger = logging.getLogger("ezmsg")
@@ -226,11 +227,13 @@ class GraphServer(ThreadedAsyncServer):
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
 
 
-class GraphService(ServiceManager):
+class GraphService(ServiceManager[GraphServer]):
 
     ADDR_ENV = GRAPHSERVER_ADDR_ENV
     PORT_DEFAULT = GRAPHSERVER_PORT_DEFAULT
-    SERVER_TYPE = GraphServer
+
+    def __init__(self, address: typing.Optional[AddressType] = None) -> None:
+        super().__init__(GraphServer, address)
 
     async def open_connection(self) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         reader, writer = await super().open_connection()
