@@ -1,39 +1,36 @@
 import asyncio
-from asyncio.base_events import Server
+import socket
+import typing
 import enum
 import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
-
-from typing import Tuple, NamedTuple, Union, AsyncGenerator, Optional
+from asyncio.base_events import Server
 
 VERSION = b"1"
 UINT64_SIZE = 8
 DEFAULT_SHM_SIZE = 2 ** 16
 BYTEORDER = "little"
 
-GRAPHSERVER_PORT_ENV = "EZMSG_GRAPHSERVER_PORT"
-GRAPHSERVER_PORT_DEFAULT = 25978
-GRAPHSERVER_PORT = int(os.getenv(GRAPHSERVER_PORT_ENV, GRAPHSERVER_PORT_DEFAULT))
-GRAPHSERVER_ADDR = ("127.0.0.1", GRAPHSERVER_PORT)
+DEFAULT_HOST = '127.0.0.1'
 
-# SHMServer must reside on localhost because it manages shared memory
-# for local processes.  GraphServer may live elsewhere
-SHMSERVER_PORT_ENV = "EZMSG_SHMSERVER_PORT"
+GRAPHSERVER_ADDR_ENV = "EZMSG_GRAPHSERVER_ADDR"
+GRAPHSERVER_PORT_DEFAULT = 25978
+
+SHMSERVER_ADDR_ENV = "EZMSG_SHMSERVER_ADDR"
 SHMSERVER_PORT_DEFAULT = 25979
-SHMSERVER_PORT = int(os.getenv(SHMSERVER_PORT_ENV, SHMSERVER_PORT_DEFAULT))
-SHMSERVER_ADDR = ("127.0.0.1", SHMSERVER_PORT)
+
+RESERVED_PORTS = [GRAPHSERVER_PORT_DEFAULT, SHMSERVER_PORT_DEFAULT]
+
+SERVER_PORT_START_ENV = "EZMSG_SERVER_PORT_START"
+SERVER_PORT_START_DEFAULT = 10000
 
 PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
-PUBLISHER_START_PORT = int(
-    os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
-)
 
-
-class Address(NamedTuple):
+class Address(typing.NamedTuple):
     host: str
     port: int
 
@@ -50,11 +47,14 @@ class Address(NamedTuple):
     def to_stream(self, writer: asyncio.StreamWriter) -> None:
         writer.write(encode_str(str(self)))
 
+    def bind_socket(self) -> socket.socket:
+        return create_socket(self.host, self.port)
+
     def __str__(self):
         return f"{self.host}:{self.port}"
 
 
-AddressType = Union[Tuple[str, int], Address]
+AddressType = typing.Union[typing.Tuple[str, int], Address]
 
 
 @dataclass
@@ -73,7 +73,7 @@ class ClientInfo:
         self._pending.set()
 
     @asynccontextmanager
-    async def sync_writer(self) -> AsyncGenerator[asyncio.StreamWriter, None]:
+    async def sync_writer(self) -> typing.AsyncGenerator[asyncio.StreamWriter, None]:
         await self._pending.wait()
         try:
             yield self.writer
@@ -168,3 +168,32 @@ class Command(enum.Enum):
     SHM_ATTACH = enum.auto()
 
     SHUTDOWN = enum.auto()
+
+def create_socket(
+    host: typing.Optional[str] = None,
+    port: typing.Optional[int] = None,
+    start_port: int = 0,
+    max_port: int = 65535,
+    ignore_ports: typing.List[int] = RESERVED_PORTS
+) -> socket.socket:
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    if host is None:
+        host = DEFAULT_HOST
+
+    if port is not None:
+        sock.bind((host, port))
+        return sock
+
+    port = start_port
+    while port <= max_port:
+        if port not in ignore_ports:
+            try:
+                sock.bind((host, port))
+                return sock
+            except OSError:
+                pass
+        port += 1
+
+    raise IOError("Failed to bind socket; no free ports")
