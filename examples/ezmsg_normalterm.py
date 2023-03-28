@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class SimpleMessage:
     number: float
 
+
 # MESSAGE GENERATOR
 
 
@@ -25,7 +26,6 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-
     SETTINGS: MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(SimpleMessage)
@@ -35,6 +35,7 @@ class MessageGenerator(ez.Unit):
         for i in range(self.SETTINGS.num_msgs):
             yield self.OUTPUT, SimpleMessage(i)
         raise ez.Complete
+
 
 # MESSAGE RECEIVER
 
@@ -63,6 +64,7 @@ class MessageReceiver(ez.Unit):
         if self.STATE.num_received == self.SETTINGS.num_msgs:
             raise ez.NormalTermination
 
+
 # Define and configure a system of modules to launch
 
 
@@ -72,7 +74,6 @@ class ToySystemSettings(ez.Settings):
 
 
 class ToySystem(ez.System):
-
     SETTINGS: ToySystemSettings
 
     # Publishers
@@ -83,36 +84,33 @@ class ToySystem(ez.System):
 
     def configure(self) -> None:
         self.SIMPLE_PUB.apply_settings(
-            MessageGeneratorSettings(
-                num_msgs=self.SETTINGS.num_msgs
-            ))
+            MessageGeneratorSettings(num_msgs=self.SETTINGS.num_msgs)
+        )
 
         self.SIMPLE_SUB.apply_settings(
             MessageReceiverSettings(
-                num_msgs=self.SETTINGS.num_msgs,
-                output_fn=self.SETTINGS.output_fn
-            ))
+                num_msgs=self.SETTINGS.num_msgs, output_fn=self.SETTINGS.output_fn
+            )
+        )
 
     # Define Connections
     def network(self) -> ez.NetworkDefinition:
-        return (
-            (self.SIMPLE_PUB.OUTPUT, self.SIMPLE_SUB.INPUT),
-        )
+        return ((self.SIMPLE_PUB.OUTPUT, self.SIMPLE_SUB.INPUT),)
 
-    def process_components( self ):
-        return ( self.SIMPLE_PUB, self.SIMPLE_SUB, )
+    def process_components(self):
+        return (
+            self.SIMPLE_PUB,
+            self.SIMPLE_SUB,
+        )
 
 
 def main():
-    test_filename = './test.txt'
+    test_filename = "./test.txt"
     num_messages = 5
-    with open(test_filename, 'w') as f:
+    with open(test_filename, "w") as f:
         ...
     system = ToySystem(
-        ToySystemSettings(
-            num_msgs=num_messages,
-            output_fn=test_filename
-        )
+        ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
     ez.run_system(system)
 

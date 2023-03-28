@@ -23,15 +23,15 @@ from .netprotocol import (
     PublisherInfo,
     GRAPHSERVER_ADDR_ENV,
     GRAPHSERVER_PORT_DEFAULT,
-    AddressType
+    AddressType,
 )
 
 logger = logging.getLogger("ezmsg")
 
 
 class GraphServer(ThreadedAsyncServer):
-    """ 
-    Pub-Sub Directed Acyclic Graph 
+    """
+    Pub-Sub Directed Acyclic Graph
     Running as a process: start() and stop()
     Running as a thread: start_server(), stop_server(), join_server()
     """
@@ -81,9 +81,7 @@ class GraphServer(ThreadedAsyncServer):
 
             # We only want to handle one command at a time
             async with self._command_lock:
-
                 if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
-
                     id = uuid1(node=node)
                     writer.write(encode_str(str(id)))
 
@@ -169,7 +167,6 @@ class GraphServer(ThreadedAsyncServer):
     async def _handle_client(
         self, id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-
         logger.debug(f"Graph Server: Client connected: {id}")
 
         try:
@@ -189,7 +186,6 @@ class GraphServer(ThreadedAsyncServer):
             self.clients[id].set_sync()
             del self.clients[id]
             await close_stream_writer(writer)
-
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
@@ -217,25 +213,26 @@ class GraphServer(ThreadedAsyncServer):
         ]
 
     def _upstream_pubs(self, topic: str) -> typing.List[PublisherInfo]:
-        """ Given a topic, return a set of all publisher IDs upstream of that topic """
+        """Given a topic, return a set of all publisher IDs upstream of that topic"""
         upstream_topics = self.graph.upstream(topic)
         return [pub for pub in self._publishers() if pub.topic in upstream_topics]
 
     def _downstream_subs(self, topic: str) -> typing.List[SubscriberInfo]:
-        """ Given a topic, return a set of all subscriber IDs upstream of that topic """
+        """Given a topic, return a set of all subscriber IDs upstream of that topic"""
         downstream_topics = self.graph.downstream(topic)
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
 
 
 class GraphService(ServiceManager[GraphServer]):
-
     ADDR_ENV = GRAPHSERVER_ADDR_ENV
     PORT_DEFAULT = GRAPHSERVER_PORT_DEFAULT
 
     def __init__(self, address: typing.Optional[AddressType] = None) -> None:
         super().__init__(GraphServer, address)
 
-    async def open_connection(self) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    async def open_connection(
+        self,
+    ) -> typing.Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         reader, writer = await super().open_connection()
         writer.write(uint64_to_bytes(getnode()))
         await writer.drain()
@@ -310,4 +307,3 @@ class GraphService(ServiceManager[GraphServer]):
         await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
         await close_stream_writer(writer)
         return dag
-    

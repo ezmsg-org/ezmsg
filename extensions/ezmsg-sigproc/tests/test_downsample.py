@@ -28,7 +28,6 @@ class DownsampleSystemSettings(ez.Settings):
 
 
 class DownsampleSystem(ez.System):
-
     OSC = Oscillator()
     GATE = MessageGate()
     DOWN = Downsample()
@@ -45,7 +44,7 @@ class DownsampleSystem(ez.System):
             MessageGateSettings(
                 start_open=True,
                 default_open=False,
-                default_after=self.SETTINGS.num_msgs
+                default_after=self.SETTINGS.num_msgs,
             )
         )
         self.DOWN.apply_settings(self.SETTINGS.down_settings)
@@ -68,11 +67,8 @@ class DownsampleSystem(ez.System):
 @pytest.mark.parametrize("block_size", [1, 5, 10, 20])
 @pytest.mark.parametrize("factor", [1, 2, 3])
 def test_downsample_system(
-    block_size: int,
-    factor: int,
-    test_name: Optional[str] = None
+    block_size: int, factor: int, test_name: Optional[str] = None
 ):
-
     in_fs = 10.0
 
     # Ensure 4 seconds of data
@@ -84,21 +80,11 @@ def test_downsample_system(
     settings = DownsampleSystemSettings(
         num_msgs=num_msgs,
         osc_settings=OscillatorSettings(
-            n_time=block_size,
-            freq=1.0,  # Hz
-            fs=in_fs,
-            dispatch_rate=20.0,
-            sync=True
+            n_time=block_size, freq=1.0, fs=in_fs, dispatch_rate=20.0, sync=True  # Hz
         ),
-        down_settings=DownsampleSettings(
-            factor=factor
-        ),
-        log_settings=MessageLoggerSettings(
-            output=test_filename
-        ),
-        term_settings=TerminateTestSettings(
-            time=1.0
-        )
+        down_settings=DownsampleSettings(factor=factor),
+        log_settings=MessageLoggerSettings(output=test_filename),
+        term_settings=TerminateTestSettings(time=1.0),
     )
 
     system = DownsampleSystem(settings)
@@ -112,15 +98,14 @@ def test_downsample_system(
 
     os.remove(test_filename)
 
-    ez.logger.info(f'Analyzing recording of { len( messages ) } messages...')
+    ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
     fs: Optional[float] = None
     dims: Optional[List[str]] = None
     data: List[np.ndarray] = []
     for msg in messages:
-
         # In this test, fs should change by factor
-        msg_fs = 1.0 / msg.axes['time'].gain
+        msg_fs = 1.0 / msg.axes["time"].gain
         if fs is None:
             fs = msg_fs
         assert fs == msg_fs
@@ -136,12 +121,12 @@ def test_downsample_system(
     assert fs is not None
     assert fs - (in_fs / factor) < 0.01
 
-    ez.logger.info('Consistent metadata!')
+    ez.logger.info("Consistent metadata!")
 
     # TODO: Write meaningful analyses of the recording to test functionality
 
-    ez.logger.info('Test Complete.')
+    ez.logger.info("Test Complete.")
 
 
-if __name__ == '__main__':
-    test_downsample_system(10, 2, test_name='test_window_system')
+if __name__ == "__main__":
+    test_downsample_system(10, 2, test_name="test_window_system")
