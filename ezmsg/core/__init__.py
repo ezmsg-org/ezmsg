@@ -19,8 +19,6 @@ __all__ = [
     "GraphServer",
     "GraphContext",
     "run_command",
-    "GRAPH",
-    "SHM",
 
     # All following are deprecated
     "System",
@@ -63,6 +61,3 @@ logger.addHandler(handler)
 
 LOGLEVEL = os.environ.get('EZMSG_LOGLEVEL', 'INFO').upper()
 logger.setLevel(LOGLEVEL)
-
-GRAPH = GraphService()
-SHM = SHMService()

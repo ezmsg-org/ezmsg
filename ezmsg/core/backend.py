@@ -7,8 +7,6 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
 
-import ezmsg.core as ez
-
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
@@ -40,6 +38,8 @@ class ExecutionContext:
     def __init__(
         self,
         processes: List[List[Unit]],
+        graph_service: GraphService,
+        shm_service: SHMService,
         connections: List[Tuple[str, str]] = [],
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
     ) -> None:
@@ -59,8 +59,8 @@ class ExecutionContext:
                 self.term_ev,
                 self.start_barrier,
                 self.stop_barrier,
-                ez.GRAPH.address,
-                ez.SHM.address
+                graph_service,
+                shm_service
             )
             for process_units in processes
         ]
@@ -69,6 +69,8 @@ class ExecutionContext:
     def setup(
         cls,
         component: Component,
+        graph_service: GraphService,
+        shm_service: SHMService,
         name: Optional[str] = None,
         connections: Optional[NetworkDefinition] = None,
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
@@ -126,7 +128,11 @@ class ExecutionContext:
 
         try:
             return cls(
-                processes, graph_connections, backend_process, 
+                processes, 
+                graph_service, 
+                shm_service, 
+                graph_connections, 
+                backend_process, 
             )
         except ValueError:
             return None
@@ -151,18 +157,20 @@ def run(
     force_single_process: bool = False,
 ) -> None:
     
-    ez.GRAPH = GraphService(graph_address)
-    ez.SHM = SHMService()
+    graph_service = GraphService(graph_address)
+    shm_service = SHMService()
 
     with new_threaded_event_loop() as loop:
 
         async def create_graph_context() -> GraphContext:
-            return await GraphContext().__aenter__()
+            return await GraphContext(graph_service, shm_service).__aenter__()
         
         graph_context = asyncio.run_coroutine_threadsafe(create_graph_context(), loop).result()
 
         execution_context = ExecutionContext.setup(
             component,
+            graph_service,
+            shm_service,
             name,
             connections,
             backend_process,

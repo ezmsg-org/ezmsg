@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import typing
 
 from dataclasses import dataclass, field
 from contextlib import contextmanager, suppress
@@ -18,10 +19,9 @@ from .netprotocol import (
     read_str,
     read_int,
     SHMSERVER_PORT_DEFAULT,
-    SHMSERVER_ADDR_ENV
+    SHMSERVER_ADDR_ENV,
+    AddressType
 )
-
-from typing import Generator, List, Dict, Set, Optional
 
 logger = logging.getLogger("ezmsg")
 
@@ -33,7 +33,7 @@ def _ignore_shm(name, rtype):
     return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
 
 @contextmanager
-def _untracked_shm() -> Generator[None, None, None]:
+def _untracked_shm() -> typing.Generator[None, None, None]:
     """ Disable SHM tracking within context - https://bugs.python.org/issue38119 """
     resource_tracker.register = _ignore_shm
     yield
@@ -62,7 +62,7 @@ class SHMContext:
     """
 
     _shm: SharedMemory
-    _data_block_segs: List[slice]
+    _data_block_segs: typing.List[slice]
 
     num_buffers: int
     buf_size: int
@@ -113,7 +113,7 @@ class SHMContext:
     @contextmanager
     def buffer(
         self, idx: int, readonly: bool = False
-    ) -> Generator[memoryview, None, None]:
+    ) -> typing.Generator[memoryview, None, None]:
         if self._shm.buf is None:
             raise BufferError(f"cannot access {self._shm.name}: SHMServer disconnected")
 
@@ -145,7 +145,7 @@ class SHMContext:
 @dataclass
 class SHMInfo:
     shm: SharedMemory
-    leases: Set["asyncio.Task[None]"] = field(default_factory=set)
+    leases: typing.Set["asyncio.Task[None]"] = field(default_factory=set)
 
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -171,7 +171,7 @@ class SHMInfo:
 
 class SHMServer(ThreadedAsyncServer):
     node: int
-    shms: Dict[str, SHMInfo]
+    shms: typing.Dict[str, SHMInfo]
 
     def __init__(self) -> None:
         super().__init__()
@@ -195,7 +195,7 @@ class SHMServer(ThreadedAsyncServer):
             if len(cmd) == 0:
                 return
 
-            info: Optional[SHMInfo] = None
+            info: typing.Optional[SHMInfo] = None
 
             if cmd == Command.SHM_CREATE.value:
                 num_buffers = await read_int(reader)
@@ -226,11 +226,13 @@ class SHMServer(ThreadedAsyncServer):
             await close_stream_writer(writer)
 
 
-class SHMService(ServiceManager):
+class SHMService(ServiceManager[SHMServer]):
 
     ADDR_ENV = SHMSERVER_ADDR_ENV
     PORT_DEFAULT = SHMSERVER_PORT_DEFAULT
-    SERVER_TYPE = SHMServer
+
+    def __init__(self, address: typing.Optional[AddressType] = None) -> None:
+        super().__init__(SHMServer, address)
 
     async def create( self, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE ) -> SHMContext:
         reader, writer = await self.open_connection()

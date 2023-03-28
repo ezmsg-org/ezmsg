@@ -9,10 +9,8 @@ from collections import defaultdict
 from uuid import uuid4
 from textwrap import indent
 
-import ezmsg.core as ez
-
-from .graphserver import GraphServer, GraphService
-from .shmserver import SHMServer, SHMService
+from .graphserver import GraphService
+from .shmserver import SHMService
 from .netprotocol import (
     Address,
     GRAPHSERVER_ADDR_ENV,
@@ -70,15 +68,15 @@ def cmdline() -> None:
 
 
 async def run_command(cmd: str, graph_address: Address, shm_address: Address) -> None:
-    ez.SHM = SHMService(shm_address)
-    ez.GRAPH = GraphService(graph_address)
+    shm_service = SHMService(shm_address)
+    graph_service = GraphService(graph_address)
 
     if cmd == "serve":
         logger.info(f"GraphServer Address: {graph_address}")
         logger.info(f'SHMServer Address: {shm_address}')
 
-        shm_server = ez.SHM.create_server()
-        graph_server = ez.GRAPH.create_server()
+        shm_server = shm_service.create_server()
+        graph_server = graph_service.create_server()
 
         try:
             logger.info('Servers running...')
@@ -101,9 +99,9 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
 
         while True:
             try:
-                reader, writer = await ez.GRAPH.open_connection()
+                reader, writer = await graph_service.open_connection()
                 await close_stream_writer(writer)
-                reader, writer = await ez.SHM.open_connection()
+                reader, writer = await shm_service.open_connection()
                 await close_stream_writer(writer)
                 break
             except ConnectionRefusedError:
@@ -113,7 +111,7 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
 
     elif cmd == "graphviz":
         try:
-            dag: DAG = await ez.GRAPH.dag()
+            dag: DAG = await graph_service.dag()
         except (ConnectionRefusedError, ConnectionResetError):
             logger.info(
                 f"GraphServer not running @{graph_address}, or host is refusing connections"

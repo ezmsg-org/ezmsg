@@ -5,11 +5,9 @@ import logging
 from uuid import UUID
 from contextlib import suppress
 
-import ezmsg.core as ez
-
 from .backpressure import Backpressure
-from .shmserver import SHMContext
-from .graphserver import GraphServer
+from .shmserver import SHMContext, SHMService
+from .graphserver import GraphService
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal, UndersizedMemory
 
@@ -56,6 +54,8 @@ class Publisher:
     _cache: Cache
     _force_tcp: bool
 
+    _shm_service: SHMService
+
     @staticmethod
     def client_type() -> bytes:
         return Command.PUBLISH.value
@@ -64,19 +64,21 @@ class Publisher:
     async def create(
         cls,
         topic: str,
+        graph_service: GraphService,
+        shm_service: SHMService,
         host: Optional[str] = None,
         port: Optional[int] = None,
         buf_size: int = DEFAULT_SHM_SIZE,
         **kwargs,
     ) -> "Publisher":
 
-        reader, writer = await ez.GRAPH.open_connection()
+        reader, writer = await graph_service.open_connection()
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
-        pub = cls(id, topic, **kwargs)
+        pub = cls(id, topic, shm_service, **kwargs)
         writer.write(uint64_to_bytes(pub.pid))
         writer.write(encode_str(pub.topic))
-        pub._shm = await ez.SHM.create(pub._num_buffers, buf_size)
+        pub._shm = await shm_service.create(pub._num_buffers, buf_size)
 
         start_port = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
         sock = create_socket(host, port, start_port=start_port)
@@ -108,6 +110,7 @@ class Publisher:
         self,
         id: UUID,
         topic: str,
+        shm_service: SHMService,
         num_buffers: int = 32,
         start_paused: bool = False,
         force_tcp: bool = False,
@@ -126,6 +129,8 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
         self._initialized = asyncio.Event()
+
+        self._shm_service = shm_service
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -265,7 +270,7 @@ class Publisher:
                         self._cache.push(self._msg_id, self._shm)
 
                     except UndersizedMemory as e:
-                        new_shm = await ez.SHM.create(
+                        new_shm = await self._shm_service.create(
                             self._num_buffers, e.req_size * 2
                         )
 
