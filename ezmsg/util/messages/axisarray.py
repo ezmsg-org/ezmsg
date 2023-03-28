@@ -27,7 +27,7 @@ class AxisArray:
             Specify fs in units of Hz (1.0/sec)
             NOTE: offset corresponds to idx[0] on this dimension!
             """
-            return cls(unit = 's', gain = 1.0 / fs, offset = time.time() if offset is None else offset)
+            return cls(unit = 's', gain = 1.0 / fs, offset = offset)
         
         def units(self, idx):
             return (idx * self.gain) + self.offset
@@ -53,8 +53,6 @@ class AxisArray:
             return self.axis.units(self.indices)
 
     def __post_init__(self):
-        self.data = np.array(self.data, ndmin=1)
-
         if len(self.dims) != self.data.ndim:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):

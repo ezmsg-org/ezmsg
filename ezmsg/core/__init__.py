@@ -35,7 +35,8 @@ from .unit import Unit, task, publisher, subscriber, main, timeit, process
 from .stream import InputStream, OutputStream
 from .backend import run
 from .backendprocess import Complete, NormalTermination
-from .graphserver import GraphServer
+from .graphserver import GraphServer, GraphService
+from .shmserver import SHMService
 from .graphcontext import GraphContext
 from .command import run_command
 
