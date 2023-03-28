@@ -62,7 +62,7 @@ class BackendProcess(Process):
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
         graph_service: GraphService,
-        shm_service: SHMService
+        shm_service: SHMService,
     ) -> None:
         super().__init__()
         self.units = units
@@ -86,11 +86,9 @@ class BackendProcess(Process):
 
 
 class DefaultBackendProcess(BackendProcess):
-
     pubs: Dict[str, Publisher]
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
-
         main_func = None
         context = GraphContext(self.graph_service, self.shm_service)
         coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
@@ -104,11 +102,16 @@ class DefaultBackendProcess(BackendProcess):
 
             asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
 
-            main_funcs = [(unit, unit.main) for unit in self.units if unit.main is not None]
+            main_funcs = [
+                (unit, unit.main) for unit in self.units if unit.main is not None
+            ]
 
             if len(main_funcs) > 1:
                 details = "".join(
-                    [f"\t* {unit.name}:{main_fn.__name__}\n" for unit, main_fn in main_funcs]
+                    [
+                        f"\t* {unit.name}:{main_fn.__name__}\n"
+                        for unit, main_fn in main_funcs
+                    ]
                 )
                 suggestion = f"Use a Collection and define process_components to separate these units."
                 raise Exception(
@@ -123,7 +126,6 @@ class DefaultBackendProcess(BackendProcess):
                 main_func = None
 
             for unit in self.units:
-
                 sub_callables: DefaultDict[
                     str, Set[Callable[..., Coroutine[Any, Any, None]]]
                 ] = defaultdict(set)
@@ -138,7 +140,6 @@ class DefaultBackendProcess(BackendProcess):
                         coro_callables[task_name] = task_callable
 
                 for stream in unit.streams.values():
-
                     if isinstance(stream, InputStream):
                         logger.debug(f"Creating Subscriber from {stream}")
                         sub = asyncio.run_coroutine_threadsafe(
@@ -165,8 +166,7 @@ class DefaultBackendProcess(BackendProcess):
                         ).result()
         except:
             self.start_barrier.abort()
-            logger.error(f'{traceback.format_exc()}')
-
+            logger.error(f"{traceback.format_exc()}")
 
         try:
             logger.debug("Waiting at start barrier!")
@@ -212,10 +212,9 @@ class DefaultBackendProcess(BackendProcess):
                     pass
 
         except threading.BrokenBarrierError:
-            logger.info('Process exiting due to error on startup')
+            logger.info("Process exiting due to error on startup")
 
         finally:
-
             # This stop barrier prevents publishers/subscribers
             # from getting destroyed before all other processes have
             # drained communication channels
@@ -268,7 +267,6 @@ class DefaultBackendProcess(BackendProcess):
     def task_wrapper(
         self, unit: Unit, task: Callable
     ) -> Callable[..., Coroutine[Any, Any, None]]:
-
         task_address = f"{unit.address}:{task.__name__}"
 
         async def publish(stream: Stream, obj: Any) -> None:
@@ -288,7 +286,6 @@ class DefaultBackendProcess(BackendProcess):
 
         @wraps(task)
         async def wrapped_task(msg: Any = None) -> None:
-
             try:
                 # If we don't sub or pub anything, we are a simple task
                 if not hasattr(task, SUBSCRIBES_ATTR) and not hasattr(
@@ -364,7 +361,6 @@ def run_loop(loop: asyncio.AbstractEventLoop):
 def new_threaded_event_loop(
     ev: Optional[threading.Event] = None,
 ) -> Generator[asyncio.AbstractEventLoop, None, None]:
-
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=run_loop, name="TaskThread", args=(loop,))
     thread.start()

@@ -14,33 +14,36 @@ try:
 except ImportError:
     np = None
 
-TYPE = '_type'
-NDARRAY_TYPE = '_ndarray'
-NDARRAY_DTYPE = 'dtype'
-NDARRAY_SHAPE = 'shape'
-NDARRAY_DATA = 'data'
+TYPE = "_type"
+NDARRAY_TYPE = "_ndarray"
+NDARRAY_DTYPE = "dtype"
+NDARRAY_SHAPE = "shape"
+NDARRAY_DATA = "data"
+
 
 def type_str(obj: Any) -> str:
     t = type(obj)
-    name = getattr(t, '__qualname__', t.__name__)
-    return f'{t.__module__}:{name}'
+    name = getattr(t, "__qualname__", t.__name__)
+    return f"{t.__module__}:{name}"
+
 
 def import_type(typestr: str) -> type:
-    module, name = typestr.split(':')
+    module, name = typestr.split(":")
     module = importlib.import_module(module)
-    ty = reduce(lambda t, n: getattr(t, n), [module] + name.split('.'))
+    ty = reduce(lambda t, n: getattr(t, n), [module] + name.split("."))
 
     if not isinstance(ty, type):
         raise ImportError(f"{typestr} does not resolve to type")
 
     return ty
 
+
 class MessageEncoder(json.JSONEncoder):
     def default(self, obj: Any):
         if is_dataclass(obj):
-            return { 
-                **{f.name: getattr(obj, f.name) for f in fields(obj)}, 
-                **{TYPE: type_str(obj)}
+            return {
+                **{f.name: getattr(obj, f.name) for f in fields(obj)},
+                **{TYPE: type_str(obj)},
             }
 
         elif np and isinstance(obj, np.ndarray):
@@ -49,10 +52,10 @@ class MessageEncoder(json.JSONEncoder):
             return {
                 TYPE: NDARRAY_TYPE,
                 NDARRAY_DTYPE: str(obj.dtype),
-                NDARRAY_DATA: buf.decode('ascii'),
-                NDARRAY_SHAPE: obj.shape
+                NDARRAY_DATA: buf.decode("ascii"),
+                NDARRAY_SHAPE: obj.shape,
             }
-        
+
         return json.JSONEncoder.default(self, obj)
 
 
@@ -72,22 +75,23 @@ class MessageDecoder(json.JSONDecoder):
             data_dtype: Optional[npt.DTypeLike] = obj.get(NDARRAY_DTYPE)
 
             if (
-                isinstance(data_bytes, str) and \
-                data_shape is not None and \
-                data_dtype is not None
+                isinstance(data_bytes, str)
+                and data_shape is not None
+                and data_dtype is not None
             ):
-                buf = base64.b64decode(data_bytes.encode('ascii'))
-                return np.frombuffer(buf, dtype = data_dtype).reshape(data_shape)
-            
+                buf = base64.b64decode(data_bytes.encode("ascii"))
+                return np.frombuffer(buf, dtype=data_dtype).reshape(data_shape)
+
         else:
             cls = import_type(obj_type)
             del obj[TYPE]
             return cls(**obj)
 
         return obj
-    
+
+
 def message_log(fname: Path) -> Generator[Any, None, None]:
-    with open(fname, 'r') as f:
+    with open(fname, "r") as f:
         for l in f:
-            obj = json.loads(l, cls = MessageDecoder)
+            obj = json.loads(l, cls=MessageDecoder)
             yield obj

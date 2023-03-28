@@ -11,10 +11,10 @@ from asyncio.base_events import Server
 
 VERSION = b"1"
 UINT64_SIZE = 8
-DEFAULT_SHM_SIZE = 2 ** 16
+DEFAULT_SHM_SIZE = 2**16
 BYTEORDER = "little"
 
-DEFAULT_HOST = '127.0.0.1'
+DEFAULT_HOST = "127.0.0.1"
 
 GRAPHSERVER_ADDR_ENV = "EZMSG_GRAPHSERVER_ADDR"
 GRAPHSERVER_PORT_DEFAULT = 25978
@@ -29,6 +29,7 @@ SERVER_PORT_START_DEFAULT = 10000
 
 PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
+
 
 class Address(typing.NamedTuple):
     host: str
@@ -169,14 +170,14 @@ class Command(enum.Enum):
 
     SHUTDOWN = enum.auto()
 
+
 def create_socket(
     host: typing.Optional[str] = None,
     port: typing.Optional[int] = None,
     start_port: int = 0,
     max_port: int = 65535,
-    ignore_ports: typing.List[int] = RESERVED_PORTS
+    ignore_ports: typing.List[int] = RESERVED_PORTS,
 ) -> socket.socket:
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     if host is None:
