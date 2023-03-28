@@ -18,9 +18,11 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
+from .graphserver import GraphService
+from .shmserver import SHMService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .netprotocol import AddressType
+from .netprotocol import Address
 
 from typing import (
     List,
@@ -50,22 +52,25 @@ class BackendProcess(Process):
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
-    graph_address: AddressType
+    graph_service: GraphService
+    shm_service: SHMService
 
     def __init__(
         self,
-        graph_address: AddressType,
         units: List[Unit],
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
+        graph_service: GraphService,
+        shm_service: SHMService
     ) -> None:
         super().__init__()
         self.units = units
         self.term_ev = term_ev
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
-        self.graph_address = graph_address
+        self.graph_service = graph_service
+        self.shm_service = shm_service
         self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
@@ -87,7 +92,7 @@ class DefaultBackendProcess(BackendProcess):
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
 
         main_func = None
-        context = GraphContext(self.graph_address)
+        context = GraphContext(self.graph_service, self.shm_service)
         coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
 
         try:
