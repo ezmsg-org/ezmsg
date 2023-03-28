@@ -11,8 +11,10 @@ from typing import Any, AsyncGenerator, Any, List
 from .messagecodec import MessageDecoder
 from .terminate import TerminateOnTotal
 
+
 class MessageReplaySettings(ez.Settings):
     filename: Path
+
 
 class MessageReplay(ez.Unit):
     SETTINGS: MessageReplaySettings
@@ -25,25 +27,26 @@ class MessageReplay(ez.Unit):
     async def pub_messages(self) -> AsyncGenerator:
         total_msgs = 0
 
-        with open(self.SETTINGS.filename, 'r') as f:
+        with open(self.SETTINGS.filename, "r") as f:
             for msg_idx, line in enumerate(f):
-
                 try:
-                    obj = json.loads(line, cls = MessageDecoder)
+                    obj = json.loads(line, cls=MessageDecoder)
                 except json.JSONDecodeError:
-                    ez.logger.warning(f'Could not load message {msg_idx + 1} from {self.SETTINGS.filename}')
+                    ez.logger.warning(
+                        f"Could not load message {msg_idx + 1} from {self.SETTINGS.filename}"
+                    )
                     continue
 
                 total_msgs += 1
                 yield self.OUTPUT_MESSAGE, obj
 
-        ez.logger.info(f'Replayed {total_msgs} messages from {self.SETTINGS.filename}')
+        ez.logger.info(f"Replayed {total_msgs} messages from {self.SETTINGS.filename}")
         yield self.OUTPUT_TOTAL, total_msgs
         raise ez.Complete
-    
+
 
 class MessageCollectorState(ez.State):
-    messages: List[Any] = field(default_factory = list)
+    messages: List[Any] = field(default_factory=list)
 
 
 class MessageCollector(ez.Unit):
@@ -57,13 +60,14 @@ class MessageCollector(ez.Unit):
     async def on_message(self, msg: Any) -> AsyncGenerator:
         self.STATE.messages.append(msg)
         yield self.OUTPUT_MESSAGE, msg
-  
+
     @property
     def messages(self) -> List[Any]:
         return self.STATE.messages
-    
+
 
 MessageLoaderSettings = MessageReplaySettings
+
 
 class MessageLoader(ez.Collection):
     SETTINGS: MessageLoaderSettings
@@ -79,9 +83,9 @@ class MessageLoader(ez.Collection):
         return (
             (self.REPLAY.OUTPUT_MESSAGE, self.COLLECTOR.INPUT_MESSAGE),
             (self.COLLECTOR.OUTPUT_MESSAGE, self.TERM.INPUT_MESSAGE),
-            (self.REPLAY.OUTPUT_TOTAL, self.TERM.INPUT_TOTAL)
+            (self.REPLAY.OUTPUT_TOTAL, self.TERM.INPUT_TOTAL),
         )
-    
+
     @property
     def messages(self) -> List[Any]:
         return self.COLLECTOR.messages

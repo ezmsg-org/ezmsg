@@ -2,13 +2,16 @@ import asyncio
 from typing import Any, AsyncGenerator
 import ezmsg.core as ez
 
+
 class MessageQueueSettings(ez.Settings):
     maxsize: int = 0
     leaky: bool = False
 
+
 class MessageQueueState(ez.State):
     msg_queue: asyncio.Queue
     leaky: bool
+
 
 class MessageQueue(ez.Unit):
     SETTINGS: MessageQueueSettings
@@ -20,14 +23,18 @@ class MessageQueue(ez.Unit):
     def initialize(self):
         self.STATE.leaky = self.SETTINGS.leaky
         if self.SETTINGS.leaky is True and self.SETTINGS.maxsize <= 0:
-            ez.logger.warning("MessageQueue specified as leaky, but maxsize is not greater than 0. Queue will not leak.")
+            ez.logger.warning(
+                "MessageQueue specified as leaky, but maxsize is not greater than 0. Queue will not leak."
+            )
             self.STATE.leaky = False
         self.STATE.msg_queue = asyncio.Queue(self.SETTINGS.maxsize)
 
     @ez.task
     async def monitor_queue_size(self) -> None:
         while True:
-            ez.logger.debug(f"MessageQueue has {self.STATE.msg_queue.qsize()} messages queued.")
+            ez.logger.debug(
+                f"MessageQueue has {self.STATE.msg_queue.qsize()} messages queued."
+            )
             await asyncio.sleep(1.0)
 
     @ez.subscriber(INPUT)

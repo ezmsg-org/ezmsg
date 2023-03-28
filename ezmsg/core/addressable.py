@@ -1,10 +1,9 @@
 from typing import List, Optional
 
-SEPARATOR = '/'
+SEPARATOR = "/"
 
 
 class Addressable:
-
     _name: Optional[str]
     _location: Optional[List[str]]
 
@@ -38,4 +37,4 @@ class Addressable:
 
     @property
     def address(self) -> str:
-        return '/'.join(self.location + [self.name])
+        return "/".join(self.location + [self.name])

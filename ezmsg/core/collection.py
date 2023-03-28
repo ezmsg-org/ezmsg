@@ -4,14 +4,7 @@ from .stream import Stream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    Tuple,
-    Optional,
-    Union
-)
+from typing import Any, Dict, Iterable, Tuple, Optional, Union
 
 
 NetworkDefinition = Iterable[Tuple[Union[Stream, str], Union[Stream, str]]]
@@ -21,7 +14,6 @@ class CollectionMeta(ComponentMeta):
     def __init__(
         cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
     ) -> None:
-
         super(CollectionMeta, cls).__init__(name, bases, fields)
 
         cls.__components__ = {}

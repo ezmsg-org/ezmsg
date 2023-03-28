@@ -47,7 +47,6 @@ class Rate(object):
         return self._remaining(curr_time)
 
     async def sleep(self):
-
         curr_time = time.time()
         timeRemaining = self._remaining(curr_time)
 
