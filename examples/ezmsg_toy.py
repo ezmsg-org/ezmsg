@@ -8,6 +8,7 @@ from typing import AsyncGenerator, Optional
 import ezmsg.core as ez
 from ezmsg.testing.lfo import LFO, LFOSettings
 
+
 # MESSAGE DEFINITIONS
 @dataclass
 class CombinedMessage:
@@ -19,8 +20,8 @@ class CombinedMessage:
 class MessageGeneratorSettings(ez.Settings):
     message: str
 
-class MessageGenerator(ez.Unit):
 
+class MessageGenerator(ez.Unit):
     SETTINGS: MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(str)
@@ -44,7 +45,6 @@ class DebugOutputSettings(ez.Settings):
 
 
 class DebugOutput(ez.Unit):
-
     SETTINGS: DebugOutputSettings
 
     INPUT = ez.InputStream(str)
@@ -124,8 +124,8 @@ class ModifierCollection(ez.Collection):
 class TestSystemSettings(ez.Settings):
     name: str
 
-class TestSystem(ez.Collection):
 
+class TestSystem(ez.Collection):
     SETTINGS: TestSystemSettings
 
     # Publishers
@@ -161,7 +161,6 @@ class TestSystem(ez.Collection):
 
 
 if __name__ == "__main__":
-
     # import multiprocessing as mp
     # mp.set_start_method( 'fork', force = True )
 
