@@ -26,13 +26,10 @@ class WindowSystemSettings(ez.Settings):
     counter_settings: CounterSettings
     window_settings: WindowSettings
     log_settings: MessageLoggerSettings
-    term_settings: TerminateTestSettings = field(
-        default_factory=TerminateTestSettings
-    )
+    term_settings: TerminateTestSettings = field(default_factory=TerminateTestSettings)
 
 
 class WindowSystem(ez.System):
-
     COUNTER = Counter()
     GATE = MessageGate()
     WIN = Window()
@@ -49,7 +46,7 @@ class WindowSystem(ez.System):
             MessageGateSettings(
                 start_open=True,
                 default_open=False,
-                default_after=self.SETTINGS.num_msgs
+                default_after=self.SETTINGS.num_msgs,
             )
         )
         self.WIN.apply_settings(self.SETTINGS.window_settings)
@@ -66,7 +63,6 @@ class WindowSystem(ez.System):
             # ( self.WIN.OUTPUT_SIGNAL, self.DEBUG.INPUT ),
             (self.LOG.OUTPUT_MESSAGE, self.TERM.INPUT),
             # ( self.LOG.OUTPUT_MESSAGE, self.DEBUG.INPUT ),
-
         )
 
 
@@ -77,9 +73,8 @@ def test_window_system(
     block_size: int,
     win_dur: float,
     win_shift: Optional[float],
-    test_name: Optional[str] = None
+    test_name: Optional[str] = None,
 ):
-
     in_fs = 10.0  # Hz
     num_msgs = int((in_fs / block_size) * 4.0)  # Ensure 4 seconds of data
 
@@ -89,20 +84,11 @@ def test_window_system(
     settings = WindowSystemSettings(
         num_msgs=num_msgs,
         counter_settings=CounterSettings(
-            n_time=block_size,
-            fs=in_fs,
-            dispatch_rate=20.0
+            n_time=block_size, fs=in_fs, dispatch_rate=20.0
         ),
-        window_settings=WindowSettings(
-            window_dur=win_dur,
-            window_shift=win_shift
-        ),
-        log_settings=MessageLoggerSettings(
-            output=test_filename
-        ),
-        term_settings=TerminateTestSettings(
-            time=1.0  # sec
-        )
+        window_settings=WindowSettings(window_dur=win_dur, window_shift=win_shift),
+        log_settings=MessageLoggerSettings(output=test_filename),
+        term_settings=TerminateTestSettings(time=1.0),  # sec
     )
 
     system = WindowSystem(settings)
@@ -116,15 +102,14 @@ def test_window_system(
 
     os.remove(test_filename)
 
-    ez.logger.info(f'Analyzing recording of { len( messages ) } messages...')
+    ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
     fs: Optional[float] = None
     dims: Optional[List[str]] = None
     data: List[np.ndarray] = []
     for msg in messages:
-
         # In this test, fs should never change
-        msg_fs = 1.0 / msg.axes['time'].gain
+        msg_fs = 1.0 / msg.axes["time"].gain
         if fs is None:
             fs = msg_fs
         assert fs == msg_fs
@@ -140,15 +125,15 @@ def test_window_system(
         # Window should always output the same shape data
         assert data[0].shape == msg.shape
 
-    ez.logger.info('Consistent metadata!')
+    ez.logger.info("Consistent metadata!")
 
     # If this test was performed in "one-to-one" mode, we should
     # have one window output per message pushed to Window
     if win_shift is None:
         assert len(data) == num_msgs
 
-    ez.logger.info('Test Complete.')
+    ez.logger.info("Test Complete.")
 
 
-if __name__ == '__main__':
-    test_window_system(5, 0.6, None, test_name='test_window_system')
+if __name__ == "__main__":
+    test_window_system(5, 0.6, None, test_name="test_window_system")
