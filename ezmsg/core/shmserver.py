@@ -20,21 +20,23 @@ from .netprotocol import (
     read_int,
     SHMSERVER_PORT_DEFAULT,
     SHMSERVER_ADDR_ENV,
-    AddressType
+    AddressType,
 )
 
 logger = logging.getLogger("ezmsg")
 
 _std_register = resource_tracker.register
 
+
 def _ignore_shm(name, rtype):
     if rtype == "shared_memory":
         return
     return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
 
+
 @contextmanager
 def _untracked_shm() -> typing.Generator[None, None, None]:
-    """ Disable SHM tracking within context - https://bugs.python.org/issue38119 """
+    """Disable SHM tracking within context - https://bugs.python.org/issue38119"""
     resource_tracker.register = _ignore_shm
     yield
     resource_tracker.register = _std_register
@@ -70,7 +72,6 @@ class SHMContext:
     monitor: asyncio.Future
 
     def __init__(self, name: str) -> None:
-
         with _untracked_shm():
             self._shm = SharedMemory(name=name, create=False)
 
@@ -189,7 +190,6 @@ class SHMServer(ThreadedAsyncServer):
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-
         try:
             cmd = await reader.read(1)
             if len(cmd) == 0:
@@ -227,14 +227,15 @@ class SHMServer(ThreadedAsyncServer):
 
 
 class SHMService(ServiceManager[SHMServer]):
-
     ADDR_ENV = SHMSERVER_ADDR_ENV
     PORT_DEFAULT = SHMSERVER_PORT_DEFAULT
 
     def __init__(self, address: typing.Optional[AddressType] = None) -> None:
         super().__init__(SHMServer, address)
 
-    async def create( self, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE ) -> SHMContext:
+    async def create(
+        self, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE
+    ) -> SHMContext:
         reader, writer = await self.open_connection()
         writer.write(Command.SHM_CREATE.value)
         writer.write(uint64_to_bytes(num_buffers))
@@ -260,4 +261,3 @@ class SHMService(ServiceManager[SHMServer]):
 
         shm_name = await read_str(reader)
         return SHMContext._create(shm_name, reader, writer)
-    

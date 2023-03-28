@@ -17,7 +17,6 @@ class StateMeta(ABCMeta):
         classdict: Dict[str, Any],
         **kwargs: Any
     ) -> Type["State"]:
-
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(unsafe_hash=True, frozen=False, init=False)(new_cls)  # type: ignore
 
