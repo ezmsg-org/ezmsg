@@ -4,8 +4,9 @@ from uuid import UUID
 
 from typing import Set, Literal, List, Optional
 
+
 class BufferLease:
-    leases: Set[UUID] 
+    leases: Set[UUID]
     empty: asyncio.Event
 
     def __init__(self) -> None:

@@ -3,8 +3,8 @@ import array
 from dataclasses import dataclass
 import ezmsg.core as ez
 
-from ezmsg.testing.debuglog import DebugLog, DebugLogSettings
-from ezmsg.testing.terminate import TerminateTest
+from ezmsg.util.debuglog import DebugLog, DebugLogSettings
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
 
 from typing import AsyncGenerator
 
@@ -20,7 +20,6 @@ class CountSettings(ez.Settings):
 
 
 class Count(ez.Unit):
-
     SETTINGS: CountSettings
 
     OUTPUT = ez.OutputStream(int)
@@ -31,8 +30,7 @@ class Count(ez.Unit):
         while True:
             await asyncio.sleep(0.1)
             yield self.OUTPUT, CountMessage(
-                value=count,
-                arr=array.array('b', [0x00] * (2 ** count))
+                value=count, arr=array.array("b", [0x00] * (2**count))
             )
             count = count + 1
 
@@ -41,12 +39,11 @@ class Count(ez.Unit):
 
 
 class CountSystem(ez.System):
-
     COUNT = Count()
     TERM = TerminateTest()
 
-    SUB1 = DebugLog(DebugLogSettings(name='SUB1'))
-    SUB2 = DebugLog(DebugLogSettings(name='SUB2'))
+    SUB1 = DebugLog(DebugLogSettings(name="SUB1"))
+    SUB2 = DebugLog(DebugLogSettings(name="SUB2"))
 
     def network(self) -> ez.NetworkDefinition:
         return (
@@ -59,8 +56,7 @@ class CountSystem(ez.System):
         return (self.COUNT, self.SUB1, self.SUB2)
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     # import multiprocessing
     # multiprocessing.set_start_method('spawn', force=True)
 

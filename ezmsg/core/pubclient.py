@@ -1,37 +1,42 @@
 import os
 import asyncio
 import logging
-import socket
+import time
 
 from uuid import UUID
 from contextlib import suppress
 
 from .backpressure import Backpressure
-from .shmserver import SHMContext
-from .graphserver import GraphServer
+from .shmserver import SHMContext, SHMService
+from .graphserver import GraphService
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal, UndersizedMemory
 
 from .netprotocol import (
     Address,
-    AddressType,
     uint64_to_bytes,
     read_int,
     read_str,
     encode_str,
+    close_stream_writer,
+    close_server,
     Command,
     SubscriberInfo,
-    GRAPHSERVER_ADDR,
+    create_socket,
     DEFAULT_SHM_SIZE,
-    PUBLISHER_START_PORT,
+    PUBLISHER_START_PORT_ENV,
+    PUBLISHER_START_PORT_DEFAULT,
 )
 
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
+
+BACKPRESSURE_WARNING = not ("EZMSG_DISABLE_BACKPRESSURE_WARNING" in os.environ)
+BACKPRESSURE_REFRACTORY = 5.0 # sec
+
 
 class Publisher:
-
     id: UUID
     pid: int
     topic: str
@@ -49,6 +54,9 @@ class Publisher:
     _shm: SHMContext
     _cache: Cache
     _force_tcp: bool
+    _last_backpressure_event: float
+
+    _shm_service: SHMService
 
     @staticmethod
     def client_type() -> bytes:
@@ -56,38 +64,44 @@ class Publisher:
 
     @classmethod
     async def create(
-        cls, 
-        topic: str, 
-        address: AddressType = GRAPHSERVER_ADDR, 
+        cls,
+        topic: str,
+        graph_service: GraphService,
+        shm_service: SHMService,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        buf_size: int = DEFAULT_SHM_SIZE, 
-        **kwargs
+        buf_size: int = DEFAULT_SHM_SIZE,
+        **kwargs,
     ) -> "Publisher":
-
-        reader, writer = await GraphServer.open(address)
+        reader, writer = await graph_service.open_connection()
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
-        pub = cls(id, topic, **kwargs)
+        pub = cls(id, topic, shm_service, **kwargs)
         writer.write(uint64_to_bytes(pub.pid))
         writer.write(encode_str(pub.topic))
-        pub._shm = await SHMContext.create(pub._num_buffers, buf_size)
-        
-        server = await asyncio.start_server(pub._on_connection, sock=_create_socket(host, port))
-        pub._address = Address(*server.sockets[0].getsockname())
+        pub._shm = await shm_service.create(pub._num_buffers, buf_size)
+
+        start_port = int(
+            os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
+        )
+        sock = create_socket(host, port, start_port=start_port)
+        server = await asyncio.start_server(pub._on_connection, sock=sock)
+        pub._address = Address(*sock.getsockname())
         pub._address.to_stream(writer)
         pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
 
         async def serve() -> None:
             try:
                 await server.serve_forever()
-            except asyncio.CancelledError: #FIXME: Poor form?
-                pass
+            except asyncio.CancelledError:  # FIXME: Poor form?
+                logger.debug("pubclient serve is Cancelled...")
+            finally:
+                await close_server(server)
 
-        pub._connection_task = asyncio.create_task(serve(), name=f'pub_{str(id)}')
+        pub._connection_task = asyncio.create_task(serve(), name=f"pub_{str(id)}")
 
         def on_done(_: asyncio.Future) -> None:
-            server.close()
+            logger.debug("Closing pub server task.")
 
         pub._connection_task.add_done_callback(on_done)
         pub._cache = Cache(pub._num_buffers)
@@ -96,12 +110,13 @@ class Publisher:
         return pub
 
     def __init__(
-        self, 
-        id: UUID, 
-        topic: str, 
-        num_buffers: int = 32, 
-        start_paused: bool = False, 
-        force_tcp: bool = False
+        self,
+        id: UUID,
+        topic: str,
+        shm_service: SHMService,
+        num_buffers: int = 32,
+        start_paused: bool = False,
+        force_tcp: bool = False,
     ) -> None:
         self.id = id
         self.pid = os.getpid()
@@ -117,6 +132,9 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
         self._initialized = asyncio.Event()
+        self._last_backpressure_event = -1
+
+        self._shm_service = shm_service
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -135,8 +153,9 @@ class Publisher:
             with suppress(asyncio.CancelledError):
                 await task
 
-    async def _graph_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-
+    async def _graph_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             while True:
                 cmd = await reader.read(1)
@@ -157,17 +176,21 @@ class Publisher:
                     writer.write(Command.COMPLETE.value)
 
                 else:
-                    logger.warn(f'Publisher {self.id} rx unknown command from GraphServer {cmd}')
-                
+                    logger.warn(
+                        f"Publisher {self.id} rx unknown command from GraphServer {cmd}"
+                    )
+
                 await writer.drain()
-            
+
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f'Publisher {self.id} lost connection to graph server')
+            logger.debug(f"Publisher {self.id} lost connection to graph server")
 
         finally:
-            writer.close()
+            await close_stream_writer(writer)
 
-    async def _on_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _on_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         id_str = await read_str(reader)
         id = UUID(id_str)
         pid = await read_int(reader)
@@ -184,8 +207,9 @@ class Publisher:
 
         await writer.drain()
 
-    async def _handle_subscriber(self, info: SubscriberInfo, reader: asyncio.StreamReader) -> None:
-
+    async def _handle_subscriber(
+        self, info: SubscriberInfo, reader: asyncio.StreamReader
+    ) -> None:
         self._subscribers[info.id] = info
 
         try:
@@ -194,20 +218,21 @@ class Publisher:
 
                 if len(msg) == 0:
                     break
-                   
+
                 elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
 
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f'Publisher {self.id}: Subscriber {id} connection fail')
+            logger.debug(f"Publisher {self.id}: Subscriber {id} connection fail")
 
         finally:
             self._backpressure.free(info.id)
+            await close_stream_writer(self._subscribers[info.id].writer)
             del self._subscribers[info.id]
 
     async def sync(self) -> None:
-        """ Pause and drain backpressure """
+        """Pause and drain backpressure"""
         self._running.clear()
         await self._backpressure.sync()
 
@@ -222,21 +247,22 @@ class Publisher:
         self._running.set()
 
     async def broadcast(self, obj: Any) -> None:
-
         await self._running.wait()
 
         buf_idx = self._msg_id % self._num_buffers
         msg_id_bytes = uint64_to_bytes(self._msg_id)
 
         if not self._backpressure.available(buf_idx):
-            logger.warning(f'{self.topic} under subscriber backpressure!')
+            delta = time.time() - self._last_backpressure_event
+            if BACKPRESSURE_WARNING and (delta > BACKPRESSURE_REFRACTORY):
+                logger.warning(f"{self.topic} under subscriber backpressure!")
+            self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
         self._cache.put(self._msg_id, obj)
 
         for sub in list(self._subscribers.values()):
             if not self._force_tcp and sub.id.node == self.id.node:
-
                 if sub.pid == self.pid:
                     sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
 
@@ -246,8 +272,10 @@ class Publisher:
                         self._cache.push(self._msg_id, self._shm)
 
                     except UndersizedMemory as e:
-                        new_shm = await SHMContext.create(self._num_buffers, e.req_size * 2)
-                        
+                        new_shm = await self._shm_service.create(
+                            self._num_buffers, e.req_size * 2
+                        )
+
                         for i in range(self._num_buffers):
                             with self._shm.buffer(i, readonly=True) as from_buf:
                                 with new_shm.buffer(i) as to_buf:
@@ -278,33 +306,9 @@ class Publisher:
                 self._backpressure.lease(sub.id, buf_idx)
 
             except (ConnectionResetError, BrokenPipeError):
-                logger.debug(f'Publisher {self.id}: Subscriber {sub.id} connection fail')
+                logger.debug(
+                    f"Publisher {self.id}: Subscriber {sub.id} connection fail"
+                )
                 continue
 
         self._msg_id += 1
-
-def _create_socket(
-    host: Optional[str] = None, 
-    port: Optional[int] = None, 
-    start_port: int = PUBLISHER_START_PORT, 
-    max_port: int = 65535
-) -> socket.socket:
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    if host is None:
-        host = '127.0.0.1'
-
-    if port is not None:
-        sock.bind((host,port))
-        return sock
-
-    port = start_port
-    while port <= max_port:
-        try:
-            sock.bind((host, port))
-            return sock
-        except OSError:
-            port += 1
-
-    raise IOError('Failed to bind socket; no free ports')

@@ -1,26 +1,22 @@
 import os
 import json
-import logging
 
 import pytest
 import numpy as np
 
 import ezmsg.core as ez
+from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
-from ezmsg.util.messagelogger import (
-    MessageDecoder,
-    MessageLogger,
-    MessageLoggerSettings,
-)
+from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
+from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.synth import WhiteNoise, WhiteNoiseSettings
 from ezmsg.sigproc.butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
-from ezmsg.testing import get_test_fn
-from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
+from util import get_test_fn
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
+from ezmsg.util.terminate import TerminateOnTimeoutSettings as TerminateTestSettings
 
-from typing import Optional
-
-logger = logging.getLogger('ezmsg')
+from typing import Optional, List
 
 
 class ButterworthSystemSettings(ez.Settings):
@@ -32,7 +28,6 @@ class ButterworthSystemSettings(ez.Settings):
 
 
 class ButterworthSystem(ez.System):
-
     NOISE = WhiteNoise()
     GATE = MessageGate()
     BUTTER = ButterworthFilter()
@@ -69,7 +64,6 @@ class ButterworthSystem(ez.System):
 def test_butterworth_system(
     cutoff: float, cuton: float, test_name: Optional[str] = None
 ):
-
     in_fs = 128.0
     block_size = 128
 
@@ -78,11 +72,13 @@ def test_butterworth_system(
     num_msgs = int((in_fs / block_size) * seconds_of_data)
 
     test_filename = get_test_fn(test_name)
-    logger.info(test_filename)
+    ez.logger.info(test_filename)
 
     settings = ButterworthSystemSettings(
         noise_settings=WhiteNoiseSettings(
-            n_time=block_size, fs=in_fs, dispatch_rate=None,
+            n_time=block_size,
+            fs=in_fs,
+            dispatch_rate=None,
         ),
         gate_settings=MessageGateSettings(
             start_open=True, default_open=False, default_after=num_msgs
@@ -96,27 +92,26 @@ def test_butterworth_system(
 
     ez.run_system(system)
 
-    messages = []
+    messages: List[AxisArray] = []
     with open(test_filename, "r") as file:
         for line in file:
             messages.append(json.loads(line, cls=MessageDecoder))
 
     os.remove(test_filename)
 
-    logger.info(f"Analyzing recording of { len( messages ) } messages...")
+    ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
-    data = np.concatenate([msg.get("data") for msg in messages], axis=0)
+    data = np.concatenate([msg.data for msg in messages], axis=0)
 
     # Assert that graph has correct values
     freqs = np.fft.fftfreq(data.size, d=(1 / in_fs))
     fft_vals = np.log10(np.abs(np.fft.fft(data, axis=0)))
     all_vals = list(zip(freqs, fft_vals))
 
-
     specs = settings.butter_settings.filter_specs()
     assert specs is not None
     btype, cut = specs
-    logger.info(f"Testing {btype}...")
+    ez.logger.info(f"Testing {btype}...")
 
     if btype == "lowpass":
         zeroed_values = [val[1] for val in all_vals if val[0] > cutoff]
@@ -141,7 +136,7 @@ def test_butterworth_system(
 
     assert np.mean(zeroed_values) < np.mean(white_values)
 
-    logger.info("Test Complete.")
+    ez.logger.info("Test Complete.")
 
 
 if __name__ == "__main__":

@@ -2,23 +2,22 @@ import ezmsg.core as ez
 
 import scipy.signal
 
+from ezmsg.util.messages.axisarray import AxisArray
+
 from .downsample import Downsample, DownsampleSettings
 from .filter import Filter, FilterCoefficients, FilterSettings
-from .messages import TSMessage as TimeSeriesMessage
 
 
 class Decimate(ez.Collection):
-
     SETTINGS: DownsampleSettings
 
-    INPUT_SIGNAL = ez.InputStream(TimeSeriesMessage)
-    OUTPUT_SIGNAL = ez.OutputStream(TimeSeriesMessage)
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     FILTER = Filter()
     DOWNSAMPLE = Downsample()
 
     def configure(self) -> None:
-
         self.DOWNSAMPLE.apply_settings(self.SETTINGS)
 
         if self.SETTINGS.factor < 1:
@@ -27,11 +26,9 @@ class Decimate(ez.Collection):
             filt = FilterCoefficients()
         else:
             # See scipy.signal.decimate for IIR Filter Condition
-            system = scipy.signal.dlti(
-                *scipy.signal.cheby1(8, 0.05, 0.8 / self.SETTINGS.factor)
-            )
-
-            filt = FilterCoefficients(b=system.num, a=system.den)
+            b, a = scipy.signal.cheby1(8, 0.05, 0.8 / self.SETTINGS.factor)
+            system = scipy.signal.dlti(b, a)
+            filt = FilterCoefficients(b=system.num, a=system.den)  # type: ignore
 
         self.FILTER.apply_settings(FilterSettings(filt=filt))
 
