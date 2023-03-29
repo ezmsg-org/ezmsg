@@ -164,13 +164,6 @@ def run(
 
     with new_threaded_event_loop() as loop:
 
-        async def create_graph_context() -> GraphContext:
-            return await GraphContext(graph_service, shm_service).__aenter__()
-
-        graph_context = asyncio.run_coroutine_threadsafe(
-            create_graph_context(), loop
-        ).result()
-
         execution_context = ExecutionContext.setup(
             components,
             graph_service,
@@ -183,13 +176,20 @@ def run(
 
         if execution_context is None:
             return
+        
+        async def create_graph_context() -> GraphContext:
+            return await GraphContext(graph_service, shm_service).__aenter__()
+        
+        async def cleanup_graph(context: GraphContext) -> None:
+            await context.__aexit__(None, None, None)
+
+        graph_context = asyncio.run_coroutine_threadsafe(
+            create_graph_context(), loop
+        ).result()
 
         async def setup_graph() -> None:
             for edge in execution_context.connections:
                 await graph_context.connect(*edge)
-
-        async def cleanup_graph(context: GraphContext) -> None:
-            await context.__aexit__(None, None, None)
 
         asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
 
