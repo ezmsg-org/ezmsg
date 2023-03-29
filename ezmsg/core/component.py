@@ -1,6 +1,6 @@
 from abc import ABCMeta
 from copy import deepcopy
-from dataclasses import fields, MISSING
+from dataclasses import fields, MISSING, is_dataclass
 
 from .settings import Settings
 from .state import State
@@ -14,7 +14,6 @@ class ComponentMeta(ABCMeta):
     def __init__(
         cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
     ) -> None:
-
         super(ComponentMeta, cls).__init__(name, bases, fields)
 
         cls.__settings_type__ = Settings
@@ -73,14 +72,13 @@ class ComponentMeta(ABCMeta):
 
 
 class Component(Addressable, metaclass=ComponentMeta):
-
     SETTINGS: Settings
     STATE: State
 
     _tasks: Dict[str, Callable]  # Only Units will have tasks
     _streams: Dict[str, Stream]  # All Components can have streams
     _components: Dict[str, "Component"]  # Only Collections will have components
-    _main: Optional[Callable]
+    _main: Optional[Callable[..., None]]
     _threads: Dict[str, Callable]
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -112,14 +110,15 @@ class Component(Addressable, metaclass=ComponentMeta):
             self.apply_settings(settings)
 
     def _instantiate_state(self) -> None:
-        if self.STATE is not None:
-            raise AssertionError
+        assert self.STATE is None
         self.STATE = self.__class__.__state_type__()
+        assert is_dataclass(self.STATE)
         for field in fields(self.STATE):
             if field.default_factory is not MISSING and field.default is MISSING:
                 setattr(self.STATE, field.name, field.default_factory())
 
     def _check_state(self) -> None:
+        assert is_dataclass(self.STATE.__class__)
         for field in fields(self.STATE.__class__):
             if not hasattr(self.STATE, field.name):
                 raise AttributeError(
@@ -152,7 +151,7 @@ class Component(Addressable, metaclass=ComponentMeta):
         return self._components
 
     @property
-    def main(self) -> Optional[Callable]:
+    def main(self) -> Optional[Callable[..., None]]:
         return self._main
 
     @property

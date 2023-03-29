@@ -1,34 +1,50 @@
 import asyncio
 import time
-import logging
+import math
 
 from dataclasses import dataclass
 
 from typing import AsyncGenerator, Optional
 
 import ezmsg.core as ez
-from ezmsg.testing.lfo import LFO, LFOSettings
 
-logger = logging.getLogger('ezmsg')
 
 # MESSAGE DEFINITIONS
-
-
 @dataclass
 class CombinedMessage:
     string: str
     number: float
 
 
+# LFO: Low Frequency Oscillator
+
+class LFOSettings(ez.Settings):
+    freq: float = 0.2  # Hz, sinus frequency
+    update_rate: float = 2.0  # Hz, update rate
+
+
+class LFO(ez.Unit):
+    SETTINGS: LFOSettings
+
+    OUTPUT = ez.OutputStream(float)
+
+    def initialize(self) -> None:
+        self.start_time = time.time()
+
+    @ez.publisher(OUTPUT)
+    async def generate(self) -> AsyncGenerator:
+        while True:
+            t = time.time() - self.start_time
+            yield self.OUTPUT, math.sin(2.0 * math.pi * self.SETTINGS.freq * t)
+            await asyncio.sleep(1.0 / self.SETTINGS.update_rate)
+
+
 # MESSAGE GENERATOR
-
-
 class MessageGeneratorSettings(ez.Settings):
     message: str
 
 
 class MessageGenerator(ez.Unit):
-
     SETTINGS: MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(str)
@@ -37,7 +53,7 @@ class MessageGenerator(ez.Unit):
     async def spawn_message(self) -> AsyncGenerator:
         while True:
             await asyncio.sleep(1.0)
-            logger.info(f"Spawning {self.SETTINGS.message}")
+            ez.logger.info(f"Spawning {self.SETTINGS.message}")
             yield self.OUTPUT, self.SETTINGS.message
 
     @ez.publisher(OUTPUT)
@@ -52,14 +68,13 @@ class DebugOutputSettings(ez.Settings):
 
 
 class DebugOutput(ez.Unit):
-
     SETTINGS: DebugOutputSettings
 
     INPUT = ez.InputStream(str)
 
     @ez.subscriber(INPUT)
     async def on_message(self, message: str) -> None:
-        logger.info(f"Output[{self.SETTINGS.name}]: {message}")
+        ez.logger.info(f"Output[{self.SETTINGS.name}]: {message}")
 
 
 # MESSAGE MODIFIER
@@ -99,7 +114,7 @@ class MessageModifier(ez.Unit):
     @ez.main
     def blocking_main(self) -> None:
         for i in range(10):
-            logger.info(i)
+            ez.logger.info(i)
             time.sleep(1.0)
 
 
@@ -129,14 +144,11 @@ class ModifierCollection(ez.Collection):
 
 
 # Define and configure a system of modules to launch
-
-
 class TestSystemSettings(ez.Settings):
     name: str
 
 
-class TestSystem(ez.System):
-
+class TestSystem(ez.Collection):
     SETTINGS: TestSystemSettings
 
     # Publishers
@@ -167,13 +179,15 @@ class TestSystem(ez.System):
             (self.PING.OUTPUT, self.FOOSUB.INPUT),
         )
 
+    def process_components(self):
+        return (self.PING, self.FOOSUB, self.MODIFIER_COLLECTION, self.PINGSUB1)
 
-if __name__ == '__main__':
 
+if __name__ == "__main__":
     # import multiprocessing as mp
     # mp.set_start_method( 'fork', force = True )
 
-    system = TestSystem(TestSystemSettings(name='A'))
+    system = TestSystem(TestSystemSettings(name="A"))
 
     ez.run_system(
         system,

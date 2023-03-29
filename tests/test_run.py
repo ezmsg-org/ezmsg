@@ -1,16 +1,14 @@
 import json
 import os
 import pytest
-import logging
+import tempfile
+
+from pathlib import Path
 from dataclasses import asdict, dataclass
 
 import ezmsg.core as ez
 
-from ezmsg.testing import get_test_fn
-
-from typing import AsyncGenerator
-
-logger = logging.getLogger(__name__)
+from typing import Optional, AsyncGenerator
 
 # MESSAGE DEFINITIONS
 
@@ -18,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SimpleMessage:
     number: float
+
 
 # MESSAGE GENERATOR
 
@@ -27,7 +26,6 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-
     SETTINGS: MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(SimpleMessage)
@@ -37,6 +35,7 @@ class MessageGenerator(ez.Unit):
         for i in range(self.SETTINGS.num_msgs):
             yield self.OUTPUT, SimpleMessage(i)
         raise ez.Complete
+
 
 # MESSAGE RECEIVER
 
@@ -58,12 +57,13 @@ class MessageReceiver(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def on_message(self, msg: SimpleMessage) -> None:
-        logger.info(f"Msg: {msg}")
+        ez.logger.info(f"Msg: {msg}")
         self.STATE.num_received += 1
         with open(self.SETTINGS.output_fn, "a") as output_file:
             output_file.write(json.dumps(asdict(msg)) + "\n")
         if self.STATE.num_received == self.SETTINGS.num_msgs:
             raise ez.Complete
+
 
 # Define and configure a system of modules to launch
 
@@ -74,7 +74,6 @@ class ToySystemSettings(ez.Settings):
 
 
 class ToySystem(ez.System):
-
     SETTINGS: ToySystemSettings
 
     # Publishers
@@ -85,41 +84,62 @@ class ToySystem(ez.System):
 
     def configure(self) -> None:
         self.SIMPLE_PUB.apply_settings(
-            MessageGeneratorSettings(
-                num_msgs=self.SETTINGS.num_msgs
-            ))
+            MessageGeneratorSettings(num_msgs=self.SETTINGS.num_msgs)
+        )
 
         self.SIMPLE_SUB.apply_settings(
             MessageReceiverSettings(
-                num_msgs=self.SETTINGS.num_msgs,
-                output_fn=self.SETTINGS.output_fn
-            ))
+                num_msgs=self.SETTINGS.num_msgs, output_fn=self.SETTINGS.output_fn
+            )
+        )
 
     # Define Connections
     def network(self) -> ez.NetworkDefinition:
-        return (
-            (self.SIMPLE_PUB.OUTPUT, self.SIMPLE_SUB.INPUT),
-        )
+        return ((self.SIMPLE_PUB.OUTPUT, self.SIMPLE_SUB.INPUT),)
 
 
-@pytest.fixture(params=[
-    (ToySystem,), (ToySystem.SIMPLE_PUB, ToySystem.SIMPLE_SUB,)
-])
+@pytest.fixture(
+    params=[
+        (ToySystem,),
+        (
+            ToySystem.SIMPLE_PUB,
+            ToySystem.SIMPLE_SUB,
+        ),
+    ]
+)
 def toy_system_fixture(request):
     def func(self):
         return request.param
+
     ToySystem.process_components = func
     return ToySystem
+
+def get_test_fn(test_name: Optional[str] = None, extension: str = "txt") -> Path:
+    """PYTEST compatible temporary test file creator"""
+
+    # Get current test name if we can..
+    if test_name is None:
+        test_name = os.environ.get("PYTEST_CURRENT_TEST")
+        if test_name is not None:
+            test_name = test_name.split(":")[-1].split(" ")[0]
+        else:
+            test_name = __name__
+
+    file_path = Path(tempfile.gettempdir())
+    file_path = file_path / Path(f"{test_name}.{extension}")
+
+    # Create the file
+    with open(file_path, "w"):
+        pass
+
+    return file_path
 
 
 @pytest.mark.parametrize("num_messages", [1, 5, 10])
 def test_local_system(toy_system_fixture, num_messages):
     test_filename = get_test_fn()
     system = toy_system_fixture(
-        ToySystemSettings(
-            num_msgs=num_messages,
-            output_fn=test_filename
-        )
+        ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
     ez.run_system(system)
 

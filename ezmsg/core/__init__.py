@@ -1,5 +1,4 @@
 __all__ = [
-    "__version__",
     "task",
     "publisher",
     "subscriber",
@@ -20,15 +19,13 @@ __all__ = [
     "GraphServer",
     "GraphContext",
     "run_command",
-
     # All following are deprecated
     "System",
     "run_system",
     "Message",
-    "Flag"
+    "Flag",
 ]
 
-from .__version__ import __version__
 from .component import Component
 from .state import State
 from .settings import Settings
@@ -37,7 +34,8 @@ from .unit import Unit, task, publisher, subscriber, main, timeit, process
 from .stream import InputStream, OutputStream
 from .backend import run
 from .backendprocess import Complete, NormalTermination
-from .graphserver import GraphServer
+from .graphserver import GraphServer, GraphService
+from .shmserver import SHMService
 from .graphcontext import GraphContext
 from .command import run_command
 
@@ -49,16 +47,16 @@ from .collection import Collection as System  # deprecated, backward compatibili
 import os
 import logging
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
 handler = logging.StreamHandler()
 formatter = logging.Formatter(
-    '%(asctime)s.%(msecs)03d - pid: %(process)d - %(threadName)s ' +
-    '- %(levelname)s - %(funcName)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
+    "%(asctime)s.%(msecs)03d - pid: %(process)d - %(threadName)s "
+    + "- %(levelname)s - %(funcName)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-LOGLEVEL = os.environ.get('EZMSG_LOGLEVEL', 'INFO').upper()
+LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "INFO").upper()
 logger.setLevel(LOGLEVEL)
