@@ -1,4 +1,3 @@
-
 import logging
 
 from uuid import UUID
@@ -9,13 +8,15 @@ from .messagemarshal import MessageMarshal, UninitializedMemory
 
 from typing import Dict, Any, Optional, List, Generator
 
-logger = logging.getLogger( 'ezmsg' )
+logger = logging.getLogger("ezmsg")
+
 
 class CacheMiss(Exception):
     ...
 
+
 class Cache:
-    """ shared-memory backed cache for objects """
+    """shared-memory backed cache for objects"""
 
     num_buffers: int
     cache: List[Any]
@@ -27,13 +28,13 @@ class Cache:
         self.cache = [None] * self.num_buffers
 
     def put(self, msg_id: int, msg: Any) -> None:
-        """ put an object into cache """
+        """put an object into cache"""
         buf_idx = msg_id % self.num_buffers
         self.cache_id[buf_idx] = msg_id
         self.cache[buf_idx] = msg
 
     def push(self, msg_id: int, shm: SHMContext) -> None:
-        """ push an object from cache into shm """
+        """push an object from cache into shm"""
         if self.num_buffers != shm.num_buffers:
             raise ValueError("shm has incorrect number of buffers")
 
@@ -45,8 +46,10 @@ class Cache:
                     MessageMarshal.to_mem(msg_id, obj, mem)
 
     @contextmanager
-    def get(self, msg_id: int, shm: Optional[SHMContext] = None) -> Generator[Any, None, None]:
-        """ get object from cache; if not in cache and shm provided -- get from shm """
+    def get(
+        self, msg_id: int, shm: Optional[SHMContext] = None
+    ) -> Generator[Any, None, None]:
+        """get object from cache; if not in cache and shm provided -- get from shm"""
 
         buf_idx = msg_id % self.num_buffers
         if self.cache_id[buf_idx] == msg_id:
@@ -55,7 +58,7 @@ class Cache:
         else:
             if shm is None:
                 raise CacheMiss
-            
+
             with shm.buffer(buf_idx, readonly=True) as mem:
                 try:
                     if MessageMarshal.msg_id(mem) != msg_id:
@@ -66,6 +69,6 @@ class Cache:
                 with MessageMarshal.obj_from_mem(mem) as obj:
                     yield obj
 
+
 # NOTE: This should be made thread-safe in the future
 MessageCache: Dict[UUID, Cache] = dict()
-
