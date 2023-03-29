@@ -2,8 +2,8 @@ from typing import AsyncGenerator
 
 import ezmsg.core as ez
 
-from ezmsg.testing.debuglog import DebugLog
-from ezmsg.testing.terminate import TerminateTest
+from ezmsg.util.debuglog import DebugLog
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
 
 
 class Source(ez.Unit):

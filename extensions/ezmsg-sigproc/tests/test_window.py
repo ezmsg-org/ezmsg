@@ -14,9 +14,10 @@ from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.synth import Counter, CounterSettings
 from ezmsg.sigproc.window import Window, WindowSettings
 
-from ezmsg.testing import get_test_fn
-from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
-from ezmsg.testing.debuglog import DebugLog
+from util import get_test_fn
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
+from ezmsg.util.terminate import TerminateOnTimeoutSettings as TerminateTestSettings
+from ezmsg.util.debuglog import DebugLog
 
 from typing import Optional, Dict, Any, List
 
