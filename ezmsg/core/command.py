@@ -43,7 +43,7 @@ def cmdline() -> None:
     parser.add_argument(
         "command",
         help="command for ezmsg",
-        choices=["serve", "start", "graphviz"],
+        choices=["serve", "start", "shutdown", "graphviz"],
     )
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
@@ -106,6 +106,10 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
                 await asyncio.sleep(0.1)
 
         logger.info(f"Forked ezmsg servers in PID: {popen.pid}")
+
+    elif cmd == "shutdown":
+        await graph_service.shutdown()
+        logger.info(f"Issued shutdown command to GraphServer @ {graph_service.address}")
 
     elif cmd == "graphviz":
         try:
