@@ -24,7 +24,7 @@ from .netprotocol import (
     create_socket,
     DEFAULT_SHM_SIZE,
     PUBLISHER_START_PORT_ENV,
-    PUBLISHER_START_PORT_DEFAULT
+    PUBLISHER_START_PORT_DEFAULT,
 )
 
 from typing import Any, Dict, Optional
@@ -35,7 +35,6 @@ BACKPRESSURE_WARNING = not ("EZMSG_DISABLE_BACKPRESSURE_WARNING" in os.environ)
 
 
 class Publisher:
-
     id: UUID
     pid: int
     topic: str
@@ -71,7 +70,6 @@ class Publisher:
         buf_size: int = DEFAULT_SHM_SIZE,
         **kwargs,
     ) -> "Publisher":
-
         reader, writer = await graph_service.open_connection()
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
@@ -80,7 +78,9 @@ class Publisher:
         writer.write(encode_str(pub.topic))
         pub._shm = await shm_service.create(pub._num_buffers, buf_size)
 
-        start_port = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
+        start_port = int(
+            os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
+        )
         sock = create_socket(host, port, start_port=start_port)
         server = await asyncio.start_server(pub._on_connection, sock=sock)
         pub._address = Address(*sock.getsockname())
@@ -152,7 +152,6 @@ class Publisher:
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-
         try:
             while True:
                 cmd = await reader.read(1)
@@ -207,7 +206,6 @@ class Publisher:
     async def _handle_subscriber(
         self, info: SubscriberInfo, reader: asyncio.StreamReader
     ) -> None:
-
         self._subscribers[info.id] = info
 
         try:
@@ -230,7 +228,7 @@ class Publisher:
             del self._subscribers[info.id]
 
     async def sync(self) -> None:
-        """ Pause and drain backpressure """
+        """Pause and drain backpressure"""
         self._running.clear()
         await self._backpressure.sync()
 
@@ -245,7 +243,6 @@ class Publisher:
         self._running.set()
 
     async def broadcast(self, obj: Any) -> None:
-
         await self._running.wait()
 
         buf_idx = self._msg_id % self._num_buffers
@@ -260,7 +257,6 @@ class Publisher:
 
         for sub in list(self._subscribers.values()):
             if not self._force_tcp and sub.id.node == self.id.node:
-
                 if sub.pid == self.pid:
                     sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
 

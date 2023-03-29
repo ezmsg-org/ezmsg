@@ -6,17 +6,17 @@ import numpy.typing as npt
 
 from ezmsg.util.messages.axisarray import AxisArray
 
-from typing import (
-    AsyncGenerator,
-    Optional,
-    Tuple,
-    List
-)
+from typing import AsyncGenerator, Optional, Tuple, List
+
 
 class WindowSettings(ez.Settings):
     axis: Optional[str] = None
-    newaxis: Optional[str] = None # Optional new axis for output.  If "None" - no new axes on output
-    window_dur: Optional[float] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
+    newaxis: Optional[
+        str
+    ] = None  # Optional new axis for output.  If "None" - no new axes on output
+    window_dur: Optional[
+        float
+    ] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
     window_shift: Optional[float] = None  # Sec.  If "None", activate "1:1 mode"
 
 
@@ -31,7 +31,6 @@ class WindowState(ez.State):
 
 
 class Window(ez.Unit):
-
     STATE: WindowState
     SETTINGS: WindowSettings
 
@@ -45,17 +44,16 @@ class Window(ez.Unit):
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: WindowSettings) -> None:
         self.STATE.cur_settings = msg
-        self.STATE.out_fs = None # This should trigger a reallocation
+        self.STATE.out_fs = None  # This should trigger a reallocation
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
-
         if self.STATE.cur_settings.window_dur is None:
             yield self.OUTPUT_SIGNAL, msg
             return
 
-        axis_name = self.STATE.cur_settings.axis 
+        axis_name = self.STATE.cur_settings.axis
         if axis_name is None:
             axis_name = msg.dims[0]
         axis_idx = msg.get_axis_idx(axis_name)
@@ -69,9 +67,9 @@ class Window(ez.Unit):
         # Pre(re?)allocate buffer
         window_samples = int(self.STATE.cur_settings.window_dur * fs)
         if (
-            (self.STATE.samp_shape != samp_shape) or \
-            (self.STATE.out_fs != fs) or \
-            self.STATE.buffer is None
+            (self.STATE.samp_shape != samp_shape)
+            or (self.STATE.out_fs != fs)
+            or self.STATE.buffer is None
         ):
             self.STATE.buffer = np.zeros(tuple([window_samples] + list(samp_shape)))
 
@@ -99,40 +97,48 @@ class Window(ez.Unit):
         outputs: List[Tuple[npt.NDArray, float]] = []
 
         if self.STATE.window_shift_samples is None:  # one-to-one mode
-            self.STATE.buffer = self.STATE.buffer[-self.STATE.window_samples:, ...]
-            buffer_offset = buffer_offset[-self.STATE.window_samples:]
+            self.STATE.buffer = self.STATE.buffer[-self.STATE.window_samples :, ...]
+            buffer_offset = buffer_offset[-self.STATE.window_samples :]
             outputs.append((self.STATE.buffer, buffer_offset[0]))
 
-        else: 
+        else:
             yieldable_size = self.STATE.window_samples + self.STATE.window_shift_samples
             while self.STATE.buffer.shape[0] >= yieldable_size:
-                outputs.append((self.STATE.buffer[:self.STATE.window_samples, ...], buffer_offset[0]))
-                self.STATE.buffer = self.STATE.buffer[self.STATE.window_shift_samples:, ...]
-                buffer_offset = buffer_offset[self.STATE.window_shift_samples:]
+                outputs.append(
+                    (
+                        self.STATE.buffer[: self.STATE.window_samples, ...],
+                        buffer_offset[0],
+                    )
+                )
+                self.STATE.buffer = self.STATE.buffer[
+                    self.STATE.window_shift_samples :, ...
+                ]
+                buffer_offset = buffer_offset[self.STATE.window_shift_samples :]
 
         for out_view, offset in outputs:
             out_view = np.moveaxis(out_view, 0, axis_idx)
 
             if (
-                self.STATE.cur_settings.newaxis is not None and \
-                self.STATE.cur_settings.newaxis != self.STATE.cur_settings.axis
+                self.STATE.cur_settings.newaxis is not None
+                and self.STATE.cur_settings.newaxis != self.STATE.cur_settings.axis
             ):
                 new_gain = 0.0
                 if self.STATE.window_shift_samples is not None:
                     new_gain = axis.gain * self.STATE.window_shift_samples
 
-                out_axis = replace(axis, unit = axis.unit, gain = new_gain, offset = offset)
+                out_axis = replace(axis, unit=axis.unit, gain=new_gain, offset=offset)
                 out_axes = {**msg.axes, **{self.STATE.cur_settings.newaxis: out_axis}}
                 out_dims = [self.STATE.cur_settings.newaxis] + msg.dims
                 out_view = out_view[np.newaxis, ...]
 
-                yield self.OUTPUT_SIGNAL, replace(msg, data = out_view, dims = out_dims, axes = out_axes)
+                yield self.OUTPUT_SIGNAL, replace(
+                    msg, data=out_view, dims=out_dims, axes=out_axes
+                )
 
             else:
                 if axis_name in msg.axes:
                     out_axes = msg.axes
-                    out_axes[axis_name] = replace(axis, offset = offset)
-                    yield self.OUTPUT_SIGNAL, replace(msg, data = out_view, axes = out_axes)
+                    out_axes[axis_name] = replace(axis, offset=offset)
+                    yield self.OUTPUT_SIGNAL, replace(msg, data=out_view, axes=out_axes)
                 else:
-                    yield self.OUTPUT_SIGNAL, replace(msg, data = out_view)
-
+                    yield self.OUTPUT_SIGNAL, replace(msg, data=out_view)
