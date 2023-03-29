@@ -111,8 +111,12 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         logger.info(f"Forked ezmsg servers in PID: {popen.pid}")
 
     elif cmd == "shutdown":
-        await graph_service.shutdown()
-        logger.info(f"Issued shutdown command to GraphServer @ {graph_service.address}")
+        try:
+            await graph_service.shutdown()
+            logger.info(f"Issued shutdown command to GraphServer @ {graph_service.address}")
+
+        except ConnectionRefusedError:
+            logger.warning(f"Could not issue shutdown command to GraphServer @ {graph_service.address}; server not running?")
 
     elif cmd == "graphviz":
         try:
