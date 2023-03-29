@@ -10,6 +10,7 @@ from typing import (
     Optional,
 )
 
+
 class DownsampleSettings(ez.Settings):
     axis: Optional[str] = None
     factor: int = 1
@@ -21,7 +22,6 @@ class DownsampleState(ez.State):
 
 
 class Downsample(ez.Unit):
-
     SETTINGS: DownsampleSettings
     STATE: DownsampleState
 
@@ -36,10 +36,9 @@ class Downsample(ez.Unit):
     async def on_settings(self, msg: DownsampleSettings) -> None:
         self.STATE.cur_settings = msg
 
-    @ez.subscriber(INPUT_SIGNAL, zero_copy = True)
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
-
         if self.STATE.cur_settings.factor < 1:
             raise ValueError("Downsample factor must be at least 1 (no downsampling)")
 
@@ -58,7 +57,7 @@ class Downsample(ez.Unit):
             new_axes = {ax_name: msg.get_axis(ax_name) for ax_name in msg.dims}
             new_offset = axis.offset + (axis.gain * pub_samples[0].item())
             new_gain = axis.gain * self.STATE.cur_settings.factor
-            new_axes[axis_name] = replace(axis, gain = new_gain, offset = new_offset)
+            new_axes[axis_name] = replace(axis, gain=new_gain, offset=new_offset)
             down_data = np.take(msg.data, pub_samples, axis_idx)
-            out_msg = replace(msg, data = down_data, dims = msg.dims, axes = new_axes)
-            yield self.OUTPUT_SIGNAL, out_msg 
+            out_msg = replace(msg, data=down_data, dims=msg.dims, axes=new_axes)
+            yield self.OUTPUT_SIGNAL, out_msg

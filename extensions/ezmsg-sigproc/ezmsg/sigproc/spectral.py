@@ -11,7 +11,6 @@ from typing import Optional, AsyncGenerator
 
 
 class OptionsEnum(enum.Enum):
-
     @classmethod
     def options(cls):
         return list(map(lambda c: c.value, cls))
@@ -30,8 +29,9 @@ WINDOWS = {
     WindowFunction.HAMMING: np.hamming,
     WindowFunction.HANNING: np.hanning,
     WindowFunction.BARTLETT: np.bartlett,
-    WindowFunction.BLACKMAN: np.blackman
+    WindowFunction.BLACKMAN: np.blackman,
 }
+
 
 class SpectralTransform(OptionsEnum):
     RAW_COMPLEX = "Complex FFT Output"
@@ -50,7 +50,7 @@ class SpectralOutput(OptionsEnum):
 class SpectrumSettings(ez.Settings):
     axis: Optional[str] = None
     # n: Optional[int] = None # n parameter for fft
-    out_axis: Optional[str] = 'freq' # If none; don't change dim name
+    out_axis: Optional[str] = "freq"  # If none; don't change dim name
     window: WindowFunction = WindowFunction.HAMMING
     transform: SpectralTransform = SpectralTransform.REL_DB
     output: SpectralOutput = SpectralOutput.POSITIVE
@@ -78,7 +78,6 @@ class Spectrum(ez.Unit):
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_data(self, message: AxisArray) -> AsyncGenerator:
-
         axis_name = self.STATE.cur_settings.axis
         if axis_name is None:
             axis_name = message.dims[0]
@@ -90,29 +89,28 @@ class Spectrum(ez.Unit):
         n_time = message.data.shape[axis_idx]
         window = WINDOWS[self.STATE.cur_settings.window](n_time)
 
-        spectrum = np.fft.fft(spectrum*window) / n_time
-        spectrum = np.fft.fftshift(spectrum, axes = -1)
-        freqs = np.fft.fftshift(np.fft.fftfreq(n_time, d = axis.gain), axes = -1)
+        spectrum = np.fft.fft(spectrum * window) / n_time
+        spectrum = np.fft.fftshift(spectrum, axes=-1)
+        freqs = np.fft.fftshift(np.fft.fftfreq(n_time, d=axis.gain), axes=-1)
 
         if self.STATE.cur_settings.transform != SpectralTransform.RAW_COMPLEX:
-
             if self.STATE.cur_settings.transform == SpectralTransform.REAL:
                 spectrum = spectrum.real
             elif self.STATE.cur_settings.transform == SpectralTransform.IMAG:
                 spectrum = spectrum.imag
             else:
-                scale = np.sum(window ** 2.0) * axis.gain
+                scale = np.sum(window**2.0) * axis.gain
                 spectrum = (2.0 * (np.abs(spectrum) ** 2.0)) / scale
 
                 if self.STATE.cur_settings.transform == SpectralTransform.REL_DB:
                     spectrum = 10 * np.log10(spectrum)
-        
+
         axis_offset = freqs[0]
         if self.STATE.cur_settings.output == SpectralOutput.POSITIVE:
-            axis_offset = freqs[n_time//2]
-            spectrum = spectrum[..., n_time//2:]
+            axis_offset = freqs[n_time // 2]
+            spectrum = spectrum[..., n_time // 2 :]
         elif self.STATE.cur_settings.output == SpectralOutput.NEGATIVE:
-            spectrum = spectrum[..., :n_time//2]
+            spectrum = spectrum[..., : n_time // 2]
 
         spectrum = np.moveaxis(spectrum, axis_idx, -1)
 
@@ -120,13 +118,15 @@ class Spectrum(ez.Unit):
         if out_axis is None:
             out_axis = axis_name
 
-        freq_axis = AxisArray.Axis(unit = 'Hz', gain = 1.0 / (axis.gain * n_time), offset = axis_offset)
+        freq_axis = AxisArray.Axis(
+            unit="Hz", gain=1.0 / (axis.gain * n_time), offset=axis_offset
+        )
         new_axes = {**message.axes, **{out_axis: freq_axis}}
 
         new_dims = [d for d in message.dims]
         if self.SETTINGS.out_axis is not None:
             new_dims[axis_idx] = self.SETTINGS.out_axis
 
-        out_msg = replace(message, data = spectrum, dims = new_dims, axes = new_axes)
-        
+        out_msg = replace(message, data=spectrum, dims=new_dims, axes=new_axes)
+
         yield self.OUTPUT_SIGNAL, out_msg

@@ -57,7 +57,6 @@ class CountSettings(ez.Settings):
 
 
 class Count(ez.Unit):
-
     # Only provide a settings type, do not instantiate
     # We do this because this unit may receive settings objects
     # from parent collections.  Also, SETTINGS is a special/reserved
@@ -86,7 +85,6 @@ class Count(ez.Unit):
 
 
 class AddOne(ez.Unit):
-
     INPUT_COUNT = ez.InputStream(CountMessage)
     OUTPUT_PLUS_ONE = ez.OutputStream(CountMessage)
 
@@ -117,7 +115,6 @@ class PrintState(ez.State):
 
 
 class PrintValue(ez.Unit):
-
     SETTINGS: PrintSettings
 
     # As with settings, only provide a state type, do not instantiate.
@@ -132,7 +129,6 @@ class PrintValue(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def on_message(self, message: CountMessage) -> None:
-
         print(f"Current Count: {message.value}")
 
         self.STATE.current_iteration = self.STATE.current_iteration + 1
@@ -152,7 +148,6 @@ class CountSystemSettings(ez.Settings):
 
 
 class CountSystem(ez.Collection):
-
     SETTINGS: CountSystemSettings
 
     # Define member units

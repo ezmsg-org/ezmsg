@@ -23,13 +23,12 @@ from .backendprocess import (
     new_threaded_event_loop,
 )
 
-from typing import List, Callable, Tuple, Optional, Type, Set, Union
+from typing import List, Callable, Tuple, Optional, Type, Set, Union, Sequence
 
 logger = logging.getLogger("ezmsg")
 
 
 class ExecutionContext:
-
     processes: List[BackendProcess]
     term_ev: EventType
     start_barrier: BarrierType
@@ -43,7 +42,6 @@ class ExecutionContext:
         connections: List[Tuple[str, str]] = [],
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
     ) -> None:
-
         if not processes:
             raise ValueError("Cannot create an execution context for zero processes")
 
@@ -60,7 +58,7 @@ class ExecutionContext:
                 self.start_barrier,
                 self.stop_barrier,
                 graph_service,
-                shm_service
+                shm_service,
             )
             for process_units in processes
         ]
@@ -68,7 +66,7 @@ class ExecutionContext:
     @classmethod
     def setup(
         cls,
-        component: Component,
+        components: List[Component],
         graph_service: GraphService,
         shm_service: SHMService,
         name: Optional[str] = None,
@@ -76,11 +74,11 @@ class ExecutionContext:
         backend_process: Type[BackendProcess] = DefaultBackendProcess,
         force_single_process: bool = False,
     ) -> Optional["ExecutionContext"]:
-
-        component._set_name(name)
-        component._set_location()
-
         graph_connections: List[Tuple[str, str]] = []
+
+        for component in components:
+            component._set_name(name)
+            component._set_location()
 
         if connections is not None:
             for from_topic, to_topic in connections:
@@ -108,35 +106,37 @@ class ExecutionContext:
                         to_stream = to_stream.address
                     graph_connections.append((from_stream, to_stream))
 
-        if isinstance(component, Collection):
-            crawl_components(component, gather_edges)
+        for component in components:
+            if isinstance(component, Collection):
+                crawl_components(component, gather_edges)
 
         processes = []
-        if isinstance(component, Collection):
-            processes = collect_processes(component)
+        for component in components:
+            if isinstance(component, Collection):
+                processes += collect_processes(component)
 
-            def configure_collections(comp: Component):
-                if isinstance(comp, Collection):
-                    comp.configure()
+                def configure_collections(comp: Component):
+                    if isinstance(comp, Collection):
+                        comp.configure()
 
-            crawl_components(component, configure_collections)
-        elif isinstance(component, Unit):
-            processes = [[component]]
+                crawl_components(component, configure_collections)
+            elif isinstance(component, Unit):
+                processes += [[component]]
 
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]
 
         try:
             return cls(
-                processes, 
-                graph_service, 
-                shm_service, 
-                graph_connections, 
-                backend_process, 
+                processes,
+                graph_service,
+                shm_service,
+                graph_connections,
+                backend_process,
             )
         except ValueError:
             return None
-        
+
 
 def run_system(
     system: Collection,
@@ -144,31 +144,35 @@ def run_system(
     init_buf_size: int = DEFAULT_SHM_SIZE,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
 ) -> None:
-    """ Deprecated; just use run any component (unit, collection) """
+    """Deprecated; just use run any component (unit, collection)"""
     run(system, backend_process=backend_process)
 
 
 def run(
-    component: Component,
+    components: Union[Component, List[Component]],
     name: Optional[str] = None,
     connections: Optional[NetworkDefinition] = None,
     backend_process: Type[BackendProcess] = DefaultBackendProcess,
     graph_address: Optional[AddressType] = None,
     force_single_process: bool = False,
 ) -> None:
-    
     graph_service = GraphService(graph_address)
     shm_service = SHMService()
+
+    if isinstance(components, Component):
+        components = [components]
 
     with new_threaded_event_loop() as loop:
 
         async def create_graph_context() -> GraphContext:
             return await GraphContext(graph_service, shm_service).__aenter__()
-        
-        graph_context = asyncio.run_coroutine_threadsafe(create_graph_context(), loop).result()
+
+        graph_context = asyncio.run_coroutine_threadsafe(
+            create_graph_context(), loop
+        ).result()
 
         execution_context = ExecutionContext.setup(
-            component,
+            components,
             graph_service,
             shm_service,
             name,

@@ -16,8 +16,10 @@ class ClockSettings(ez.Settings):
     # Message dispatch rate (Hz), or None (fast as possible)
     dispatch_rate: Optional[float]
 
+
 class ClockState(ez.State):
     cur_settings: ClockSettings
+
 
 class Clock(ez.Unit):
     SETTINGS: ClockSettings
@@ -49,9 +51,10 @@ class CounterSettings(ez.Settings):
     sub-millisecond sleep periods which may result in unexpected behavior (e.g.
     fs = 2000, n_time = 1, realtime = True -- may result in ~1400 msgs/sec)
     """
+
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
-    n_ch: int = 1 # Number of channels to synthesize
+    n_ch: int = 1  # Number of channels to synthesize
 
     # Message dispatch rate (Hz), 'realtime', 'ext_clock', or None (fast as possible)
     dispatch_rate: Optional[Union[float, str]] = None
@@ -67,7 +70,7 @@ class CounterState(ez.State):
 
 
 class Counter(ez.Unit):
-    """ Generates monotonically increasing counter """
+    """Generates monotonically increasing counter"""
 
     SETTINGS: CounterSettings
     STATE: CounterState
@@ -86,10 +89,11 @@ class Counter(ez.Unit):
         self.validate_settings(msg)
 
     def validate_settings(self, settings: CounterSettings) -> None:
-        if isinstance(settings.dispatch_rate, str) and \
-            self.SETTINGS.dispatch_rate not in ['realtime', 'ext_clock']:
-            raise ValueError(f'Unknown dispatch_rate: {self.SETTINGS.dispatch_rate}')
-        
+        if isinstance(
+            settings.dispatch_rate, str
+        ) and self.SETTINGS.dispatch_rate not in ["realtime", "ext_clock"]:
+            raise ValueError(f"Unknown dispatch_rate: {self.SETTINGS.dispatch_rate}")
+
         self.STATE.cur_settings = settings
 
     @ez.subscriber(INPUT_CLOCK)
@@ -98,17 +102,15 @@ class Counter(ez.Unit):
 
     @ez.publisher(OUTPUT_SIGNAL)
     async def publish(self) -> AsyncGenerator:
-
         while True:
-
             block_dur = self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
 
             dispatch_rate = self.STATE.cur_settings.dispatch_rate
             if dispatch_rate is not None:
                 if isinstance(dispatch_rate, str):
-                    if dispatch_rate == 'realtime':
+                    if dispatch_rate == "realtime":
                         await asyncio.sleep(block_dur)
-                    elif dispatch_rate == 'ext_clock':
+                    elif dispatch_rate == "ext_clock":
                         await self.STATE.clock_event.wait()
                         self.STATE.clock_event.clear()
                 else:
@@ -123,32 +125,32 @@ class Counter(ez.Unit):
                 t_samp %= self.STATE.cur_settings.mod
                 self.STATE.samp %= self.STATE.cur_settings.mod
 
-            t_samp = np.tile( t_samp, ( 1, self.STATE.cur_settings.n_ch ) )
+            t_samp = np.tile(t_samp, (1, self.STATE.cur_settings.n_ch))
 
             offset_adj = self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
 
             out = AxisArray(
                 t_samp,
-                dims = ['time', 'ch'],
-                axes = dict( 
-                    time = AxisArray.Axis.TimeAxis(
-                        fs = self.STATE.cur_settings.fs, 
-                        offset = time.time() - offset_adj
+                dims=["time", "ch"],
+                axes=dict(
+                    time=AxisArray.Axis.TimeAxis(
+                        fs=self.STATE.cur_settings.fs, offset=time.time() - offset_adj
                     )
-                )
+                ),
             )
 
             yield self.OUTPUT_SIGNAL, out
 
+
 class SinGeneratorSettings(ez.Settings):
-    time_axis: Optional[str] = 'time'
+    time_axis: Optional[str] = "time"
     freq: float = 1.0  # Oscillation frequency in Hz
     amp: float = 1.0  # Amplitude
     phase: float = 0.0  # Phase offset (in radians)
 
 
 class SinGeneratorState(ez.State):
-    ang_freq: float # pre-calculated angular frequency in radians
+    ang_freq: float  # pre-calculated angular frequency in radians
 
 
 class SinGenerator(ez.Unit):
@@ -181,7 +183,7 @@ class SinGenerator(ez.Unit):
 class OscillatorSettings(ez.Settings):
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
-    n_ch: int = 1 # Number of channels to output per block
+    n_ch: int = 1  # Number of channels to output per block
     dispatch_rate: Optional[Union[float, str]] = None  # (Hz) | 'realtime' | 'ext_clock'
     freq: float = 1.0  # Oscillation frequency in Hz
     amp: float = 1.0  # Amplitude
@@ -190,7 +192,6 @@ class OscillatorSettings(ez.Settings):
 
 
 class Oscillator(ez.Collection):
-
     SETTINGS: OscillatorSettings
 
     INPUT_CLOCK = ez.InputStream(ez.Flag)
@@ -200,7 +201,6 @@ class Oscillator(ez.Collection):
     SIN = SinGenerator()
 
     def configure(self) -> None:
-
         # Calculate synchronous settings if necessary
         freq = self.SETTINGS.freq
         mod = None
@@ -215,15 +215,13 @@ class Oscillator(ez.Collection):
                 fs=self.SETTINGS.fs,
                 n_ch=self.SETTINGS.n_ch,
                 dispatch_rate=self.SETTINGS.dispatch_rate,
-                mod=mod
+                mod=mod,
             )
         )
 
         self.SIN.apply_settings(
             SinGeneratorSettings(
-                freq=freq,
-                amp=self.SETTINGS.amp,
-                phase=self.SETTINGS.phase
+                freq=freq, amp=self.SETTINGS.amp, phase=self.SETTINGS.phase
             )
         )
 
@@ -231,7 +229,7 @@ class Oscillator(ez.Collection):
         return (
             (self.INPUT_CLOCK, self.COUNTER.INPUT_CLOCK),
             (self.COUNTER.OUTPUT_SIGNAL, self.SIN.INPUT_SIGNAL),
-            (self.SIN.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
+            (self.SIN.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
         )
 
 
@@ -250,28 +248,27 @@ class RandomGenerator(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def generate(self, msg: AxisArray) -> AsyncGenerator:
         random_data = np.random.normal(
-            size = msg.shape, 
-            loc = self.SETTINGS.loc, 
-            scale = self.SETTINGS.scale
+            size=msg.shape, loc=self.SETTINGS.loc, scale=self.SETTINGS.scale
         )
 
-        yield self.OUTPUT_SIGNAL, replace(msg, data = random_data)
+        yield self.OUTPUT_SIGNAL, replace(msg, data=random_data)
 
 
 class NoiseSettings(ez.Settings):
     n_time: int  # Number of samples to output per block
     fs: float  # Sampling rate of signal output in Hz
-    n_ch: int = 1 # Number of channels to output
-    dispatch_rate: Optional[Union[float, str]] = None  # (Hz), 'realtime', or 'ext_clock'
-    loc: float = 0.0 # DC offset
-    scale: float = 1.0 # Scale (in standard deviations)
+    n_ch: int = 1  # Number of channels to output
+    dispatch_rate: Optional[
+        Union[float, str]
+    ] = None  # (Hz), 'realtime', or 'ext_clock'
+    loc: float = 0.0  # DC offset
+    scale: float = 1.0  # Scale (in standard deviations)
 
-    
+
 WhiteNoiseSettings = NoiseSettings
 
 
 class WhiteNoise(ez.Collection):
-
     SETTINGS: NoiseSettings
 
     INPUT_CLOCK = ez.InputStream(ez.Flag)
@@ -281,21 +278,17 @@ class WhiteNoise(ez.Collection):
     RANDOM = RandomGenerator()
 
     def configure(self) -> None:
-        
         self.RANDOM.apply_settings(
-            RandomGeneratorSettings(
-                loc = self.SETTINGS.loc,
-                scale = self.SETTINGS.scale
-            )
+            RandomGeneratorSettings(loc=self.SETTINGS.loc, scale=self.SETTINGS.scale)
         )
 
         self.COUNTER.apply_settings(
             CounterSettings(
-                n_time = self.SETTINGS.n_time,
-                fs = self.SETTINGS.fs,
-                n_ch = self.SETTINGS.n_ch,
-                dispatch_rate = self.SETTINGS.dispatch_rate,
-                mod = None
+                n_time=self.SETTINGS.n_time,
+                fs=self.SETTINGS.fs,
+                n_ch=self.SETTINGS.n_ch,
+                dispatch_rate=self.SETTINGS.dispatch_rate,
+                mod=None,
             )
         )
 
@@ -303,13 +296,14 @@ class WhiteNoise(ez.Collection):
         return (
             (self.INPUT_CLOCK, self.COUNTER.INPUT_CLOCK),
             (self.COUNTER.OUTPUT_SIGNAL, self.RANDOM.INPUT_SIGNAL),
-            (self.RANDOM.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
+            (self.RANDOM.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
         )
+
 
 PinkNoiseSettings = NoiseSettings
 
-class PinkNoise(ez.Collection):
 
+class PinkNoise(ez.Collection):
     SETTINGS: PinkNoiseSettings
 
     INPUT_CLOCK = ez.InputStream(ez.Flag)
@@ -319,13 +313,10 @@ class PinkNoise(ez.Collection):
     FILTER = ButterworthFilter()
 
     def configure(self) -> None:
-
-        self.WHITE_NOISE.apply_settings( self.SETTINGS )
+        self.WHITE_NOISE.apply_settings(self.SETTINGS)
         self.FILTER.apply_settings(
             ButterworthFilterSettings(
-                axis = 'time',
-                order = 1,
-                cutoff = self.SETTINGS.fs * 0.01 # Hz
+                axis="time", order=1, cutoff=self.SETTINGS.fs * 0.01  # Hz
             )
         )
 
@@ -333,7 +324,7 @@ class PinkNoise(ez.Collection):
         return (
             (self.INPUT_CLOCK, self.WHITE_NOISE.INPUT_CLOCK),
             (self.WHITE_NOISE.OUTPUT_SIGNAL, self.FILTER.INPUT_SIGNAL),
-            (self.FILTER.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
+            (self.FILTER.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
         )
 
 
@@ -341,8 +332,10 @@ class AddState(ez.State):
     queue_a: "asyncio.Queue[AxisArray]" = field(default_factory=asyncio.Queue)
     queue_b: "asyncio.Queue[AxisArray]" = field(default_factory=asyncio.Queue)
 
+
 class Add(ez.Unit):
-    """ Add two signals together.  Assumes compatible/similar axes/dimensions. """
+    """Add two signals together.  Assumes compatible/similar axes/dimensions."""
+
     STATE: AddState
 
     INPUT_SIGNAL_A = ez.InputStream(AxisArray)
@@ -363,15 +356,13 @@ class Add(ez.Unit):
             a = await self.STATE.queue_a.get()
             b = await self.STATE.queue_b.get()
 
-            yield (
-                self.OUTPUT_SIGNAL, 
-                replace(a, data = a.data + b.data)
-            )
+            yield (self.OUTPUT_SIGNAL, replace(a, data=a.data + b.data))
+
 
 class EEGSynthSettings(ez.Settings):
-    fs: float = 500.0 # Hz
+    fs: float = 500.0  # Hz
     n_time: int = 100
-    alpha_freq: float = 10.5 # Hz
+    alpha_freq: float = 10.5  # Hz
     n_ch: int = 8
 
 
@@ -386,30 +377,27 @@ class EEGSynth(ez.Collection):
     ADD = Add()
 
     def configure(self) -> None:
-
         self.CLOCK.apply_settings(
-            ClockSettings(
-                dispatch_rate = self.SETTINGS.fs / self.SETTINGS.n_time
-            )
+            ClockSettings(dispatch_rate=self.SETTINGS.fs / self.SETTINGS.n_time)
         )
 
         self.OSC.apply_settings(
-            OscillatorSettings( 
-                n_time = self.SETTINGS.n_time, 
-                fs = self.SETTINGS.fs, 
-                n_ch = self.SETTINGS.n_ch, 
-                dispatch_rate = 'ext_clock', 
-                freq = self.SETTINGS.alpha_freq
+            OscillatorSettings(
+                n_time=self.SETTINGS.n_time,
+                fs=self.SETTINGS.fs,
+                n_ch=self.SETTINGS.n_ch,
+                dispatch_rate="ext_clock",
+                freq=self.SETTINGS.alpha_freq,
             )
         )
 
         self.NOISE.apply_settings(
             PinkNoiseSettings(
-                n_time = self.SETTINGS.n_time,
-                fs = self.SETTINGS.fs,
-                n_ch = self.SETTINGS.n_ch,
-                dispatch_rate = 'ext_clock',
-                scale = 5.0
+                n_time=self.SETTINGS.n_time,
+                fs=self.SETTINGS.fs,
+                n_ch=self.SETTINGS.n_ch,
+                dispatch_rate="ext_clock",
+                scale=5.0,
             )
         )
 

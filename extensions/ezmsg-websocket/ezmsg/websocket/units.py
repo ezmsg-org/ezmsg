@@ -19,12 +19,16 @@ class WebsocketSettings(ez.Settings):
 
 
 class WebsocketState(ez.State):
-    incoming_queue: "asyncio.Queue[Union[str,bytes]]" = field(default_factory=asyncio.Queue)
-    outgoing_queue: "asyncio.Queue[Union[str,bytes]]" = field(default_factory=asyncio.Queue)
-    
+    incoming_queue: "asyncio.Queue[Union[str,bytes]]" = field(
+        default_factory=asyncio.Queue
+    )
+    outgoing_queue: "asyncio.Queue[Union[str,bytes]]" = field(
+        default_factory=asyncio.Queue
+    )
+
 
 class WebsocketServer(ez.Unit):
-    
+
     """
     Receives arbitrary content from outside world
     and injects it into system in a DataArray
@@ -38,16 +42,20 @@ class WebsocketServer(ez.Unit):
 
     @ez.task
     async def start_server(self):
-        ez.logger.info(f'Starting WS Input Server @ ws://{self.SETTINGS.host}:{self.SETTINGS.port}')
+        ez.logger.info(
+            f"Starting WS Input Server @ ws://{self.SETTINGS.host}:{self.SETTINGS.port}"
+        )
 
-        async def connection(websocket: websockets.server.WebSocketServerProtocol, path):
+        async def connection(
+            websocket: websockets.server.WebSocketServerProtocol, path
+        ):
             async def loop(mode):
                 try:
-                    if mode == 'rx':
+                    if mode == "rx":
                         while True:
                             data = await websocket.recv()
                             self.STATE.incoming_queue.put_nowait(data)
-                    elif mode == 'tx':
+                    elif mode == "tx":
                         while True:
                             data = await self.STATE.outgoing_queue.get()
                             await websocket.send(data)
@@ -56,18 +64,14 @@ class WebsocketServer(ez.Unit):
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    print('Error in websocket server:', e)
+                    print("Error in websocket server:", e)
                     pass
                 finally:
                     ...
 
-            await asyncio.wait([
-                loop(mode='tx'),
-                loop(mode='rx')
-            ])
+            await asyncio.wait([loop(mode="tx"), loop(mode="rx")])
 
         try:
-
             if self.SETTINGS.cert_path:
                 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                 ssl_context.load_cert_chain(self.SETTINGS.cert_path)
@@ -75,10 +79,7 @@ class WebsocketServer(ez.Unit):
                 ssl_context = None
 
             server = await websockets.server.serve(
-                connection,
-                self.SETTINGS.host,
-                self.SETTINGS.port,
-                ssl=ssl_context
+                connection, self.SETTINGS.host, self.SETTINGS.port, ssl=ssl_context
             )
 
             await server.wait_closed()
@@ -98,7 +99,6 @@ class WebsocketServer(ez.Unit):
 
 
 class WebsocketClient(ez.Unit):
-
     SETTINGS: WebsocketSettings
     STATE: WebsocketState
 
@@ -111,7 +111,7 @@ class WebsocketClient(ez.Unit):
         async for message in websocket:
             self.STATE.incoming_queue.put_nowait(message)
 
-    async def tx_to(self,websocket: WebSocketClientProtocol):
+    async def tx_to(self, websocket: WebSocketClientProtocol):
         # await messages from subscription within ezmsg
         # and post them to outgoing websocket
         while True:
@@ -124,7 +124,7 @@ class WebsocketClient(ez.Unit):
             prefix = "wss"
         else:
             prefix = "ws"
-        uri = f'{prefix}://{self.SETTINGS.host}:{self.SETTINGS.port}'
+        uri = f"{prefix}://{self.SETTINGS.host}:{self.SETTINGS.port}"
         websocket = None
         for attempt in range(10):
             try:
@@ -139,8 +139,7 @@ class WebsocketClient(ez.Unit):
         receive_task = asyncio.ensure_future(self.rx_from(websocket))
         transmit_task = asyncio.ensure_future(self.tx_to(websocket))
         done, pending = await asyncio.wait(
-            [receive_task, transmit_task],
-            return_when=asyncio.FIRST_COMPLETED
+            [receive_task, transmit_task], return_when=asyncio.FIRST_COMPLETED
         )
 
         for task in pending:
