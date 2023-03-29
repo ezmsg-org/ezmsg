@@ -3,8 +3,8 @@ import array
 from dataclasses import dataclass
 import ezmsg.core as ez
 
-from ezmsg.testing.debuglog import DebugLog, DebugLogSettings
-from ezmsg.testing.terminate import TerminateTest
+from ezmsg.util.debuglog import DebugLog, DebugLogSettings
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
 
 from typing import AsyncGenerator
 

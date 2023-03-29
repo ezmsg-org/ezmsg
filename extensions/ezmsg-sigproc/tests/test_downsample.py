@@ -12,9 +12,10 @@ from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.downsample import Downsample, DownsampleSettings
 from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
 
-from ezmsg.testing import get_test_fn
-from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
-from ezmsg.testing.debuglog import DebugLog
+from util import get_test_fn
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
+from ezmsg.util.terminate import TerminateOnTimeoutSettings as TerminateTestSettings
+from ezmsg.util.debuglog import DebugLog
 
 from typing import Optional, List
 
