@@ -62,7 +62,10 @@ def cmdline() -> None:
     )
     shm_address = Address.from_string(shm_address_str)
 
-    asyncio.run(run_command(args.command, graph_address, shm_address))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(run_command(args.command, graph_address, shm_address))
 
 
 async def run_command(cmd: str, graph_address: Address, shm_address: Address) -> None:
