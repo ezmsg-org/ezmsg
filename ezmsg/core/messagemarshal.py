@@ -5,20 +5,24 @@ from .netprotocol import uint64_to_bytes, bytes_to_uint, UINT64_SIZE
 
 from typing import Any, List, Tuple, Generator, Optional
 
-_PREAMBLE = b'EZ'
+_PREAMBLE = b"EZ"
 _PREAMBLE_LEN = len(_PREAMBLE)
+
 
 class UndersizedMemory(Exception):
     req_size: int
+
     def __init__(self, *args: object, req_size: int = 0) -> None:
         super().__init__(*args)
         self.req_size = req_size
 
+
 class UninitializedMemory(Exception):
     ...
 
+
 class Marshal:
-    """ codec for byte-level representations of objects 
+    """codec for byte-level representations of objects
 
     This base namespace defines a marshal that uses pickle to dump
     objects into a series of memoryviews for serialization.
@@ -40,7 +44,7 @@ class Marshal:
             mem[:sidx] = header[:]
             for buf in buffers:
                 blen = len(buf)
-                mem[sidx:sidx+blen] = buf[:]
+                mem[sidx : sidx + blen] = buf[:]
                 sidx += blen
 
     @classmethod
@@ -50,28 +54,29 @@ class Marshal:
 
     @classmethod
     def msg_id(cls, mem: memoryview) -> Optional[int]:
-        """ get msg_id currently written in mem; if uninitialized, return None """
+        """get msg_id currently written in mem; if uninitialized, return None"""
         try:
             cls._assert_initialized(mem)
-            return bytes_to_uint(mem[_PREAMBLE_LEN:_PREAMBLE_LEN+UINT64_SIZE])
+            return bytes_to_uint(mem[_PREAMBLE_LEN : _PREAMBLE_LEN + UINT64_SIZE])
         except UninitializedMemory:
             return None
 
     @classmethod
     @contextmanager
     def obj_from_mem(cls, mem: memoryview) -> Generator[Any, None, None]:
-
         cls._assert_initialized(mem)
 
         sidx = _PREAMBLE_LEN + UINT64_SIZE
-        num_buffers = bytes_to_uint(mem[sidx:sidx+UINT64_SIZE]); sidx += UINT64_SIZE
+        num_buffers = bytes_to_uint(mem[sidx : sidx + UINT64_SIZE])
+        sidx += UINT64_SIZE
         buf_sizes = [0] * num_buffers
         for i in range(num_buffers):
-            buf_sizes[i] = bytes_to_uint(mem[sidx:sidx+UINT64_SIZE]); sidx += UINT64_SIZE
+            buf_sizes[i] = bytes_to_uint(mem[sidx : sidx + UINT64_SIZE])
+            sidx += UINT64_SIZE
 
         buffers: List[memoryview] = list()
         for bsz in buf_sizes:
-            buffers.append(mem[sidx:sidx+bsz])
+            buffers.append(mem[sidx : sidx + bsz])
             sidx += bsz
 
         obj = cls.load(buffers)
@@ -85,12 +90,14 @@ class Marshal:
 
     @classmethod
     @contextmanager
-    def serialize(cls, msg_id: int, obj: Any) -> Generator[Tuple[int, bytes, List[memoryview]], None, None]:
+    def serialize(
+        cls, msg_id: int, obj: Any
+    ) -> Generator[Tuple[int, bytes, List[memoryview]], None, None]:
         buffers = cls.dump(obj)
         header = uint64_to_bytes(len(buffers))
         buf_lengths = [len(buf) for buf in buffers]
         header_chunks = [header] + [uint64_to_bytes(b) for b in buf_lengths]
-        header = _PREAMBLE + uint64_to_bytes(msg_id) + b''.join(header_chunks)
+        header = _PREAMBLE + uint64_to_bytes(msg_id) + b"".join(header_chunks)
         header_len = len(header)
         total_size = header_len + sum(buf_lengths)
 
@@ -109,14 +116,15 @@ class Marshal:
 
     @staticmethod
     def load(buffers: List[memoryview]) -> Any:
-        return pickle.loads(buffers[0], buffers = buffers[1:])
+        return pickle.loads(buffers[0], buffers=buffers[1:])
 
     @classmethod
     def copy_obj(cls, from_mem: memoryview, to_mem: memoryview) -> None:
-        """ copy obj in from_mem (if initialized) to to_mem """
+        """copy obj in from_mem (if initialized) to to_mem"""
         msg_id = cls.msg_id(from_mem)
         if msg_id is not None:
             with MessageMarshal.obj_from_mem(from_mem) as obj:
                 MessageMarshal.to_mem(msg_id, obj, to_mem)
+
 
 MessageMarshal = Marshal

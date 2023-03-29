@@ -19,12 +19,11 @@ __all__ = [
     "GraphServer",
     "GraphContext",
     "run_command",
-
     # All following are deprecated
     "System",
     "run_system",
     "Message",
-    "Flag"
+    "Flag",
 ]
 
 from .component import Component
@@ -48,16 +47,16 @@ from .collection import Collection as System  # deprecated, backward compatibili
 import os
 import logging
 
-logger = logging.getLogger('ezmsg')
+logger = logging.getLogger("ezmsg")
 handler = logging.StreamHandler()
 formatter = logging.Formatter(
-    '%(asctime)s.%(msecs)03d - pid: %(process)d - %(threadName)s ' +
-    '- %(levelname)s - %(funcName)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
+    "%(asctime)s.%(msecs)03d - pid: %(process)d - %(threadName)s "
+    + "- %(levelname)s - %(funcName)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-LOGLEVEL = os.environ.get('EZMSG_LOGLEVEL', 'INFO').upper()
+LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "INFO").upper()
 logger.setLevel(LOGLEVEL)

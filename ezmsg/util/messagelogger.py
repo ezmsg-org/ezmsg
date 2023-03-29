@@ -20,7 +20,6 @@ class MessageLoggerState(ez.State):
 
 
 class MessageLogger(ez.Unit):
-
     SETTINGS: MessageLoggerSettings
     STATE: MessageLoggerState
 
@@ -32,19 +31,19 @@ class MessageLogger(ez.Unit):
     OUTPUT_STOP = ez.OutputStream(Path)
 
     def open_file(self, filepath: Path) -> Optional[Path]:
-        """ Returns file path if file successfully opened, otherwise None """
+        """Returns file path if file successfully opened, otherwise None"""
         if filepath in self.STATE.output_files:
             # If the file is already open, we return None
             return None
 
         if not filepath.parent.exists():
             filepath.parent.mkdir(parents=True, exist_ok=True)
-        self.STATE.output_files[filepath] = open(filepath, mode='w')
+        self.STATE.output_files[filepath] = open(filepath, mode="w")
 
         return filepath
 
     def close_file(self, filepath: Path) -> Optional[Path]:
-        """ Returns file path if file successfully closed, otherwise None """
+        """Returns file path if file successfully closed, otherwise None"""
         if filepath not in self.STATE.output_files:
             # We haven't opened this file
             return None
@@ -55,7 +54,7 @@ class MessageLogger(ez.Unit):
         return filepath
 
     def initialize(self) -> None:
-        """ Note that files defined at startup are not published to outputs"""
+        """Note that files defined at startup are not published to outputs"""
         if self.SETTINGS.output is not None:
             self.open_file(self.SETTINGS.output)
 
@@ -78,13 +77,11 @@ class MessageLogger(ez.Unit):
     async def on_message(self, message: Any) -> AsyncGenerator:
         strmessage: str = json.dumps(message, cls=MessageEncoder)
         for output_f in self.STATE.output_files.values():
-            output_f.write(f'{strmessage}\n')
+            output_f.write(f"{strmessage}\n")
             output_f.flush()
         yield (self.OUTPUT_MESSAGE, message)
 
     def shutdown(self) -> None:
-        """ Note that files that are closed at shutdown don't publish messages """
+        """Note that files that are closed at shutdown don't publish messages"""
         for filepath in list(self.STATE.output_files):
             self.close_file(filepath)
-
-    

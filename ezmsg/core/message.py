@@ -16,25 +16,27 @@ from typing import (
 
 
 class MessageMeta(ABCMeta):
-
     def __new__(
-        cls, name: str, bases: Tuple[type, ...], classdict: Dict[str, Any], **kwargs: Any
+        cls,
+        name: str,
+        bases: Tuple[type, ...],
+        classdict: Dict[str, Any],
+        **kwargs: Any
     ) -> Type["Message"]:
-
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(unsafe_hash=True, frozen=True)(new_cls)  # type: ignore
 
 
 class Message(ABC, metaclass=MessageMeta):
-
     def __init__(self):
         warnings.warn(
             "Message is deprecated. Replace ez.Message with @dataclass decorators",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
 
 class Flag(Message):
-    """ Message with no contents """
+    """Message with no contents"""
+
     ...

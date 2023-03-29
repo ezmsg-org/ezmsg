@@ -11,14 +11,15 @@ from types import TracebackType
 
 logger = logging.getLogger("ezmsg")
 
+
 class GraphContext:
-    """ 
-    GraphContext maintains a list of created 
+    """
+    GraphContext maintains a list of created
     publishers, subscribers, and connections in the graph.
     Once the context is no-longer-needed, we can revert()
     changes in the graph which disconnects publishers and removes
     changes that this context made.
-    It also maintains a context manager that ensures 
+    It also maintains a context manager that ensures
     graph and SHMServer are up.
     """
 
@@ -31,24 +32,30 @@ class GraphContext:
     _graph_server: typing.Optional[GraphServer]
 
     def __init__(
-        self, 
-        graph_service: typing.Optional[GraphService] = None, 
-        shm_service: typing.Optional[SHMService] = None
+        self,
+        graph_service: typing.Optional[GraphService] = None,
+        shm_service: typing.Optional[SHMService] = None,
     ) -> None:
         self._clients = set()
         self._edges = set()
         self._shm_service = shm_service if shm_service is not None else SHMService()
         self._shm_server = None
-        self._graph_service = graph_service if graph_service is not None else GraphService()
+        self._graph_service = (
+            graph_service if graph_service is not None else GraphService()
+        )
         self._graph_server = None
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
-        pub = await Publisher.create(topic, self._graph_service, self._shm_service, **kwargs)
+        pub = await Publisher.create(
+            topic, self._graph_service, self._shm_service, **kwargs
+        )
         self._clients.add(pub)
         return pub
 
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
-        sub = await Subscriber.create(topic, self._graph_service, self._shm_service, **kwargs)
+        sub = await Subscriber.create(
+            topic, self._graph_service, self._shm_service, **kwargs
+        )
         self._clients.add(sub)
         return sub
 
@@ -92,7 +99,6 @@ class GraphContext:
         exc_v: typing.Optional[typing.Any],
         exc_tb: typing.Optional[TracebackType],
     ) -> bool:
-
         await self.revert()
         await self._shutdown_servers()
         return False
