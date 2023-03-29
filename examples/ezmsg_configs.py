@@ -1,12 +1,9 @@
 import asyncio
-import logging
 
 import ezmsg.core as ez
 from ezmsg.testing.debuglog import DebugLog
 
 from typing import AsyncGenerator, Optional
-
-logger = logging.getLogger(__name__)
 
 
 # Terminator -- Arnold Schwarzenegger
@@ -109,7 +106,7 @@ class OnlyPassthroughSystem(ez.Collection):
     PASSTHROUGH = PassthroughCollection()
 
     def configure(self) -> None:
-        logger.info("No output expected")
+        ez.logger.info("No output expected")
 
 
 # SYSTEMS WITH HANGING PUBS AND SUBS
@@ -126,7 +123,7 @@ class SubNoPubSystem(ez.Collection):
     LISTEN = Listener()
 
     def configure(self) -> None:
-        logger.info("No output expected")
+        ez.logger.info("No output expected")
 
 
 class NoPubNoSubSystem(ez.Collection):
@@ -134,7 +131,7 @@ class NoPubNoSubSystem(ez.Collection):
     MODULUS = Modulus()
 
     def configure(self) -> None:
-        logger.info("No output expected")
+        ez.logger.info("No output expected")
 
 
 # Systems with collections that have hanging pubs and subs
@@ -170,7 +167,7 @@ class SubNoPubCollectionSystem(ez.Collection):
     COLLECTION = SubNoPubCollection()
 
     def configure(self) -> None:
-        logger.info("No output expected")
+        ez.logger.info("No output expected")
 
 
 # Passthrough Collection Tests
@@ -212,7 +209,7 @@ class SubNoPubPassthroughCollectionSystem(ez.Collection):
     COLLECTION = SubNoPubPassthroughCollection()
 
     def configure(self) -> None:
-        logger.info("No output expected")
+        ez.logger.info("No output expected")
 
 
 class PassthroughSystem(ez.Collection):
@@ -244,5 +241,5 @@ if __name__ == "__main__":
     ]
 
     for system in test_systems:
-        logger.info(f"Testing { system.__name__ }")
-        ez.run_system(system())
+        ez.logger.info(f"Testing { system.__name__ }")
+        ez.run(system())
