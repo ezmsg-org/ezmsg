@@ -1,16 +1,14 @@
 import json
 import os
 import pytest
-import logging
+import tempfile
+
+from pathlib import Path
 from dataclasses import asdict, dataclass
 
 import ezmsg.core as ez
 
-from ezmsg.testing import get_test_fn
-
-from typing import AsyncGenerator
-
-logger = logging.getLogger(__name__)
+from typing import Optional, AsyncGenerator
 
 # MESSAGE DEFINITIONS
 
@@ -59,7 +57,7 @@ class MessageReceiver(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def on_message(self, msg: SimpleMessage) -> None:
-        logger.info(f"Msg: {msg}")
+        ez.logger.info(f"Msg: {msg}")
         self.STATE.num_received += 1
         with open(self.SETTINGS.output_fn, "a") as output_file:
             output_file.write(json.dumps(asdict(msg)) + "\n")
@@ -115,6 +113,26 @@ def toy_system_fixture(request):
 
     ToySystem.process_components = func
     return ToySystem
+
+def get_test_fn(test_name: Optional[str] = None, extension: str = "txt") -> Path:
+    """PYTEST compatible temporary test file creator"""
+
+    # Get current test name if we can..
+    if test_name is None:
+        test_name = os.environ.get("PYTEST_CURRENT_TEST")
+        if test_name is not None:
+            test_name = test_name.split(":")[-1].split(" ")[0]
+        else:
+            test_name = __name__
+
+    file_path = Path(tempfile.gettempdir())
+    file_path = file_path / Path(f"{test_name}.{extension}")
+
+    # Create the file
+    with open(file_path, "w"):
+        pass
+
+    return file_path
 
 
 @pytest.mark.parametrize("num_messages", [1, 5, 10])

@@ -1,7 +1,7 @@
 import asyncio
 
 import ezmsg.core as ez
-from ezmsg.testing.debuglog import DebugLog
+from ezmsg.util.debuglog import DebugLog
 
 from typing import AsyncGenerator, Optional
 
