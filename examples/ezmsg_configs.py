@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Terminator -- Arnold Schwarzenegger
 
+
 class TerminatorSettings(ez.Settings):
     term_after: float = 1.0  # sec
 
@@ -23,6 +24,7 @@ class Terminator(ez.Unit):
         await asyncio.sleep(self.SETTINGS.term_after)
         raise ez.NormalTermination
 
+
 # Generator -- A Pure Publisher
 
 
@@ -32,7 +34,6 @@ class GeneratorSettings(ez.Settings):
 
 
 class Generator(ez.Unit):
-
     SETTINGS: GeneratorSettings
 
     OUTPUT = ez.OutputStream(int)
@@ -47,12 +48,12 @@ class Generator(ez.Unit):
 
 # Modulus -- A Pure Modifier
 
+
 class ModulusSettings(ez.Settings):
     mod: int = 3
 
 
 class Modulus(ez.Unit):
-
     SETTINGS: ModulusSettings
 
     INPUT = ez.InputStream(int)
@@ -65,6 +66,7 @@ class Modulus(ez.Unit):
 
 
 # Listener -- A Pure Subscriber
+
 
 class ListenerState(ez.State):
     value: Optional[int] = None
@@ -82,17 +84,17 @@ class Listener(ez.Unit):
 
 # Weird passthrough collection
 
+
 class PassthroughCollection(ez.Collection):
     INPUT = ez.InputStream(int)
     OUTPUT = ez.OutputStream(int)
 
     def network(self) -> ez.NetworkDefinition:
-        return (
-            (self.INPUT, self.OUTPUT),
-        )
+        return ((self.INPUT, self.OUTPUT),)
 
 
 # CORNER CASES
+
 
 class EmptySystem(ez.Collection):
     ...
@@ -107,10 +109,11 @@ class OnlyPassthroughSystem(ez.Collection):
     PASSTHROUGH = PassthroughCollection()
 
     def configure(self) -> None:
-        logger.info('No output expected')
+        logger.info("No output expected")
 
 
 # SYSTEMS WITH HANGING PUBS AND SUBS
+
 
 class PubNoSubSystem(ez.Collection):
     TERMINATE = Terminator()
@@ -123,7 +126,7 @@ class SubNoPubSystem(ez.Collection):
     LISTEN = Listener()
 
     def configure(self) -> None:
-        logger.info('No output expected')
+        logger.info("No output expected")
 
 
 class NoPubNoSubSystem(ez.Collection):
@@ -131,7 +134,8 @@ class NoPubNoSubSystem(ez.Collection):
     MODULUS = Modulus()
 
     def configure(self) -> None:
-        logger.info('No output expected')
+        logger.info("No output expected")
+
 
 # Systems with collections that have hanging pubs and subs
 
@@ -153,9 +157,7 @@ class SubNoPubCollection(ez.Collection):
     LISTEN = Listener()
 
     def network(self) -> ez.NetworkDefinition:
-        return (
-            (self.INPUT, self.LISTEN.INPUT),
-        )
+        return ((self.INPUT, self.LISTEN.INPUT),)
 
 
 class PubNoSubCollectionSystem(ez.Collection):
@@ -168,10 +170,11 @@ class SubNoPubCollectionSystem(ez.Collection):
     COLLECTION = SubNoPubCollection()
 
     def configure(self) -> None:
-        logger.info('No output expected')
+        logger.info("No output expected")
 
 
 # Passthrough Collection Tests
+
 
 class PubNoSubPassthroughCollection(ez.Collection):
     COLLECTION = PubNoSubCollection()
@@ -209,7 +212,7 @@ class SubNoPubPassthroughCollectionSystem(ez.Collection):
     COLLECTION = SubNoPubPassthroughCollection()
 
     def configure(self) -> None:
-        logger.info('No output expected')
+        logger.info("No output expected")
 
 
 class PassthroughSystem(ez.Collection):
@@ -221,12 +224,11 @@ class PassthroughSystem(ez.Collection):
     def network(self) -> ez.NetworkDefinition:
         return (
             (self.GENERATE.OUTPUT, self.PASSTHROUGH.INPUT),
-            (self.PASSTHROUGH.OUTPUT, self.LOG.INPUT)
+            (self.PASSTHROUGH.OUTPUT, self.LOG.INPUT),
         )
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     test_systems = [
         EmptySystem,
         EmptyTerminateSystem,
@@ -242,5 +244,5 @@ if __name__ == '__main__':
     ]
 
     for system in test_systems:
-        logger.info(f'Testing { system.__name__ }')
+        logger.info(f"Testing { system.__name__ }")
         ez.run_system(system())

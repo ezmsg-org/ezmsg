@@ -8,10 +8,7 @@ import numpy as np
 
 from .window import Window, WindowSettings
 
-from typing import (
-    AsyncGenerator,
-    Optional
-)
+from typing import AsyncGenerator, Optional
 
 
 class EWMSettings(ez.Settings):
@@ -30,6 +27,7 @@ class EWM(ez.Unit):
 
     References https://stackoverflow.com/a/42926270
     """
+
     SETTINGS: EWMSettings
     STATE: EWMState
 
@@ -51,7 +49,6 @@ class EWM(ez.Unit):
 
     @ez.publisher(OUTPUT_SIGNAL)
     async def sync_output(self) -> AsyncGenerator:
-
         while True:
             signal = await self.STATE.signal_queue.get()
             buffer = await self.STATE.buffer_queue.get()  # includes signal
@@ -89,18 +86,19 @@ class EWM(ez.Unit):
             std = ewma((buffer_data - mean) ** 2.0)
 
             standardized = (buffer_data - mean) / np.sqrt(std).clip(1e-4)
-            standardized = standardized[-signal.shape[axis_idx]:, ...]
+            standardized = standardized[-signal.shape[axis_idx] :, ...]
             standardized = np.moveaxis(standardized, axis_idx, 0)
 
             yield self.OUTPUT_SIGNAL, replace(signal, data=standardized)
+
 
 class EWMFilterSettings(ez.Settings):
     history_dur: float  # previous data to accumulate for standardization
     axis: Optional[str] = None
     zero_offset: bool = True  # If true, we assume zero DC offset for input data
 
-class EWMFilter(ez.Collection):
 
+class EWMFilter(ez.Collection):
     SETTINGS: EWMFilterSettings
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
@@ -110,18 +108,13 @@ class EWMFilter(ez.Collection):
     EWM = EWM()
 
     def configure(self) -> None:
-        self.EWM.apply_settings(
-            EWMSettings(
-                axis = self.SETTINGS.axis,
-                zero_offset = True
-            )
-        )
-        
+        self.EWM.apply_settings(EWMSettings(axis=self.SETTINGS.axis, zero_offset=True))
+
         self.WINDOW.apply_settings(
             WindowSettings(
-                axis = self.SETTINGS.axis,
-                window_dur = self.SETTINGS.history_dur,
-                window_shift = None # 1:1 mode
+                axis=self.SETTINGS.axis,
+                window_dur=self.SETTINGS.history_dur,
+                window_shift=None,  # 1:1 mode
             )
         )
 
@@ -130,5 +123,5 @@ class EWMFilter(ez.Collection):
             (self.INPUT_SIGNAL, self.WINDOW.INPUT_SIGNAL),
             (self.WINDOW.OUTPUT_SIGNAL, self.EWM.INPUT_BUFFER),
             (self.INPUT_SIGNAL, self.EWM.INPUT_SIGNAL),
-            (self.EWM.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL)
+            (self.EWM.OUTPUT_SIGNAL, self.OUTPUT_SIGNAL),
         )

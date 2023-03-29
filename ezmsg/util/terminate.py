@@ -7,6 +7,7 @@ import ezmsg.core as ez
 
 from typing import Optional, Any
 
+
 class TerminateOnTimeoutSettings(ez.Settings):
     time: float = 2.0  # Terminate if no message has been received in this time (sec)
     poll_rate: float = 4.0  # Probably no good reason to mess with this (Hz)
@@ -17,7 +18,6 @@ class TerminateOnTimeoutState(ez.State):
 
 
 class TerminateOnTimeout(ez.Unit):
-
     SETTINGS: TerminateOnTimeoutSettings
     STATE: TerminateOnTimeoutState
 
@@ -37,8 +37,8 @@ class TerminateOnTimeout(ez.Unit):
                 if age >= self.SETTINGS.time:
                     ez.logger.info("Raising NormalTermination in TerminateOnTimeout!")
                     raise ez.NormalTermination
-                
-                
+
+
 class TerminateOnTotalSettings(ez.Settings):
     total: Optional[int] = None
 

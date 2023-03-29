@@ -19,7 +19,7 @@ from .netprotocol import (
     SHMSERVER_PORT_DEFAULT,
     PUBLISHER_START_PORT_ENV,
     PUBLISHER_START_PORT_DEFAULT,
-    close_stream_writer
+    close_stream_writer,
 )
 from .dag import DAG
 
@@ -27,8 +27,8 @@ logger = logging.getLogger("ezmsg")
 
 IND = "  "
 
-def cmdline() -> None:
 
+def cmdline() -> None:
     parser = argparse.ArgumentParser(
         "ezmsg.core",
         description="start and stop core ezmsg server processes",
@@ -46,11 +46,7 @@ def cmdline() -> None:
         choices=["serve", "start", "graphviz"],
     )
 
-    parser.add_argument(
-        "--address",
-        help="Address for GraphServer", 
-        default=None
-    )
+    parser.add_argument("--address", help="Address for GraphServer", default=None)
 
     class Args:
         command: str
@@ -58,10 +54,12 @@ def cmdline() -> None:
 
     args = parser.parse_args(namespace=Args)
 
-    graph_address = Address('127.0.0.1', GRAPHSERVER_PORT_DEFAULT)
+    graph_address = Address("127.0.0.1", GRAPHSERVER_PORT_DEFAULT)
     if args.address is not None:
         graph_address = Address.from_string(args.address)
-    shm_address_str = os.environ.get(SHMSERVER_ADDR_ENV, f'127.0.0.1:{SHMSERVER_PORT_DEFAULT}')
+    shm_address_str = os.environ.get(
+        SHMSERVER_ADDR_ENV, f"127.0.0.1:{SHMSERVER_PORT_DEFAULT}"
+    )
     shm_address = Address.from_string(shm_address_str)
 
     asyncio.run(run_command(args.command, graph_address, shm_address))
@@ -73,13 +71,13 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
 
     if cmd == "serve":
         logger.info(f"GraphServer Address: {graph_address}")
-        logger.info(f'SHMServer Address: {shm_address}')
+        logger.info(f"SHMServer Address: {shm_address}")
 
         shm_server = shm_service.create_server()
         graph_server = graph_service.create_server()
 
         try:
-            logger.info('Servers running...')
+            logger.info("Servers running...")
             graph_server.join()
 
         except KeyboardInterrupt:

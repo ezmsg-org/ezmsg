@@ -24,7 +24,6 @@ class UnitMeta(ComponentMeta):
     def __init__(
         cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
     ) -> None:
-
         super(UnitMeta, cls).__init__(name, bases, fields)
 
         cls.__tasks__ = {}
