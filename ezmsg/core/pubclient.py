@@ -132,7 +132,7 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
         self._initialized = asyncio.Event()
-        self._last_backpressure_event = time.time()
+        self._last_backpressure_event = -1
 
         self._shm_service = shm_service
 
