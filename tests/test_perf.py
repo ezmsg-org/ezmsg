@@ -5,7 +5,6 @@ import os
 import platform
 import time
 import pytest
-import logging
 
 from typing import List, Tuple, AsyncGenerator
 

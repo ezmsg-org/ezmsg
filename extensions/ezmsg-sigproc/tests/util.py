@@ -1,11 +1,8 @@
-import warnings
-warnings.warn("ezmsg.testing is deprecated.", DeprecationWarning, stacklevel = 2)
-
-import tempfile
 import os
+import tempfile
+
 from pathlib import Path
 from typing import Optional
-
 
 def get_test_fn(test_name: Optional[str] = None, extension: str = "txt") -> Path:
     """PYTEST compatible temporary test file creator"""

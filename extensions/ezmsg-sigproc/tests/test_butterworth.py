@@ -12,8 +12,9 @@ from ezmsg.util.messagecodec import MessageDecoder
 from ezmsg.sigproc.synth import WhiteNoise, WhiteNoiseSettings
 from ezmsg.sigproc.butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
-from ezmsg.testing import get_test_fn
-from ezmsg.testing.terminate import TerminateTest, TerminateTestSettings
+from util import get_test_fn
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
+from ezmsg.util.terminate import TerminateOnTimeoutSettings as TerminateTestSettings
 
 from typing import Optional, List
 
