@@ -1,14 +1,11 @@
 import json
 import os
-import logging
 from dataclasses import asdict, dataclass
 
 import ezmsg.core as ez
 
 from typing import AsyncGenerator
 
-
-logger = logging.getLogger(__name__)
 
 # MESSAGE DEFINITIONS
 
@@ -57,7 +54,7 @@ class MessageReceiver(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def on_message(self, msg: SimpleMessage) -> None:
-        logger.info(f"Msg: {msg}")
+        ez.logger.info(f"Msg: {msg}")
         self.STATE.num_received += 1
         with open(self.SETTINGS.output_fn, "a") as output_file:
             output_file.write(json.dumps(asdict(msg)) + "\n")
