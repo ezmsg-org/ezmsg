@@ -53,11 +53,13 @@ class ThreadedAsyncServer(Thread):
         self.join()
 
     def run(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        with suppress(asyncio.CancelledError):
-            self._loop.run_until_complete(self._serve())
-        self._loop.close()
-        self._loop.stop()
+        try:
+            asyncio.set_event_loop(self._loop)
+            with suppress(asyncio.CancelledError):
+                self._loop.run_until_complete(self._serve())
+        finally:
+            self._loop.stop()
+            self._loop.close()
 
     async def _serve(self) -> None:
         await self.setup()
