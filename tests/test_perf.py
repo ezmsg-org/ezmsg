@@ -11,8 +11,8 @@ from typing import List, Tuple, AsyncGenerator
 import ezmsg.core as ez
 
 # We expect this test to generate LOTS of backpressure warnings
-PERF_LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "ERROR")
-ez.logger.setLevel(PERF_LOGLEVEL)
+# PERF_LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "ERROR")
+# ez.logger.setLevel(PERF_LOGLEVEL)
 
 PLATFORM = {
     "Darwin": "mac",
@@ -56,7 +56,7 @@ class LoadTestPublisher(ez.Unit):
 
     @ez.publisher(OUTPUT)
     async def publish(self) -> AsyncGenerator:
-        ez.logger.critical(f"Load test publisher started. (PID: {os.getpid()})")
+        ez.logger.info(f"Load test publisher started. (PID: {os.getpid()})")
         start_time = time.time()
         while self.running:
             current_time = time.time()
@@ -71,13 +71,12 @@ class LoadTestPublisher(ez.Unit):
                 ),
             )
             self.counter += 1
-            time.sleep(0)
-        ez.logger.critical("Exiting publish")
+        ez.logger.info("Exiting publish")
         raise ez.Complete
 
     def shutdown(self) -> None:
         self.running = False
-        ez.logger.critical(f"Samples sent: {self.counter}")
+        ez.logger.info(f"Samples sent: {self.counter}")
 
 
 class LoadTestSubscriberState(ez.State):
@@ -106,11 +105,11 @@ class LoadTestSubscriber(ez.Unit):
 
     @ez.task
     async def log_result(self) -> None:
-        ez.logger.critical(f"Load test subscriber started. (PID: {os.getpid()})")
+        ez.logger.info(f"Load test subscriber started. (PID: {os.getpid()})")
 
         # Wait for the duration of the load test
         await asyncio.sleep(self.SETTINGS.duration)
-        # logger.critical(f"STATE: {self.STATE.received_data}")
+        # logger.info(f"STATE: {self.STATE.received_data}")
 
         # Log some useful summary statistics
         min_timestamp = min(timestamp for timestamp, _, _ in self.STATE.received_data)
@@ -128,18 +127,18 @@ class LoadTestSubscriber(ez.Unit):
         )
 
         num_samples = len(self.STATE.received_data)
-        ez.logger.critical(f"Samples received: {num_samples}")
-        ez.logger.critical(
+        ez.logger.info(f"Samples received: {num_samples}")
+        ez.logger.info(
             f"Sample rate: {num_samples / (max_timestamp - min_timestamp)} Hz"
         )
-        ez.logger.critical(f"Mean latency: {total_latency / num_samples} s")
-        ez.logger.critical(f"Total latency: {total_latency} s")
+        ez.logger.info(f"Mean latency: {total_latency / num_samples} s")
+        ez.logger.info(f"Total latency: {total_latency} s")
 
         total_data = num_samples * self.SETTINGS.dynamic_size
-        ez.logger.critical(
+        ez.logger.info(
             f"Data rate: {total_data / (max_timestamp - min_timestamp) * 1e-6} MB/s"
         )
-        ez.logger.critical(
+        ez.logger.info(
             f"Dropped samples: {dropped_samples} ({dropped_samples / (dropped_samples + num_samples)}%)",
         )
 
@@ -176,11 +175,7 @@ def get_time() -> float:
 @pytest.mark.parametrize("buffers", [2, 32])
 @pytest.mark.parametrize("size", [2**i for i in range(5, 22, 4)])
 def test_performance(duration, size, buffers) -> None:
-    ez.logger.critical(
-        f"NOTE: Perf test logs at CRITICAL due to expected volume of backpressure warnings."
-    )
-    ez.logger.critical(f"Log level set to {PERF_LOGLEVEL}")
-    ez.logger.critical(f"Running load test for dynamic size: {size} bytes")
+    ez.logger.info(f"Running load test for dynamic size: {size} bytes")
     system = LoadTest(
         LoadTestSettings(
             dynamic_size=int(size),

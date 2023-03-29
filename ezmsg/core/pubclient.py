@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import time
 
 from uuid import UUID
 from contextlib import suppress
@@ -32,6 +33,7 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger("ezmsg")
 
 BACKPRESSURE_WARNING = not ("EZMSG_DISABLE_BACKPRESSURE_WARNING" in os.environ)
+BACKPRESSURE_REFRACTORY = 5.0 # sec
 
 
 class Publisher:
@@ -52,6 +54,7 @@ class Publisher:
     _shm: SHMContext
     _cache: Cache
     _force_tcp: bool
+    _last_backpressure_event: float
 
     _shm_service: SHMService
 
@@ -129,6 +132,7 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
         self._initialized = asyncio.Event()
+        self._last_backpressure_event = time.time()
 
         self._shm_service = shm_service
 
@@ -249,8 +253,10 @@ class Publisher:
         msg_id_bytes = uint64_to_bytes(self._msg_id)
 
         if not self._backpressure.available(buf_idx):
-            if BACKPRESSURE_WARNING:
+            delta = time.time() - self._last_backpressure_event
+            if BACKPRESSURE_WARNING and (delta > BACKPRESSURE_REFRACTORY):
                 logger.warning(f"{self.topic} under subscriber backpressure!")
+            self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
         self._cache.put(self._msg_id, obj)
