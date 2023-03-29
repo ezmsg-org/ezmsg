@@ -2,8 +2,8 @@ from typing import AsyncGenerator
 
 import ezmsg.core as ez
 
-from ezmsg.testing.debuglog import DebugLog
-from ezmsg.testing.terminate import TerminateTest
+from ezmsg.util.debuglog import DebugLog
+from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
 
 
 class Source(ez.Unit):
@@ -28,7 +28,6 @@ class SplitCollection(ez.Collection):
 
 
 class SplitSystem(ez.System):
-
     SOURCE = Source()
     SPLIT = SplitCollection()
     TERM = TerminateTest()
@@ -37,9 +36,9 @@ class SplitSystem(ez.System):
         return (
             (self.SOURCE.OUTPUT, self.TERM.INPUT),
             (self.SOURCE.OUTPUT, self.SPLIT.INPUT1),
-            (self.SOURCE.OUTPUT, self.SPLIT.INPUT2)
+            (self.SOURCE.OUTPUT, self.SPLIT.INPUT2),
         )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     ez.run_system(SplitSystem())

@@ -1,36 +1,37 @@
 import asyncio
+import socket
+import typing
 import enum
 import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
+from asyncio.base_events import Server
 
-from typing import Tuple, NamedTuple, Union, AsyncGenerator, Optional
-
-VERSION = b'1'
+VERSION = b"1"
 UINT64_SIZE = 8
-DEFAULT_SHM_SIZE = 2 ** 16
-BYTEORDER = 'little'
+DEFAULT_SHM_SIZE = 2**16
+BYTEORDER = "little"
 
-GRAPHSERVER_PORT_ENV = 'EZMSG_GRAPHSERVER_PORT'
+DEFAULT_HOST = "127.0.0.1"
+
+GRAPHSERVER_ADDR_ENV = "EZMSG_GRAPHSERVER_ADDR"
 GRAPHSERVER_PORT_DEFAULT = 25978
-GRAPHSERVER_PORT = int(os.getenv(GRAPHSERVER_PORT_ENV, GRAPHSERVER_PORT_DEFAULT))
-GRAPHSERVER_ADDR = ('127.0.0.1', GRAPHSERVER_PORT)
 
-# SHMServer must reside on localhost because it manages shared memory
-# for local processes.  GraphServer may live elsewhere
-SHMSERVER_PORT_ENV = 'EZMSG_SHMSERVER_PORT'
+SHMSERVER_ADDR_ENV = "EZMSG_SHMSERVER_ADDR"
 SHMSERVER_PORT_DEFAULT = 25979
-SHMSERVER_PORT = int(os.getenv(SHMSERVER_PORT_ENV, SHMSERVER_PORT_DEFAULT))
-SHMSERVER_ADDR = ('127.0.0.1', SHMSERVER_PORT)
 
-PUBLISHER_START_PORT_ENV = 'EZMSG_PUBLISHER_PORT_START'
+RESERVED_PORTS = [GRAPHSERVER_PORT_DEFAULT, SHMSERVER_PORT_DEFAULT]
+
+SERVER_PORT_START_ENV = "EZMSG_SERVER_PORT_START"
+SERVER_PORT_START_DEFAULT = 10000
+
+PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
-PUBLISHER_START_PORT = int(os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT))
 
 
-class Address(NamedTuple):
+class Address(typing.NamedTuple):
     host: str
     port: int
 
@@ -41,17 +42,20 @@ class Address(NamedTuple):
 
     @classmethod
     def from_string(cls, address: str) -> "Address":
-        host, port = address.split(':')
+        host, port = address.split(":")
         return cls(host, int(port))
 
     def to_stream(self, writer: asyncio.StreamWriter) -> None:
         writer.write(encode_str(str(self)))
 
+    def bind_socket(self) -> socket.socket:
+        return create_socket(self.host, self.port)
+
     def __str__(self):
-        return f'{self.host}:{self.port}'
+        return f"{self.host}:{self.port}"
 
 
-AddressType = Union[Tuple[str, int], Address]
+AddressType = typing.Union[typing.Tuple[str, int], Address]
 
 
 @dataclass
@@ -61,7 +65,7 @@ class ClientInfo:
     pid: int
     topic: str
 
-    _pending: asyncio.Event = field(default_factory=asyncio.Event, init = False)
+    _pending: asyncio.Event = field(default_factory=asyncio.Event, init=False)
 
     def __post_init__(self) -> None:
         self.set_sync()
@@ -70,7 +74,7 @@ class ClientInfo:
         self._pending.set()
 
     @asynccontextmanager
-    async def sync_writer(self) -> AsyncGenerator[asyncio.StreamWriter, None]:
+    async def sync_writer(self) -> typing.AsyncGenerator[asyncio.StreamWriter, None]:
         await self._pending.wait()
         try:
             yield self.writer
@@ -79,7 +83,7 @@ class ClientInfo:
             await self._pending.wait()
         finally:
             self._pending.set()
-        
+
 
 @dataclass
 class PublisherInfo(ClientInfo):
@@ -90,6 +94,7 @@ class PublisherInfo(ClientInfo):
 class SubscriberInfo(ClientInfo):
     ...
 
+
 def uint64_to_bytes(i: int) -> bytes:
     return i.to_bytes(UINT64_SIZE, BYTEORDER, signed=False)
 
@@ -99,7 +104,7 @@ def bytes_to_uint(b: bytes) -> int:
 
 
 def encode_str(string: str) -> bytes:
-    str_bytes = string.encode('utf-8')
+    str_bytes = string.encode("utf-8")
     str_len_bytes = uint64_to_bytes(len(str_bytes))
     return str_len_bytes + str_bytes
 
@@ -112,7 +117,27 @@ async def read_int(reader: asyncio.StreamReader) -> int:
 async def read_str(reader: asyncio.StreamReader) -> str:
     str_size = await read_int(reader)
     str_bytes = await reader.readexactly(str_size)
-    return str_bytes.decode('utf-8')
+    return str_bytes.decode("utf-8")
+
+
+async def close_stream_writer(writer: asyncio.StreamWriter):
+    writer.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await writer.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
+
+
+async def close_server(server: Server):
+    server.close()
+    # ConnectionResetError can be raised on wait_closed.
+    # See: https://github.com/python/cpython/issues/83037
+    try:
+        await server.wait_closed()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
 
 
 class Command(enum.Enum):
@@ -131,6 +156,7 @@ class Command(enum.Enum):
     SYNC = enum.auto()
     RESUME = enum.auto()
     UPDATE = enum.auto()
+    DAG = enum.auto()
 
     # Pub<->Sub Commands
     TX_LOCAL = enum.auto()
@@ -144,3 +170,31 @@ class Command(enum.Enum):
 
     SHUTDOWN = enum.auto()
 
+
+def create_socket(
+    host: typing.Optional[str] = None,
+    port: typing.Optional[int] = None,
+    start_port: int = 0,
+    max_port: int = 65535,
+    ignore_ports: typing.List[int] = RESERVED_PORTS,
+) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    if host is None:
+        host = DEFAULT_HOST
+
+    if port is not None:
+        sock.bind((host, port))
+        return sock
+
+    port = start_port
+    while port <= max_port:
+        if port not in ignore_ports:
+            try:
+                sock.bind((host, port))
+                return sock
+            except OSError:
+                pass
+        port += 1
+
+    raise IOError("Failed to bind socket; no free ports")

@@ -1,3 +1,5 @@
+import warnings
+warnings.warn("ezmsg.testing is deprecated.", DeprecationWarning, stacklevel = 2)
 
 import tempfile
 import os
@@ -6,13 +8,13 @@ from typing import Optional
 
 
 def get_test_fn(test_name: Optional[str] = None, extension: str = "txt") -> Path:
-    """ PYTEST compatible temporary test file creator """
+    """PYTEST compatible temporary test file creator"""
 
     # Get current test name if we can..
     if test_name is None:
-        test_name = os.environ.get('PYTEST_CURRENT_TEST')
+        test_name = os.environ.get("PYTEST_CURRENT_TEST")
         if test_name is not None:
-            test_name = test_name.split(':')[-1].split(' ')[0]
+            test_name = test_name.split(":")[-1].split(" ")[0]
         else:
             test_name = __name__
 
