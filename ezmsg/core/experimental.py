@@ -48,7 +48,7 @@ def gen_to_unit(
     sleep_time: float = 0.0,
     output_stream_kwargs: dict = {},
     msg_to_state: dict = {},
-) -> Tuple[Type[ez.Settings], Type[ez.Unit]]:
+) -> Tuple[Any, Any]:
     type_hints = deepcopy(get_type_hints(func))
     generator_type_hint = type_hints.pop("return")
     if not hasattr(generator_type_hint, "__origin__") or not issubclass(
