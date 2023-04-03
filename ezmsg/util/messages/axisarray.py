@@ -59,15 +59,13 @@ class AxisArray:
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
 
-    def isel(self, **indexers: slice) -> "AxisArray":
+    def isel(self, **indexers: typing.Union[slice, int, npt.NDArray]) -> "AxisArray":
         out_axes = {an: a for an, a in self.axes.items()}
         out_data = self.data
 
         for axis_name, ix in indexers.items():
-            if not isinstance(ix, slice):
-                raise ValueError("isel only supports slices for now")
             ax = self.ax(axis_name)
-            indices = np.arange(*ix.indices(len(ax)))
+            indices = np.arange(len(ax))[ix]
             if axis_name in out_axes:
                 out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
             out_data = np.take(out_data, indices, ax.idx)
