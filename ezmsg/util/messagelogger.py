@@ -6,11 +6,11 @@ from pathlib import Path
 
 import ezmsg.core as ez
 
-from .messagecodec import MessageEncoder
+from .messagecodec import MessageEncoder, LogStart
 
 from typing import Optional, Any, Dict, AsyncGenerator, Any
 
-
+    
 class MessageLoggerSettings(ez.Settings):
     output: Optional[Path] = None
 
@@ -38,7 +38,11 @@ class MessageLogger(ez.Unit):
 
         if not filepath.parent.exists():
             filepath.parent.mkdir(parents=True, exist_ok=True)
-        self.STATE.output_files[filepath] = open(filepath, mode="w")
+        output_f = open(filepath, mode="w")
+        strmessage: str = json.dumps(LogStart(), cls=MessageEncoder)
+        output_f.write(f"{strmessage}\n")
+        output_f.flush()
+        self.STATE.output_files[filepath] = output_f
 
         return filepath
 
