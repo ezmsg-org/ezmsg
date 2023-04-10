@@ -70,7 +70,7 @@ class ExecutionContext:
         components: typing.Mapping[str, Component],
         graph_service: GraphService,
         shm_service: SHMService,
-        root_name: str = 'ROOT',
+        root_name: typing.Optional[str] = None,
         connections: typing.Optional[NetworkDefinition] = None,
         backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
         force_single_process: bool = False,
@@ -79,7 +79,7 @@ class ExecutionContext:
 
         for name, component in components.items():
             component._set_name(name)
-            component._set_location([root_name])
+            component._set_location([root_name] if root_name is not None else [])
 
         if connections is not None:
             for from_topic, to_topic in connections:
@@ -151,7 +151,7 @@ def run_system(
 
 def run(
     components: typing.Optional[typing.Mapping[str, Component]] = None,
-    root_name: str = "ROOT",
+    root_name: typing.Optional[str] = None,
     connections: typing.Optional[NetworkDefinition] = None,
     backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     graph_address: typing.Optional[AddressType] = None,
