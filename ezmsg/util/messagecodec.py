@@ -45,11 +45,11 @@ def import_type(typestr: str) -> type:
 
 class MessageEncoder(json.JSONEncoder):
     def default(self, obj: typing.Any):
-        now = time.time()
         if is_dataclass(obj):
+            ts = getattr(obj, TIMESTAMP_ATTR, time.time())
             return {
-                **{f.name: getattr(obj, f.name) for f in fields(obj)},
-                **{TYPE: type_str(obj), TIMESTAMP_ATTR: now},
+                **{f.name: getattr(obj, f.name) for f in fields(obj)}, 
+                **{TYPE: type_str(obj), TIMESTAMP_ATTR: ts}
             }
 
         elif np and isinstance(obj, np.ndarray):
