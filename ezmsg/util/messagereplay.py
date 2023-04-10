@@ -23,7 +23,7 @@ class FileReplayMessage:
     rate: typing.Optional[float] = None # Hz
 
 class MessageReplaySettings(ez.Settings, FileReplayMessage):
-    ...
+    progress: bool = False
 
 class MessageReplayState(ez.State):
     replay_files: "asyncio.Queue[FileReplayMessage]"
@@ -94,6 +94,14 @@ class MessageReplay(ez.Unit):
             
             pub_msgs = 0
             with open(replay_file.filename, "r") as f:
+
+                if self.SETTINGS.progress:
+                    try:
+                        import tqdm
+                        f = tqdm.tqdm(f, total = num_msgs)
+                    except ImportError:
+                        ez.logger.info('progress requires tqdm installed')
+                        
                 for line_idx, line in enumerate(f):
 
                     if not self.STATE.running.is_set():
@@ -127,7 +135,7 @@ class MessageReplay(ez.Unit):
                                 last_msg_t is not None and \
                                 ts is not None
                             ):
-                                await asyncio.sleep(ts - last_msg_t)
+                                await asyncio.sleep(max(ts - last_msg_t, 0.0))
                                 last_msg_t = ts
 
                         yield self.OUTPUT_MESSAGE, obj
