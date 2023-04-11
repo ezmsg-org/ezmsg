@@ -10,10 +10,11 @@ import ezmsg.core as ez
 from .messagecodec import MessageTimestampDecoder, LogStart, TIMESTAMP_ATTR
 
 @dataclass
-class ReplayMessage:
+class ReplayStatusMessage:
     filename: Path
     idx: int
     total: int
+    done: bool = False
 
 @dataclass
 class FileReplayMessage:
@@ -41,9 +42,7 @@ class MessageReplay(ez.Unit):
     OUTPUT_MESSAGE = ez.OutputStream(typing.Any)
     OUTPUT_TOTAL = ez.OutputStream(int)
 
-    OUTPUT_REPLAY_START = ez.OutputStream(ReplayMessage)
-    OUTPUT_REPLAY_MESSAGE = ez.OutputStream(ReplayMessage)
-    OUTPUT_REPLAY_COMPLETE = ez.OutputStream(ReplayMessage)
+    OUTPUT_REPLAY_STATUS = ez.OutputStream(ReplayStatusMessage)
 
     def initialize(self) -> None:
         self.STATE.replay_files = asyncio.Queue()
@@ -74,9 +73,7 @@ class MessageReplay(ez.Unit):
 
     @ez.publisher(OUTPUT_MESSAGE)
     @ez.publisher(OUTPUT_TOTAL)
-    @ez.publisher(OUTPUT_REPLAY_START)
-    @ez.publisher(OUTPUT_REPLAY_MESSAGE)
-    @ez.publisher(OUTPUT_REPLAY_COMPLETE)
+    @ez.publisher(OUTPUT_REPLAY_STATUS)
     async def replay(self) -> typing.AsyncGenerator:
         while True:
 
@@ -86,8 +83,8 @@ class MessageReplay(ez.Unit):
 
             last_msg_t: typing.Optional[float] = None
             num_msgs = sum(1 for _ in open(replay_file.filename, "r"))
-            replay_msg = ReplayMessage(replay_file.filename, 0, num_msgs)
-            yield self.OUTPUT_REPLAY_START, replay_msg
+            replay_msg = ReplayStatusMessage(replay_file.filename, 0, num_msgs)
+            yield self.OUTPUT_REPLAY_STATUS, replay_msg
 
             if self.STATE.stop.is_set():
                 self.STATE.stop.clear()
@@ -112,7 +109,7 @@ class MessageReplay(ez.Unit):
                         break
 
                     replay_msg = replace(replay_msg, idx = line_idx + 1)
-                    yield self.OUTPUT_REPLAY_MESSAGE, replay_msg
+                    yield self.OUTPUT_REPLAY_STATUS, replay_msg
 
                     try:
                         obj = json.loads(line, cls=MessageTimestampDecoder)
@@ -141,7 +138,7 @@ class MessageReplay(ez.Unit):
                         yield self.OUTPUT_MESSAGE, obj
                         pub_msgs += 1
 
-            yield self.OUTPUT_REPLAY_COMPLETE, replay_msg
+            yield self.OUTPUT_REPLAY_STATUS, replace(replay_msg, done = True)
             yield self.OUTPUT_TOTAL, pub_msgs
 
 
