@@ -72,6 +72,7 @@ class ExecutionContext:
         shm_service: SHMService,
         root_name: typing.Optional[str] = None,
         connections: typing.Optional[NetworkDefinition] = None,
+        process_components: typing.Optional[typing.Collection[Component]] = None,
         backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
         force_single_process: bool = False,
     ) -> typing.Optional["ExecutionContext"]:
@@ -111,18 +112,15 @@ class ExecutionContext:
             if isinstance(component, Collection):
                 crawl_components(component, gather_edges)
 
-        processes = []
+        processes = collect_processes(components.values(), process_components)
+
         for component in components.values():
             if isinstance(component, Collection):
-                processes += collect_processes(component)
-
                 def configure_collections(comp: Component):
                     if isinstance(comp, Collection):
                         comp.configure()
 
                 crawl_components(component, configure_collections)
-            elif isinstance(component, Unit):
-                processes += [[component]]
 
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]
@@ -153,6 +151,7 @@ def run(
     components: typing.Optional[typing.Mapping[str, Component]] = None,
     root_name: typing.Optional[str] = None,
     connections: typing.Optional[NetworkDefinition] = None,
+    process_components: typing.Optional[typing.Collection[Component]] = None,
     backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     graph_address: typing.Optional[AddressType] = None,
     force_single_process: bool = False,
@@ -174,6 +173,7 @@ def run(
             shm_service,
             root_name,
             connections,
+            process_components,
             backend_process,
             force_single_process,
         )
@@ -197,12 +197,13 @@ def run(
 
         asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
 
+        if len(execution_context.processes) > 1:
+            logger.info(f"Running in {len(execution_context.processes)} processes.")
+            
         main_process = execution_context.processes[0]
         other_processes = execution_context.processes[1:]
 
         sentinels: typing.Set[typing.Union[Connection, socket, int]] = set()
-        if other_processes:
-            logger.info(f"Spinning up {len(other_processes)} extra processes.")
 
         for proc in other_processes:
             proc.start()
@@ -242,32 +243,59 @@ def run(
             ).result()
 
 
-def collect_processes(collection: Collection) -> typing.List[typing.List[Unit]]:
-    process_units, units = _collect_processes(collection)
+def collect_processes(
+    collection: typing.Union[Collection, typing.Iterable[Component]],
+    process_components: typing.Optional[typing.Collection[Component]] = None
+) -> typing.List[typing.List[Unit]]:
+    
+    if isinstance(collection, Collection):
+        process_units, units = _collect_processes(
+            collection._components.values(), 
+            collection.process_components()
+        )
+
+    else:
+        process_units, units = _collect_processes(
+            collection, 
+            process_components if process_components is not None else tuple()
+        )
+
     if len(units):
-        process_units = process_units + [units]
+        process_units = [units] + process_units 
+
     return process_units
 
 
-def _collect_processes(collection: Collection) -> typing.Tuple[typing.List[typing.List[Unit]], typing.List[Unit]]:
+def _collect_processes(
+    comps: typing.Iterable[Component],
+    process_components: typing.Collection[Component]
+) -> typing.Tuple[typing.List[typing.List[Unit]], typing.List[Unit]]:
     process_units: typing.List[typing.List[Unit]] = []
     units: typing.List[Unit] = []
-    for comp in collection._components.values():
+    
+    for comp in comps:
+
         if isinstance(comp, Collection):
-            r_process_units, r_units = _collect_processes(comp)
+            r_process_units, r_units = _collect_processes(
+                comp.components.values(), 
+                comp.process_components()
+            )
+
             process_units = process_units + r_process_units
-            if comp in collection.process_components():
+            if comp in process_components:
                 if len(r_units) > 0:
                     process_units = process_units + [r_units]
             else:
                 if len(r_units) > 0:
                     units = units + r_units
+
         elif isinstance(comp, Unit):
-            if comp in collection.process_components():
+            if comp in process_components:
                 process_units.append([comp])
             else:
                 if hasattr(comp, PROCESS_ATTR):
                     process_units.append([comp])
                 else:
                     units.append(comp)
+
     return process_units, units
