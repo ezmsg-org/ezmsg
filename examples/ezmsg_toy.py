@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
     system = TestSystem(TestSystemSettings(name="A"))
 
-    ez.run_system(
+    ez.run(
         system,
         # name = 'TOY',
         # connections = [
