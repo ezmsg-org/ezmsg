@@ -8,7 +8,7 @@ import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
-from ezmsg.util.messagecodec import MessageDecoder
+from ezmsg.util.messagecodec import message_log
 from ezmsg.sigproc.synth import WhiteNoise, WhiteNoiseSettings
 from ezmsg.sigproc.butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
@@ -27,7 +27,7 @@ class ButterworthSystemSettings(ez.Settings):
     term_settings: TerminateTestSettings
 
 
-class ButterworthSystem(ez.System):
+class ButterworthSystem(ez.Collection):
     NOISE = WhiteNoise()
     GATE = MessageGate()
     BUTTER = ButterworthFilter()
@@ -90,12 +90,11 @@ def test_butterworth_system(
 
     system = ButterworthSystem(settings)
 
-    ez.run_system(system)
+    ez.run(SYSTEM = system)
 
     messages: List[AxisArray] = []
-    with open(test_filename, "r") as file:
-        for line in file:
-            messages.append(json.loads(line, cls=MessageDecoder))
+    for msg in message_log(test_filename):
+        messages.append(msg)
 
     os.remove(test_filename)
 
