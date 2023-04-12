@@ -69,22 +69,32 @@ class AttachTestProcess(Process):
         super().__init__()
         self.settings = settings
 
+TX_TOPIC = 'TX'
+RX_TOPIC = 'RX'
+ACK_TOPIC = 'ACK'
 
 class TransmitReceiveProcess(AttachTestProcess):
     def run(self) -> None:
-        ez.run(TransmitReceive(self.settings))
-
+        txrx = TransmitReceive(self.settings)
+        ez.run(
+            TXRX = txrx,
+            connections = (
+                (txrx.OUTPUT, TX_TOPIC),
+                (RX_TOPIC, txrx.INPUT),
+                (txrx.ACK, ACK_TOPIC),
+            )
+        )
 
 class AttachEchoProcess(AttachTestProcess):
     def run(self) -> None:
         for _ in range(self.settings.num_messages):
             echo = Echo()
             ez.run(
-                echo,
+                ECHO = echo,
                 connections=(
-                    ("TransmitReceive/OUTPUT", echo.INPUT),
-                    (echo.OUTPUT, "TransmitReceive/INPUT"),
-                    ("TransmitReceive/ACK", echo.ACK),
+                    (TX_TOPIC, echo.INPUT),
+                    (echo.OUTPUT, RX_TOPIC),
+                    (ACK_TOPIC, echo.ACK),
                 ),
             )
 
