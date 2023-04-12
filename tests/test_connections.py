@@ -27,7 +27,7 @@ class SplitCollection(ez.Collection):
         )
 
 
-class SplitSystem(ez.System):
+class SplitSystem(ez.Collection):
     SOURCE = Source()
     SPLIT = SplitCollection()
     TERM = TerminateTest()
@@ -41,4 +41,4 @@ class SplitSystem(ez.System):
 
 
 if __name__ == "__main__":
-    ez.run_system(SplitSystem())
+    ez.run(SYSTEM = SplitSystem())

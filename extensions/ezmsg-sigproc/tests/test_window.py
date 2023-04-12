@@ -10,7 +10,7 @@ import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
-from ezmsg.util.messagecodec import MessageDecoder
+from ezmsg.util.messagecodec import message_log
 from ezmsg.sigproc.synth import Counter, CounterSettings
 from ezmsg.sigproc.window import Window, WindowSettings
 
@@ -30,7 +30,7 @@ class WindowSystemSettings(ez.Settings):
     term_settings: TerminateTestSettings = field(default_factory=TerminateTestSettings)
 
 
-class WindowSystem(ez.System):
+class WindowSystem(ez.Collection):
     COUNTER = Counter()
     GATE = MessageGate()
     WIN = Window()
@@ -94,12 +94,11 @@ def test_window_system(
 
     system = WindowSystem(settings)
 
-    ez.run_system(system)
+    ez.run(SYSTEM = system)
 
     messages: List[AxisArray] = []
-    with open(test_filename, "r") as file:
-        for line in file:
-            messages.append(json.loads(line, cls=MessageDecoder))
+    for msg in message_log(test_filename):
+        messages.append(msg)
 
     os.remove(test_filename)
 
