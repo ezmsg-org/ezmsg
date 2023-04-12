@@ -160,8 +160,10 @@ def run(
     graph_service = GraphService(graph_address)
     shm_service = SHMService()
 
+    if components is not None and isinstance(components, Component):
+        components = {"SYSTEM": components}
+        logger.warning("Passing a single Component without naming the Component is now Deprecated.")
     components = either_dict_or_kwargs(components, components_kwargs, "run")
-
     if components is None:
         raise ValueError("Must supply at least one component to run")
 
