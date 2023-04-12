@@ -72,8 +72,17 @@ class AxisArray:
         out_data = self.data
 
         for axis_name, ix in indexers.items():
+            if not isinstance(ix, (np.ndarray, int, slice)):
+                raise ValueError('isel only accepts arrays, ints, or slices')
             ax = self.ax(axis_name)
-            indices = np.arange(len(ax))[ix, np.newaxis]
+            indices = np.arange(len(ax))
+
+            # There has to be a more efficient way to do this
+            if isinstance(ix, slice):
+                indices = indices[ix]
+            else:
+                ix = [ix] if isinstance(ix, int) else ix
+                indices = np.take(indices, ix, 0)
 
             if axis_name in out_axes:
                 out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
