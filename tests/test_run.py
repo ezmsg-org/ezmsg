@@ -73,7 +73,7 @@ class ToySystemSettings(ez.Settings):
     output_fn: str
 
 
-class ToySystem(ez.System):
+class ToySystem(ez.Collection):
     SETTINGS: ToySystemSettings
 
     # Publishers
@@ -141,7 +141,7 @@ def test_local_system(toy_system_fixture, num_messages):
     system = toy_system_fixture(
         ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
-    ez.run_system(system)
+    ez.run(SYSTEM = system)
 
     results = []
     with open(test_filename, "r") as file:
