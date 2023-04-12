@@ -122,8 +122,6 @@ def test_sel():
     )
 
     aa_sl = aa.sel(dim0=slice(None, -10.75, 1.5))  # slice based on axis info
-    print(aa_sl)
-
-
-if __name__ == "__main__":
-    test_sel()
+    aa_idx = aa.isel(dim0=-1) # index slice of last index
+    assert aa_idx.data == data[-1]
+    
