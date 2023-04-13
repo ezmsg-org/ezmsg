@@ -63,7 +63,7 @@ class WebsocketSystemSettings(ez.Settings):
     port: int
 
 
-class WebsocketSystem(ez.System):
+class WebsocketSystem(ez.Collection):
     SETTINGS: WebsocketSystemSettings
 
     OSC = LFO()
@@ -104,4 +104,4 @@ if __name__ == "__main__":
     # Run the websocket system
     system = WebsocketSystem()
     system.apply_settings(WebsocketSystemSettings(host=host, port=port))
-    ez.run_system(system)
+    ez.run(SYSTEM = system)

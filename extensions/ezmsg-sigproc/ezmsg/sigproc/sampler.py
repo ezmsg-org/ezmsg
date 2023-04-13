@@ -241,7 +241,7 @@ class SamplerTestSystemSettings(ez.Settings):
     trigger_settings: TriggerGeneratorSettings
 
 
-class SamplerTestSystem(ez.System):
+class SamplerTestSystem(ez.Collection):
     SETTINGS: SamplerTestSystemSettings
 
     OSC = Oscillator()
@@ -284,4 +284,4 @@ if __name__ == "__main__":
 
     system = SamplerTestSystem(settings)
 
-    ez.run_system(system)
+    ez.run(SYSTEM = system)

@@ -1,18 +1,21 @@
+import typing
 from copy import deepcopy
 
 from .stream import Stream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
-from typing import Any, Dict, Iterable, Tuple, Optional, Union
 
-
-NetworkDefinition = Iterable[Tuple[Union[Stream, str], Union[Stream, str]]]
+NetworkDefinition = typing.Iterable[typing.Tuple[typing.Union[Stream, str], typing.Union[Stream, str]]]
 
 
 class CollectionMeta(ComponentMeta):
     def __init__(
-        cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
+        cls, 
+        name: str, 
+        bases: typing.Tuple[type, ...], 
+        fields: typing.Dict[str, typing.Any], 
+        **kwargs: typing.Any
     ) -> None:
         super(CollectionMeta, cls).__init__(name, bases, fields)
 
@@ -33,7 +36,7 @@ class CollectionMeta(ComponentMeta):
 class Collection(Component, metaclass=CollectionMeta):
     """Collections can contain subunits and connect them together"""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: typing.Optional[Settings] = None):
         super(Collection, self).__init__(settings)
 
         self._components = deepcopy(self.__class__.__components__)
@@ -47,5 +50,5 @@ class Collection(Component, metaclass=CollectionMeta):
     def network(self) -> NetworkDefinition:
         return ()
 
-    def process_components(self) -> Tuple[Component, ...]:
+    def process_components(self) -> typing.Collection[Component]:
         return (self,)

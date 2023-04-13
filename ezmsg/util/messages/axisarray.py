@@ -8,6 +8,7 @@ from dataclasses import field, dataclass, replace
 import numpy as np
 import numpy.typing as npt
 
+from ezmsg.core.util import either_dict_or_kwargs
 
 @dataclass
 class AxisArray:
@@ -59,22 +60,44 @@ class AxisArray:
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
 
-    def isel(self, **indexers: slice) -> "AxisArray":
+    def isel(
+        self,
+        indexers: typing.Optional[typing.Any] = None,
+        **indexers_kwargs: typing.Any
+    ) -> "AxisArray":
+        
+        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, 'isel')
+
         out_axes = {an: a for an, a in self.axes.items()}
         out_data = self.data
 
         for axis_name, ix in indexers.items():
-            if not isinstance(ix, slice):
-                raise ValueError("isel only supports slices for now")
+            if not isinstance(ix, (np.ndarray, int, slice)):
+                raise ValueError('isel only accepts arrays, ints, or slices')
             ax = self.ax(axis_name)
-            indices = np.arange(*ix.indices(len(ax)))
+            indices = np.arange(len(ax))
+
+            # There has to be a more efficient way to do this
+            if isinstance(ix, slice):
+                indices = indices[ix]
+            else:
+                ix = [ix] if isinstance(ix, int) else ix
+                indices = np.take(indices, ix, 0)
+
             if axis_name in out_axes:
                 out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
             out_data = np.take(out_data, indices, ax.idx)
 
         return replace(self, data=out_data, axes=out_axes)
 
-    def sel(self, **indexers: slice) -> "AxisArray":
+    def sel(
+        self, 
+        indexers: typing.Optional[typing.Any] = None,
+        **indexers_kwargs: typing.Any
+    ) -> "AxisArray":
+        
+        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, 'sel')
+
         out_indexers = dict()
         for axis_name, ix in indexers.items():
             axis = self.get_axis(axis_name)
@@ -84,6 +107,7 @@ class AxisArray:
             stop = int(axis.index(ix.stop)) if ix.stop is not None else None
             step = int(ix.step / axis.gain) if ix.step is not None else None
             out_indexers[axis_name] = slice(start, stop, step)
+            
         return self.isel(**out_indexers)
 
     @property
