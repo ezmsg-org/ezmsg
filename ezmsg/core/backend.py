@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import typing
 
 from socket import socket
 from multiprocessing import Event, Barrier
@@ -23,24 +24,24 @@ from .backendprocess import (
     new_threaded_event_loop,
 )
 
-from typing import List, Callable, Tuple, Optional, Type, Set, Union, Sequence
+from .util import either_dict_or_kwargs
 
 logger = logging.getLogger("ezmsg")
 
 
 class ExecutionContext:
-    processes: List[BackendProcess]
+    processes: typing.List[BackendProcess]
     term_ev: EventType
     start_barrier: BarrierType
-    connections: List[Tuple[str, str]]
+    connections: typing.List[typing.Tuple[str, str]]
 
     def __init__(
         self,
-        processes: List[List[Unit]],
+        processes: typing.List[typing.List[Unit]],
         graph_service: GraphService,
         shm_service: SHMService,
-        connections: List[Tuple[str, str]] = [],
-        backend_process: Type[BackendProcess] = DefaultBackendProcess,
+        connections: typing.List[typing.Tuple[str, str]] = [],
+        backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     ) -> None:
         if not processes:
             raise ValueError("Cannot create an execution context for zero processes")
@@ -66,19 +67,20 @@ class ExecutionContext:
     @classmethod
     def setup(
         cls,
-        components: List[Component],
+        components: typing.Mapping[str, Component],
         graph_service: GraphService,
         shm_service: SHMService,
-        name: Optional[str] = None,
-        connections: Optional[NetworkDefinition] = None,
-        backend_process: Type[BackendProcess] = DefaultBackendProcess,
+        root_name: typing.Optional[str] = None,
+        connections: typing.Optional[NetworkDefinition] = None,
+        process_components: typing.Optional[typing.Collection[Component]] = None,
+        backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
         force_single_process: bool = False,
-    ) -> Optional["ExecutionContext"]:
-        graph_connections: List[Tuple[str, str]] = []
+    ) -> typing.Optional["ExecutionContext"]:
+        graph_connections: typing.List[typing.Tuple[str, str]] = []
 
-        for component in components:
+        for name, component in components.items():
             component._set_name(name)
-            component._set_location()
+            component._set_location([root_name] if root_name is not None else [])
 
         if connections is not None:
             for from_topic, to_topic in connections:
@@ -89,9 +91,9 @@ class ExecutionContext:
                 graph_connections.append((from_topic, to_topic))
 
         def crawl_components(
-            component: Component, callback: Callable[[Component], None]
+            component: Component, callback: typing.Callable[[Component], None]
         ) -> None:
-            search: List[Component] = [component]
+            search: typing.List[Component] = [component]
             while len(search):
                 comp = search.pop()
                 search += list(comp.components.values())
@@ -106,22 +108,19 @@ class ExecutionContext:
                         to_stream = to_stream.address
                     graph_connections.append((from_stream, to_stream))
 
-        for component in components:
+        for component in components.values():
             if isinstance(component, Collection):
                 crawl_components(component, gather_edges)
 
-        processes = []
-        for component in components:
-            if isinstance(component, Collection):
-                processes += collect_processes(component)
+        processes = collect_processes(components.values(), process_components)
 
+        for component in components.values():
+            if isinstance(component, Collection):
                 def configure_collections(comp: Component):
                     if isinstance(comp, Collection):
                         comp.configure()
 
                 crawl_components(component, configure_collections)
-            elif isinstance(component, Unit):
-                processes += [[component]]
 
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]
@@ -142,25 +141,31 @@ def run_system(
     system: Collection,
     num_buffers: int = 32,
     init_buf_size: int = DEFAULT_SHM_SIZE,
-    backend_process: Type[BackendProcess] = DefaultBackendProcess,
+    backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
 ) -> None:
     """Deprecated; just use run any component (unit, collection)"""
-    run(system, backend_process=backend_process)
+    run(SYSTEM = system, backend_process = backend_process)
 
 
 def run(
-    components: Union[Component, List[Component]],
-    name: Optional[str] = None,
-    connections: Optional[NetworkDefinition] = None,
-    backend_process: Type[BackendProcess] = DefaultBackendProcess,
-    graph_address: Optional[AddressType] = None,
+    components: typing.Optional[typing.Mapping[str, Component]] = None,
+    root_name: typing.Optional[str] = None,
+    connections: typing.Optional[NetworkDefinition] = None,
+    process_components: typing.Optional[typing.Collection[Component]] = None,
+    backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
+    graph_address: typing.Optional[AddressType] = None,
     force_single_process: bool = False,
+    **components_kwargs: Component
 ) -> None:
     graph_service = GraphService(graph_address)
     shm_service = SHMService()
 
-    if isinstance(components, Component):
-        components = [components]
+    if components is not None and isinstance(components, Component):
+        components = {"SYSTEM": components}
+        logger.warning("Passing a single Component without naming the Component is now Deprecated.")
+    components = either_dict_or_kwargs(components, components_kwargs, "run")
+    if components is None:
+        raise ValueError("Must supply at least one component to run")
 
     with new_threaded_event_loop() as loop:
 
@@ -168,8 +173,9 @@ def run(
             components,
             graph_service,
             shm_service,
-            name,
+            root_name,
             connections,
+            process_components,
             backend_process,
             force_single_process,
         )
@@ -193,12 +199,13 @@ def run(
 
         asyncio.run_coroutine_threadsafe(setup_graph(), loop).result()
 
+        if len(execution_context.processes) > 1:
+            logger.info(f"Running in {len(execution_context.processes)} processes.")
+            
         main_process = execution_context.processes[0]
         other_processes = execution_context.processes[1:]
 
-        sentinels: Set[Union[Connection, socket, int]] = set()
-        if other_processes:
-            logger.info(f"Spinning up {len(other_processes)} extra processes.")
+        sentinels: typing.Set[typing.Union[Connection, socket, int]] = set()
 
         for proc in other_processes:
             proc.start()
@@ -238,32 +245,59 @@ def run(
             ).result()
 
 
-def collect_processes(collection: Collection) -> List[List[Unit]]:
-    process_units, units = _collect_processes(collection)
+def collect_processes(
+    collection: typing.Union[Collection, typing.Iterable[Component]],
+    process_components: typing.Optional[typing.Collection[Component]] = None
+) -> typing.List[typing.List[Unit]]:
+    
+    if isinstance(collection, Collection):
+        process_units, units = _collect_processes(
+            collection._components.values(), 
+            collection.process_components()
+        )
+
+    else:
+        process_units, units = _collect_processes(
+            collection, 
+            process_components if process_components is not None else tuple()
+        )
+
     if len(units):
-        process_units = process_units + [units]
+        process_units = [units] + process_units 
+
     return process_units
 
 
-def _collect_processes(collection: Collection) -> Tuple[List[List[Unit]], List[Unit]]:
-    process_units: List[List[Unit]] = []
-    units: List[Unit] = []
-    for comp in collection._components.values():
+def _collect_processes(
+    comps: typing.Iterable[Component],
+    process_components: typing.Collection[Component]
+) -> typing.Tuple[typing.List[typing.List[Unit]], typing.List[Unit]]:
+    process_units: typing.List[typing.List[Unit]] = []
+    units: typing.List[Unit] = []
+    
+    for comp in comps:
+
         if isinstance(comp, Collection):
-            r_process_units, r_units = _collect_processes(comp)
+            r_process_units, r_units = _collect_processes(
+                comp.components.values(), 
+                comp.process_components()
+            )
+
             process_units = process_units + r_process_units
-            if comp in collection.process_components():
+            if comp in process_components:
                 if len(r_units) > 0:
                     process_units = process_units + [r_units]
             else:
                 if len(r_units) > 0:
                     units = units + r_units
+
         elif isinstance(comp, Unit):
-            if comp in collection.process_components():
+            if comp in process_components:
                 process_units.append([comp])
             else:
                 if hasattr(comp, PROCESS_ATTR):
                     process_units.append([comp])
                 else:
                     units.append(comp)
+
     return process_units, units

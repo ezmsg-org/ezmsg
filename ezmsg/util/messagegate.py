@@ -1,7 +1,7 @@
+import typing
 from dataclasses import dataclass
-import ezmsg.core as ez
 
-from typing import Any, AsyncGenerator, Optional
+import ezmsg.core as ez
 
 
 @dataclass
@@ -14,11 +14,11 @@ class MessageGateSettings(ez.Settings):
     default_open: bool = False
 
     # Automatically change back to default state after X messages
-    default_after: Optional[int] = None
+    default_after: typing.Optional[int] = None
 
 
 class MessageGateState(ez.State):
-    gate_open: Optional[bool] = None
+    gate_open: typing.Optional[bool] = None
     msgs: int = 0  # Messages since last gate change
 
 
@@ -28,8 +28,8 @@ class MessageGate(ez.Unit):
 
     INPUT_GATE = ez.InputStream(GateMessage)
 
-    INPUT = ez.InputStream(Any)
-    OUTPUT = ez.OutputStream(Any)
+    INPUT = ez.InputStream(typing.Any)
+    OUTPUT = ez.OutputStream(typing.Any)
 
     def initialize(self) -> None:
         self.STATE.gate_open = self.SETTINGS.start_open
@@ -45,7 +45,7 @@ class MessageGate(ez.Unit):
 
     @ez.subscriber(INPUT)
     @ez.publisher(OUTPUT)
-    async def on_input(self, msg: Any) -> AsyncGenerator:
+    async def on_input(self, msg: typing.Any) -> typing.AsyncGenerator:
         self.STATE.msgs += 1
 
         if self.STATE.gate_open:
