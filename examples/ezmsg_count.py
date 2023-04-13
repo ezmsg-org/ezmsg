@@ -38,7 +38,7 @@ class Count(ez.Unit):
                 raise ez.Complete
 
 
-class CountSystem(ez.System):
+class CountSystem(ez.Collection):
     COUNT = Count()
     TERM = TerminateTest()
 
@@ -61,4 +61,4 @@ if __name__ == "__main__":
     # multiprocessing.set_start_method('spawn', force=True)
 
     system = CountSystem()
-    ez.run_system(system)
+    ez.run(SYSTEM = system)

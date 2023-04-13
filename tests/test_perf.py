@@ -37,6 +37,7 @@ def get_datestamp() -> str:
 class LoadTestSettings(ez.Settings):
     duration: float = 30.0
     dynamic_size: int = 8
+    buffers: int = 32
 
 
 @dataclasses.dataclass
@@ -50,9 +51,10 @@ class LoadTestPublisher(ez.Unit):
     OUTPUT = ez.OutputStream(LoadTestSample)
     SETTINGS: LoadTestSettings
 
-    def setup(self) -> None:
+    def initialize(self) -> None:
         self.running = True
         self.counter = 0
+        self.OUTPUT.num_buffers = self.SETTINGS.buffers
 
     @ez.publisher(OUTPUT)
     async def publish(self) -> AsyncGenerator:
@@ -145,7 +147,7 @@ class LoadTestSubscriber(ez.Unit):
         raise ez.NormalTermination
 
 
-class LoadTest(ez.System):
+class LoadTest(ez.Collection):
     SETTINGS: LoadTestSettings
 
     PUBLISHER = LoadTestPublisher()
@@ -180,9 +182,10 @@ def test_performance(duration, size, buffers) -> None:
         LoadTestSettings(
             dynamic_size=int(size),
             duration=duration,
+            buffers=buffers
         )
     )
-    ez.run_system(system, num_buffers=buffers)
+    ez.run(SYSTEM = system)
 
 
 def run_many_dynamic_sizes(duration, buffers) -> None:
