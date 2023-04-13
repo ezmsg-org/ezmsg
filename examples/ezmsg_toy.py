@@ -189,9 +189,8 @@ if __name__ == "__main__":
 
     system = TestSystem(TestSystemSettings(name="A"))
 
-    ez.run_system(
-        system,
-        # name = 'TOY',
+    ez.run(
+        SYSTEM = system,
         # connections = [
         #     ( system.PING.OUTPUT, 'PING_OUTPUT' ),
         #     ( 'FOO_SUB', system.FOOSUB.INPUT )
