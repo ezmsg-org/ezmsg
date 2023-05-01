@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import typing
+import enum
 
 from socket import socket
 from multiprocessing import Event, Barrier
@@ -88,6 +89,10 @@ class ExecutionContext:
                     from_topic = from_topic.address
                 if isinstance(to_topic, Stream):
                     to_topic = to_topic.address
+                if isinstance(to_topic, enum.Enum):
+                    to_topic = to_topic.name
+                if isinstance(from_topic, enum.Enum):
+                    from_topic = from_topic.name
                 graph_connections.append((from_topic, to_topic))
 
         def crawl_components(
@@ -116,6 +121,7 @@ class ExecutionContext:
 
         for component in components.values():
             if isinstance(component, Collection):
+
                 def configure_collections(comp: Component):
                     if isinstance(comp, Collection):
                         comp.configure()
@@ -144,7 +150,7 @@ def run_system(
     backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
 ) -> None:
     """Deprecated; just use run any component (unit, collection)"""
-    run(SYSTEM = system, backend_process = backend_process)
+    run(SYSTEM=system, backend_process=backend_process)
 
 
 def run(
@@ -155,14 +161,16 @@ def run(
     backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     graph_address: typing.Optional[AddressType] = None,
     force_single_process: bool = False,
-    **components_kwargs: Component
+    **components_kwargs: Component,
 ) -> None:
     graph_service = GraphService(graph_address)
     shm_service = SHMService()
 
     if components is not None and isinstance(components, Component):
         components = {"SYSTEM": components}
-        logger.warning("Passing a single Component without naming the Component is now Deprecated.")
+        logger.warning(
+            "Passing a single Component without naming the Component is now Deprecated."
+        )
     components = either_dict_or_kwargs(components, components_kwargs, "run")
     if components is None:
         raise ValueError("Must supply at least one component to run")
@@ -182,10 +190,10 @@ def run(
 
         if execution_context is None:
             return
-        
+
         async def create_graph_context() -> GraphContext:
             return await GraphContext(graph_service, shm_service).__aenter__()
-        
+
         async def cleanup_graph(context: GraphContext) -> None:
             await context.__aexit__(None, None, None)
 
@@ -201,7 +209,7 @@ def run(
 
         if len(execution_context.processes) > 1:
             logger.info(f"Running in {len(execution_context.processes)} processes.")
-            
+
         main_process = execution_context.processes[0]
         other_processes = execution_context.processes[1:]
 
@@ -247,40 +255,37 @@ def run(
 
 def collect_processes(
     collection: typing.Union[Collection, typing.Iterable[Component]],
-    process_components: typing.Optional[typing.Collection[Component]] = None
+    process_components: typing.Optional[typing.Collection[Component]] = None,
 ) -> typing.List[typing.List[Unit]]:
-    
+
     if isinstance(collection, Collection):
         process_units, units = _collect_processes(
-            collection._components.values(), 
-            collection.process_components()
+            collection._components.values(), collection.process_components()
         )
 
     else:
         process_units, units = _collect_processes(
-            collection, 
-            process_components if process_components is not None else tuple()
+            collection,
+            process_components if process_components is not None else tuple(),
         )
 
     if len(units):
-        process_units = [units] + process_units 
+        process_units = [units] + process_units
 
     return process_units
 
 
 def _collect_processes(
-    comps: typing.Iterable[Component],
-    process_components: typing.Collection[Component]
+    comps: typing.Iterable[Component], process_components: typing.Collection[Component]
 ) -> typing.Tuple[typing.List[typing.List[Unit]], typing.List[Unit]]:
     process_units: typing.List[typing.List[Unit]] = []
     units: typing.List[Unit] = []
-    
+
     for comp in comps:
 
         if isinstance(comp, Collection):
             r_process_units, r_units = _collect_processes(
-                comp.components.values(), 
-                comp.process_components()
+                comp.components.values(), comp.process_components()
             )
 
             process_units = process_units + r_process_units
