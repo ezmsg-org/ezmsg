@@ -111,6 +111,10 @@ class ExecutionContext:
                         from_stream = from_stream.address
                     if isinstance(to_stream, Stream):
                         to_stream = to_stream.address
+                    if isinstance(to_stream, enum.Enum):
+                        to_stream = to_stream.name
+                    if isinstance(from_stream, enum.Enum):
+                        from_stream = from_stream.name
                     graph_connections.append((from_stream, to_stream))
 
         for component in components.values():
