@@ -296,14 +296,6 @@ class GraphService(ServiceManager[GraphServer]):
         dag_bytes = await reader.readexactly(dag_num_bytes)
         dag: DAG = pickle.loads(dag_bytes)
 
-        graphviz_str = "digraph EZ {\n"
-        for node in dag.nodes:
-            graphviz_str += f"\t{node}\n"
-        for node, conns in dag.graph.items():
-            for conn in conns:
-                graphviz_str += f"\t{node}->{conn}\n"
-        graphviz_str += "}"
-
         await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
         await close_stream_writer(writer)
         return dag
