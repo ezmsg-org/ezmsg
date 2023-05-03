@@ -31,7 +31,7 @@ class FilterState(ez.State):
     zi: Optional[np.ndarray] = None
     filt_designed: bool = False
     filt: Optional[FilterCoefficients] = None
-    filt_set: asyncio.Event = asyncio.Event()
+    filt_set: asyncio.Event = field(default_factory=asyncio.Event)
     samp_shape: Optional[Tuple[int, ...]] = None
     fs: Optional[float] = None  # Hz
 
