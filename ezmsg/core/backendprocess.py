@@ -22,7 +22,7 @@ from .graphserver import GraphService
 from .shmserver import SHMService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .netprotocol import Address
+from .messagecache import MessageCache
 
 from typing import (
     List,
@@ -244,6 +244,10 @@ class DefaultBackendProcess(BackendProcess):
                     unit.shutdown()
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
+
+            for cache in MessageCache.values():
+                cache.clear()
+
             asyncio.run_coroutine_threadsafe(context.revert(), loop=loop).result()
 
             logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")
