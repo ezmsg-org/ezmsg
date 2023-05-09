@@ -69,6 +69,10 @@ class Cache:
                 with MessageMarshal.obj_from_mem(mem) as obj:
                     yield obj
 
+    def clear(self):
+        self.cache_id = [None] * self.num_buffers
+        self.cache = [None] * self.num_buffers
+
 
 # NOTE: This should be made thread-safe in the future
 MessageCache: Dict[UUID, Cache] = dict()
