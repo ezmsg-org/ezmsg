@@ -70,6 +70,7 @@ class ZMQSenderUnit(ez.Unit):
         self.has_subscribers = False
 
     def shutdown(self) -> None:
+        self.monitor.close()
         self.socket.close()
 
     @ez.task
@@ -150,6 +151,7 @@ class ZMQPollerUnit(ez.Unit):
         self.socket_open = False
 
     def shutdown(self) -> None:
+        self.monitor.close()
         self.socket.close()
 
     @ez.task
