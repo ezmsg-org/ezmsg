@@ -52,7 +52,6 @@ class Publisher:
     _running: asyncio.Event
     _msg_id: int
     _shm: SHMContext
-    _cache: Cache
     _force_tcp: bool
     _last_backpressure_event: float
 
@@ -104,8 +103,7 @@ class Publisher:
             logger.debug("Closing pub server task.")
 
         pub._connection_task.add_done_callback(on_done)
-        pub._cache = Cache(pub._num_buffers)
-        MessageCache[id] = pub._cache
+        MessageCache[id] = Cache(pub._num_buffers)
         await pub._initialized.wait()
         return pub
 
@@ -259,7 +257,7 @@ class Publisher:
             self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
-        self._cache.put(self._msg_id, obj)
+        MessageCache[self.id].put(self._msg_id, obj)
 
         for sub in list(self._subscribers.values()):
             if not self._force_tcp and sub.id.node == self.id.node:
@@ -269,7 +267,7 @@ class Publisher:
                 else:
                     try:
                         # Push cache to shm (if not already there)
-                        self._cache.push(self._msg_id, self._shm)
+                        MessageCache[self.id].push(self._msg_id, self._shm)
 
                     except UndersizedMemory as e:
                         new_shm = await self._shm_service.create(
@@ -283,7 +281,7 @@ class Publisher:
 
                         self._shm.close()
                         self._shm = new_shm
-                        self._cache.push(self._msg_id, self._shm)
+                        MessageCache[self.id].push(self._msg_id, self._shm)
 
                     sub.writer.write(Command.TX_SHM.value)
                     sub.writer.write(msg_id_bytes)
