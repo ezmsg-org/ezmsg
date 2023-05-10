@@ -216,6 +216,9 @@ def run(
 
         main_process = execution_context.processes[0]
         other_processes = execution_context.processes[1:]
+        for process in execution_context.processes:
+            for unit in process.units:
+                print(f"Process {process} unit: {unit}")
 
         sentinels: typing.Set[typing.Union[Connection, socket, int]] = set()
 
