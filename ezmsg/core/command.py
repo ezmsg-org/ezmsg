@@ -127,8 +127,34 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
             )
             return
 
+        graph_connections = dag.graph.copy()
+        # Let's eliminate proxy topics, i.e. connections with inputs and outputs.
+        source_nodes = []
+        for node, conns in graph_connections.items():
+            if len(conns) > 0:
+                source_nodes += [node]
+        proxy_topics = []
+        for conns in graph_connections.values():
+            for conn in conns:
+                if conn in source_nodes and conn not in proxy_topics:
+                    proxy_topics += [conn]
+        # Replace Proxy Topics with actual source and downstream
+        for proxy_topic in proxy_topics:
+            downstreams = graph_connections.pop(proxy_topic)
+            logger.info(f"{proxy_topic} downstream connetions: {downstreams}")
+            for node, conns in graph_connections.items():
+                for conn in conns:
+                    if conn == proxy_topic:
+                        new_conns = conns.copy()
+                        new_conns.remove(proxy_topic)
+                        new_conns.union(downstreams)
+                        logger.info(f"Updating connections for {node} from {conns} to {new_conns}")
+                        graph_connections[node] = new_conns
+
+        graph_connections = dag.graph.copy()
         # Let's come up with UUID node names
-        node_map = {name: f'"{str(uuid4())}"' for name in dag.nodes}
+        nodes = set(graph_connections.keys())
+        node_map = {name: f'"{str(uuid4())}"' for name in nodes}
 
         # Construct the graph
         def tree():
@@ -137,7 +163,7 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         graph: defaultdict = tree()
 
         connections = ""
-        for node, conns in dag.graph.items():
+        for node, conns in graph_connections.items():
             subgraph = graph
             path = node.split("/")
             route = path[:-1]
