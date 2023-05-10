@@ -200,6 +200,9 @@ class DefaultBackendProcess(BackendProcess):
                     fn(unit)
                 except NormalTermination:
                     self.term_ev.set()
+                except Exception:
+                    logger.error(f"Exception in Main: {unit.address}")
+                    logger.error(traceback.format_exc())
 
             while True:
                 try:
@@ -323,10 +326,9 @@ class DefaultBackendProcess(BackendProcess):
                 self.term_ev.set()
                 raise
 
-            except Exception as e:
+            except Exception:
                 logger.error(f"Exception in Task: {task_address}")
                 logger.error(traceback.format_exc())
-                raise
 
         return wrapped_task
 
