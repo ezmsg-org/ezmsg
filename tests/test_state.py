@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from contextlib import nullcontext as does_not_raise
 
@@ -63,7 +64,7 @@ def test_state_configurations(
         unit = ToyUnit(settings)
         unit._set_name()
         unit._set_location()
-        unit.setup()
+        asyncio.run(unit.setup())
 
 
 if __name__ == "__main__":
