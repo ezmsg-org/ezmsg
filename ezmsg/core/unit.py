@@ -1,4 +1,5 @@
 import time
+import inspect
 import functools
 from .stream import Stream, InputStream, OutputStream
 from .component import ComponentMeta, Component
@@ -68,21 +69,26 @@ class Unit(Component, metaclass=UnitMeta):
         self._main = self.__class__.__main__
         self._threads = self.__class__.__threads__
 
-    def setup(self):
+    async def setup(self):
         """This is called from within the same process this unit will live"""
         self._instantiate_state()
         if not self._settings_applied:
             raise ValueError(
                 f"{self.address} has not had settings applied before initialization"
             )
-        self.initialize()
+
+        if inspect.iscoroutinefunction(self.initialize):
+            await self.initialize()
+        else:
+            self.initialize() # type: ignore
+
         self._check_state()
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         """This is called from within the same process this unit will live"""
         pass
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """This is called from within the same process this unit will live"""
         pass
 
