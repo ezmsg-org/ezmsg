@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import logging
+import inspect
 import time
 import traceback
 import threading
@@ -98,7 +99,7 @@ class DefaultBackendProcess(BackendProcess):
 
             async def setup_state():
                 for unit in self.units:
-                    unit.setup()
+                    await unit.setup()
 
             asyncio.run_coroutine_threadsafe(setup_state(), loop).result()
 
@@ -200,6 +201,9 @@ class DefaultBackendProcess(BackendProcess):
                     fn(unit)
                 except NormalTermination:
                     self.term_ev.set()
+                except Exception:
+                    logger.error(f"Exception in Main: {unit.address}")
+                    logger.error(traceback.format_exc())
 
             while True:
                 try:
@@ -241,7 +245,10 @@ class DefaultBackendProcess(BackendProcess):
 
             async def shutdown_units() -> None:
                 for unit in self.units:
-                    unit.shutdown()
+                    if inspect.iscoroutinefunction(unit.shutdown):
+                        await unit.shutdown()
+                    else:
+                        unit.shutdown() # type: ignore
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
 
@@ -323,10 +330,9 @@ class DefaultBackendProcess(BackendProcess):
                 self.term_ev.set()
                 raise
 
-            except Exception as e:
+            except Exception:
                 logger.error(f"Exception in Task: {task_address}")
                 logger.error(traceback.format_exc())
-                raise
 
         return wrapped_task
 
