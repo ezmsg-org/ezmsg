@@ -3,7 +3,6 @@ API
 
 An ``ezmsg`` system is created from a few basic components. ``ezmsg`` provides a framework for you to define your own graphs using its building blocks. Inherit from its base components to define a pipeline that works for your project.
 
-.. TODO: add figure showing how components work together
 
 Collection
 ----------
@@ -37,21 +36,6 @@ Complete
 
    A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully. If all functions in all ``Units`` raise ``Complete``, the entire ``System`` will terminate execution.
 
-Message
--------
-
-`Soon to be deprecated.`
-
-To define unique data types, inherit from ``Message``.
-
-.. code-block:: python
-
-   class YourMessage(Message):
-      attr1: int
-      attr2: float
-
-.. note:: 
-   ``Message`` uses type hints to define member variables, but does not enforce type checking.
 
 NetworkDefinition
 ------------------
@@ -69,7 +53,7 @@ NormalTermination
 
    A type of ``Exception`` which signals to ``ezmsg`` that the ``System`` can be shut down gracefully. 
 
-run_system
+run
 ----------
 
 .. py:method:: run_system(system: System, num_buffers: int = 32, init_buf_size: int = 2**16, backend_process: BackendProcess=None)
@@ -162,30 +146,6 @@ Facilitates a flow of ``Messages`` into or out of a ``Unit`` or ``Collection``.
 
    Can be added to any ``Unit`` or ``Collection`` as a member variable. Methods may publish to it.
 
-System
-------
-
-A type of ``Collection`` which represents an entire ``ezmsg`` graph. ``Systems`` have no input or output streams and are runnable via :ref:`run-system`.
-
-Lifecycle Hooks
-^^^^^^^^^^^^^^^
-
-The following lifecycle hooks for ``System`` can be overridden:
-
-.. py:method:: configure( self )
-
-   Runs when the ``System`` is instantiated. This is the best place to call ``Unit.apply_settings()`` on each member ``Unit`` of the ``System``.
-
-Overridable Methods
-^^^^^^^^^^^^^^^^^^^^
-
-.. py:method:: network( self ) -> NetworkDefinition
-
-   In this method, define and return a ``NetworkDefinition`` which defines how ``InputStreams`` and ``OutputStreams`` from member ``Units`` will be connected.
-
-.. py:method:: process_components( self ) -> Tuple[Unit|Collection, ...]
-
-   In this method, define and return a tuple which contains ``Units`` and ``Collections`` which should run in their own processes.
 
 Unit
 ----
@@ -195,7 +155,7 @@ Represents a single step in the graph. To create a ``Unit``, inherit from the ``
 Lifecycle Hooks
 ^^^^^^^^^^^^^^^
 
-The following lifecycle hooks in the ``Unit`` class can be overridden:
+The following lifecycle hooks in the ``Unit`` class can be overridden. Both can be run as ``async`` functions by simply adding the ``async`` keyword when overriding.
 
 .. py:method:: initialize( self ) 
 
