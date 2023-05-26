@@ -13,7 +13,15 @@ Testing ezmsg requires:
 Installation
 ------------
 
-.. TODO: add instructions when it's posted on pypi
+From PyPi
+^^^^^^^^^
+
+.. code-block:: bash
+
+  pip install ezmsg 
+
+From source
+^^^^^^^^^^^
 
 Clone the project, then create a virtual environment and install it there.
 
@@ -42,3 +50,4 @@ Clone the project, then create a virtual environment and install it there.
 Run an example
 --------------
 
+The `Examples <https://github.com/iscoe/ezmsg/tree/master/examples>`_ directory is a great place to start.
