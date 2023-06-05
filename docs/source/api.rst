@@ -29,6 +29,11 @@ Overridable Methods
 
    In this method, define and return a tuple which contains ``Units`` and ``Collections`` which should run in their own processes.
 
+Component
+---------
+
+Metaclass which ``Unit``s and ``Collection``s inherit from.
+
 Complete
 --------
 
@@ -54,24 +59,38 @@ NormalTermination
    A type of ``Exception`` which signals to ``ezmsg`` that the ``System`` can be shut down gracefully. 
 
 run
-----------
+---
 
-.. py:method:: run_system(system: System, num_buffers: int = 32, init_buf_size: int = 2**16, backend_process: BackendProcess=None)
+.. py:method:: run(components: {str: Component} = None,
+    root_name: str = None,
+    connections: NetworkDefinition = None,
+    process_components: [Component] = None,
+    backend_process: BackendProcess = DefaultBackendProcess,
+    graph_address: (str, int) = None,
+    force_single_process: bool = False,
+    **components_kwargs: Component)
+()
 
-   Begin execution of a ``System``.
+   `The old method` run_system() `has been deprecated and uses` run() `instead.`
 
-   `system` is the ``System`` that should be started.
+   Begin execution of a set of ``Component``s.
 
-   `num_buffers` is the number of blocks of shared memory that the ``System`` will be allocated upon startup. These shared memory blocks will be used to pass messages from ``OutputStreams`` to ``InputStreams``.
+   `components` represents the nodes in the directed acyclic graph. It is a dictionary which contains the ``Component``s to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()`` for each ``Unit`` and ``configure()`` for each ``Collection``, if defined.
 
-   `init_buf_size` is the size in bytes of each block of shared memory that the ``System`` will be allocated upon startup. These shared memory blocks will be used to pass messages from ``OutputStreams`` to ``InputStreams``.
+   `connections` represents the edges is a ``NetworkDefinition`` which connects ``OutputStream``s to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph using the contents of this parameter.
+
+   `process_components` is a list of ``Component``s which should live in their own process.
 
    `backend_process` is currently under development.
+
+   `graph_address` is a tuple which contains the hostname and port of the graph server which ``ezmsg`` should connect to. If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978. 
+
+   `force_single_process` will run all ``Component``s in one process. This is necessary when running ``ezmsg`` in a notebook.
 
 Settings
 --------
 
-To pass parameters into a ``Unit``, ``Collection``, or ``System``, inherit from ``Settings``.
+To pass parameters into a ``Component``, inherit from ``Settings``.
 
 .. code-block:: python
 
@@ -79,7 +98,7 @@ To pass parameters into a ``Unit``, ``Collection``, or ``System``, inherit from 
       setting1: int
       setting2: float
 
-To use, declare the ``Settings`` object for a ``Unit`` as a member variable called (all-caps!) ``SETTINGS``. ``ezmsg`` will monitor the variable called ``SETTINGS`` in the background, so it is important to name it correctly.
+To use, declare the ``Settings`` object for a ``Component`` as a member variable called (all-caps!) ``SETTINGS``. ``ezmsg`` will monitor the variable called ``SETTINGS`` in the background, so it is important to name it correctly.
 
 .. code-block:: python
 
@@ -87,19 +106,18 @@ To use, declare the ``Settings`` object for a ``Unit`` as a member variable call
 
       SETTINGS: YourSettings
 
-Instantiate the ``Settings`` object in the ``Collection`` or ``System`` which will hold the ``Unit``. It is recommended to pass the instantiated ``Settings`` object to its ``Unit`` inside the ``configure()`` lifecycle hook.
+A ``Unit`` can accept a ``Settings`` object as a parameter on instantiation.
 
 .. code-block:: python
 
-   class YourSystem(System):
+   class YourCollection(Collection):
 
-      YOUR_UNIT = YourUnit()
-
-      def configure():
-         YOUR_UNIT.apply_settings(YourSettings(
+      YOUR_UNIT = YourUnit(
+         YourSettings(
             setting1: int,
             setting2: float
-         ))
+         )
+      )
 
 .. note:: 
    ``Settings`` uses type hints to define member variables, but does not enforce type checking.
@@ -107,7 +125,7 @@ Instantiate the ``Settings`` object in the ``Collection`` or ``System`` which wi
 State
 -----
 
-To track a mutable state for a ``Unit``, ``Collection``, or ``System``, inherit from ``State``.
+To track a mutable state for a ``Component``, inherit from ``State``.
 
 .. code-block:: python
 
@@ -115,9 +133,9 @@ To track a mutable state for a ``Unit``, ``Collection``, or ``System``, inherit 
       state1: int
       state2: float
 
-To use, declare the ``State`` object for a ``Unit`` as a member variable called (all-caps!) ``STATE``. ``ezmsg`` will monitor the variable called ``STATE`` in the background, so it is important to name it correctly.
+To use, declare the ``State`` object for a ``Component`` as a member variable called (all-caps!) ``STATE``. ``ezmsg`` will monitor the variable called ``STATE`` in the background, so it is important to name it correctly.
 
-Member functions can then access and mutate ``STATE`` as needed during function execution. It is recommended to initialize state values inside the ``initialize()`` lifecycle hook if defaults are not defined.
+Member functions can then access and mutate ``STATE`` as needed during function execution. It is recommended to initialize state values inside the ``initialize()`` or ``configure()`` lifecycle hooks if defaults are not defined.
 
 .. code-block:: python
 
@@ -135,16 +153,16 @@ Member functions can then access and mutate ``STATE`` as needed during function 
 Stream
 ------
 
-Facilitates a flow of ``Messages`` into or out of a ``Unit`` or ``Collection``. 
+Facilitates a flow of ``Messages`` into or out of a ``Component``. 
 
 .. class:: InputStream(Message)
 
-   Can be added to any ``Unit`` or ``Collection`` as a member variable. Methods may subscribe to it.
+   Can be added to any ``Component`` as a member variable. Methods may subscribe to it.
 
 
 .. class:: OutputStream(Message)
 
-   Can be added to any ``Unit`` or ``Collection`` as a member variable. Methods may publish to it.
+   Can be added to any ``Component`` as a member variable. Methods may publish to it.
 
 
 Unit
@@ -163,7 +181,7 @@ The following lifecycle hooks in the ``Unit`` class can be overridden. Both can 
 
 .. py:method:: shutdown( self )
 
-   Runs when the ``System`` terminates.
+   Runs when the ``Unit`` terminates.
 
 Function Decorators
 ^^^^^^^^^^^^^^^^^^^
