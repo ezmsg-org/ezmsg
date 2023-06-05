@@ -14,13 +14,14 @@ The ``ezmsg`` library eases the creation of modular systems whose elements can b
 
 Why use ``ezmsg`` over a comparable tool? ``ezmsg`` is extremely fast and uses Python's (currently) new multiprocessing.shared_memory module to facilitate efficient message passing without C++ or any compilation/build tooling. It is easy to install and contains less boilerplate than similar frameworks. It also provides a framework for building processing pipelines while keeping best practices in mind.
 
-Check out this Google Colab <insert link here> to try ``ezmsg`` before installing!
+Check out this `Google Colab <https://colab.research.google.com/drive/1gHspPyS-lIUpb9zKFzgmBqAZcUPCINSh?usp=sharing>`_ for an example ``ezmsg`` notebook to experiment with.
 
 Contents
 --------
 
 .. toctree::
-
+   :maxdepth: 1
+   
    getting-started
    api
    utils
