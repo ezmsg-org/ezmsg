@@ -21,8 +21,9 @@ Contents
 
 .. toctree::
    :maxdepth: 1
-   
+
    getting-started
+   about
    api
    utils
    other
