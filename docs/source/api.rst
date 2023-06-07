@@ -1,7 +1,7 @@
 API
 ===
 
-An ``ezmsg`` system is created from a few basic components. ``ezmsg`` provides a framework for you to define your own graphs using its building blocks. Inherit from its base components to define a pipeline that works for your project.
+An ``ezmsg`` pipeline is created from a few basic components. ``ezmsg`` provides a framework for you to define your own graphs using its building blocks. Inherit from its base components to define a pipeline that works for your project.
 
 
 Collection
@@ -32,14 +32,14 @@ Overridable Methods
 Component
 ---------
 
-Metaclass which ``Unit``s and ``Collection``s inherit from.
+Metaclass which ``Units`` and ``Collections`` inherit from.
 
 Complete
 --------
 
 .. py:class:: Complete
 
-   A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully. If all functions in all ``Units`` raise ``Complete``, the entire ``System`` will terminate execution.
+   A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully. If all functions in all ``Units`` raise ``Complete``, the entire pipeline will terminate execution.
 
 
 NetworkDefinition
@@ -49,43 +49,34 @@ NetworkDefinition
 
    Wrapper on ``Iterator[Tuple[OutputStream, InputStream]]``.
 
-.. _run-system:
 
 NormalTermination
 -----------------
 
 .. py:class:: NormalTermination
 
-   A type of ``Exception`` which signals to ``ezmsg`` that the ``System`` can be shut down gracefully. 
+   A type of ``Exception`` which signals to ``ezmsg`` that the pipeline can be shut down gracefully. 
 
 run
 ---
 
-.. py:method:: run(components: {str: Component} = None,
-    root_name: str = None,
-    connections: NetworkDefinition = None,
-    process_components: [Component] = None,
-    backend_process: BackendProcess = DefaultBackendProcess,
-    graph_address: (str, int) = None,
-    force_single_process: bool = False,
-    **components_kwargs: Component)
-()
+.. py:method:: run(components: {str: Component} = None, root_name: str = None, connections: NetworkDefinition = None, process_components: [Component] = None, backend_process: BackendProcess = DefaultBackendProcess, graph_address: (str, int) = None, force_single_process: bool = False, **components_kwargs: Component) -> None
 
    `The old method` run_system() `has been deprecated and uses` run() `instead.`
 
-   Begin execution of a set of ``Component``s.
+   Begin execution of a set of ``Components``.
 
-   `components` represents the nodes in the directed acyclic graph. It is a dictionary which contains the ``Component``s to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()`` for each ``Unit`` and ``configure()`` for each ``Collection``, if defined.
+   `components` represents the nodes in the directed acyclic graph. It is a dictionary which contains the ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()`` for each ``Unit`` and ``configure()`` for each ``Collection``, if defined.
 
-   `connections` represents the edges is a ``NetworkDefinition`` which connects ``OutputStream``s to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph using the contents of this parameter.
+   `connections` represents the edges is a ``NetworkDefinition`` which connects ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph using the contents of this parameter.
 
-   `process_components` is a list of ``Component``s which should live in their own process.
+   `process_components` is a list of ``Components`` which should live in their own process.
 
    `backend_process` is currently under development.
 
    `graph_address` is a tuple which contains the hostname and port of the graph server which ``ezmsg`` should connect to. If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978. 
 
-   `force_single_process` will run all ``Component``s in one process. This is necessary when running ``ezmsg`` in a notebook.
+   `force_single_process` will run all ``Components`` in one process. This is necessary when running ``ezmsg`` in a notebook.
 
 Settings
 --------
