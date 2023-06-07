@@ -50,4 +50,4 @@ Clone the project, then create a virtual environment and install it there.
 Run an example
 --------------
 
-The `Examples <https://github.com/iscoe/ezmsg/tree/master/examples>`_ directory is a great place to start.
+The `Examples <https://github.com/iscoe/ezmsg/tree/master/examples>`_ directory is a great place to start. The homepage also has a link to a Google Colab notebook.
