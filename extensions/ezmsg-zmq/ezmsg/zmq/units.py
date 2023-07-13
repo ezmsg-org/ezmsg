@@ -61,7 +61,7 @@ class ZMQSenderUnit(ez.Unit):
 
     SETTINGS: ZMQSenderSettings
 
-    def setup(self) -> None:
+    def initialize(self) -> None:
         self.context = zmq.asyncio.Context()
         self.socket = self.context.socket(zmq.PUB)
         self.monitor = self.socket.get_monitor_socket()
@@ -138,7 +138,7 @@ class ZMQPollerUnit(ez.Unit):
     OUTPUT = ez.OutputStream(ZMQMessage)
     SETTINGS: ZMQPollerSettings
 
-    def setup(self) -> None:
+    def initialize(self) -> None:
         self.context = zmq.asyncio.Context()
         self.socket = self.context.socket(zmq.SUB)
         self.monitor = self.socket.get_monitor_socket()
