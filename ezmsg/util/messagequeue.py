@@ -6,6 +6,7 @@ import ezmsg.core as ez
 class MessageQueueSettings(ez.Settings):
     maxsize: int = 0
     leaky: bool = False
+    log: bool = False
 
 
 class MessageQueueState(ez.State):
@@ -31,9 +32,12 @@ class MessageQueue(ez.Unit):
 
     @ez.task
     async def monitor_queue_size(self) -> None:
+        if self.SETTINGS.log is False:
+            return
+
         while True:
-            ez.logger.debug(
-                f"MessageQueue has {self.STATE.msg_queue.qsize()} messages queued."
+            ez.logger.info(
+                f"{self.address} has {self.STATE.msg_queue.qsize()} messages queued."
             )
             await asyncio.sleep(1.0)
 
