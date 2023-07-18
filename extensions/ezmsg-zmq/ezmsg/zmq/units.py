@@ -47,6 +47,13 @@ class ZMQSenderSettings(ez.Settings):
     multipart: bool = False
 
 
+class ZMQSenderState(ez.State):
+    context: zmq.asyncio.Context
+    socket: zmq.asyncio.Socket
+    monitor: zmq.asyncio.Socket
+    poller: zmq.Poller
+
+
 class ZMQSenderUnit(ez.Unit):
     """
     Represents a node in a Labgraph graph that subscribes to messages in a
@@ -60,25 +67,27 @@ class ZMQSenderUnit(ez.Unit):
     INPUT = ez.InputStream(ZMQMessage)
 
     SETTINGS: ZMQSenderSettings
+    STATE: ZMQSenderState
 
     def initialize(self) -> None:
-        self.context = zmq.asyncio.Context()
-        self.socket = self.context.socket(zmq.PUB)
-        self.monitor = self.socket.get_monitor_socket()
+        self.STATE.context = zmq.asyncio.Context()
+        self.STATE.socket = self.STATE.context.socket(zmq.PUB)
+        self.STATE.monitor = self.STATE.socket.get_monitor_socket()
         ez.logger.debug(f"{self}:binding to {self.SETTINGS.write_addr}")
-        self.socket.bind(self.SETTINGS.write_addr)
+        self.STATE.socket.bind(self.SETTINGS.write_addr)
         self.has_subscribers = False
 
     def shutdown(self) -> None:
-        self.monitor.close()
-        self.socket.close()
+        self.STATE.monitor.close()
+        self.STATE.socket.close()
+        self.STATE.context.term()
 
     @ez.task
     async def _socket_monitor(self) -> None:
         while True:
-            monitor_result = await self.monitor.poll(100, zmq.POLLIN)
+            monitor_result = await self.STATE.monitor.poll(100, zmq.POLLIN)
             if monitor_result:
-                data = await self.monitor.recv_multipart()
+                data = await self.STATE.monitor.recv_multipart()
                 evt = parse_monitor_message(data)
 
                 event = evt["event"]
@@ -98,12 +107,12 @@ class ZMQSenderUnit(ez.Unit):
         while not self.has_subscribers:
             await asyncio.sleep(STARTUP_WAIT_TIME)
         if self.SETTINGS.multipart is True:
-            await self.socket.send_multipart(
+            await self.STATE.socket.send_multipart(
                 (bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data),
                 flags=zmq.NOBLOCK,
             )
         else:
-            await self.socket.send(
+            await self.STATE.socket.send(
                 b"".join((bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data)),
                 flags=zmq.NOBLOCK,
             )
@@ -114,6 +123,13 @@ class ZMQPollerSettings(ez.Settings):
     zmq_topic: str
     poll_time: float = POLL_TIME
     multipart: bool = False
+
+
+class ZMQPollerState(ez.State):
+    context: zmq.asyncio.Context
+    socket: zmq.asyncio.Socket
+    monitor: zmq.asyncio.Socket
+    poller: zmq.Poller
 
 
 class ZMQPollerUnit(ez.Unit):
@@ -137,29 +153,31 @@ class ZMQPollerUnit(ez.Unit):
 
     OUTPUT = ez.OutputStream(ZMQMessage)
     SETTINGS: ZMQPollerSettings
+    STATE: ZMQPollerState
 
     def initialize(self) -> None:
-        self.context = zmq.asyncio.Context()
-        self.socket = self.context.socket(zmq.SUB)
-        self.monitor = self.socket.get_monitor_socket()
-        self.socket.connect(self.SETTINGS.read_addr)
-        self.socket.subscribe(self.SETTINGS.zmq_topic)
+        self.STATE.context = zmq.asyncio.Context()
+        self.STATE.socket = self.STATE.context.socket(zmq.SUB)
+        self.STATE.monitor = self.STATE.socket.get_monitor_socket()
+        self.STATE.socket.connect(self.SETTINGS.read_addr)
+        self.STATE.socket.subscribe(self.SETTINGS.zmq_topic)
 
-        self.poller = zmq.Poller()
-        self.poller.register(self.socket, zmq.POLLIN)
+        self.STATE.poller = zmq.Poller()
+        self.STATE.poller.register(self.STATE.socket, zmq.POLLIN)
 
         self.socket_open = False
 
     def shutdown(self) -> None:
-        self.monitor.close()
-        self.socket.close()
+        self.STATE.monitor.close()
+        self.STATE.socket.close()
+        self.STATE.context.term()
 
     @ez.task
     async def socket_monitor(self) -> None:
         while True:
-            monitor_result = await self.monitor.poll(100, zmq.POLLIN)
+            monitor_result = await self.STATE.monitor.poll(100, zmq.POLLIN)
             if monitor_result:
-                data = await self.monitor.recv_multipart()
+                data = await self.STATE.monitor.recv_multipart()
                 evt = parse_monitor_message(data)
 
                 event = evt["event"]
@@ -189,12 +207,12 @@ class ZMQPollerUnit(ez.Unit):
             await asyncio.sleep(POLL_TIME)
 
         while self.socket_open:
-            poll_result = await self.socket.poll(
+            poll_result = await self.STATE.socket.poll(
                 self.SETTINGS.poll_time * 1000, zmq.POLLIN
             )
             if poll_result:
                 if self.SETTINGS.multipart is True:
-                    _, data = await self.socket.recv_multipart()
+                    _, data = await self.STATE.socket.recv_multipart()
                 else:
-                    data = await self.socket.recv()
+                    data = await self.STATE.socket.recv()
                 yield self.OUTPUT, ZMQMessage(data)
