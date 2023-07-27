@@ -58,5 +58,4 @@ class Rate(object):
         self.last_time = self.last_time + self.sleep_dur
 
         if curr_time - self.last_time > self.sleep_dur * 2:
-            print("Time jumping forward detected")
             self.last_time = curr_time
