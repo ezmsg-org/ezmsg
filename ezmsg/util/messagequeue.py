@@ -1,12 +1,14 @@
 import asyncio
 from typing import Any, AsyncGenerator, Optional
 import ezmsg.core as ez
+from ezmsg.util.rate import Rate
 
 
 class MessageQueueSettings(ez.Settings):
     maxsize: int = 0
     leaky: bool = False
     log_above_n: Optional[int] = None
+    output_hz: Optional[float] = None
 
 
 class MessageQueueState(ez.State):
@@ -55,6 +57,13 @@ class MessageQueue(ez.Unit):
 
     @ez.publisher(OUTPUT)
     async def send_message(self) -> AsyncGenerator:
+        if self.SETTINGS.output_hz is not None:
+            rate = Rate(self.SETTINGS.output_hz)
+        else:
+            rate = None
         while True:
             msg = await self.STATE.msg_queue.get()
             yield self.OUTPUT, msg
+            if rate is not None:
+                await rate.sleep()
+
