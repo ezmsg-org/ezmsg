@@ -1,11 +1,14 @@
 import asyncio
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional
 import ezmsg.core as ez
+from ezmsg.util.rate import Rate
 
 
 class MessageQueueSettings(ez.Settings):
     maxsize: int = 0
     leaky: bool = False
+    log_above_n: Optional[int] = None
+    output_hz: Optional[float] = None
 
 
 class MessageQueueState(ez.State):
@@ -31,10 +34,14 @@ class MessageQueue(ez.Unit):
 
     @ez.task
     async def monitor_queue_size(self) -> None:
+        if self.SETTINGS.log_above_n is None:
+            return
+
         while True:
-            ez.logger.debug(
-                f"MessageQueue has {self.STATE.msg_queue.qsize()} messages queued."
-            )
+            if self.STATE.msg_queue.qsize() > self.SETTINGS.log_above_n:
+                ez.logger.info(
+                    f"{self.address} has {self.STATE.msg_queue.qsize()} messages queued."
+                )
             await asyncio.sleep(1.0)
 
     @ez.subscriber(INPUT)
@@ -50,6 +57,13 @@ class MessageQueue(ez.Unit):
 
     @ez.publisher(OUTPUT)
     async def send_message(self) -> AsyncGenerator:
+        if self.SETTINGS.output_hz is not None:
+            rate = Rate(self.SETTINGS.output_hz)
+        else:
+            rate = None
         while True:
             msg = await self.STATE.msg_queue.get()
             yield self.OUTPUT, msg
+            if rate is not None:
+                await rate.sleep()
+

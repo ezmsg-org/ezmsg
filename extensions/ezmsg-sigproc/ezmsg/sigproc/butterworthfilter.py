@@ -57,6 +57,9 @@ class ButterworthFilter(Filter):
 
     @ez.subscriber(INPUT_FILTER)
     async def redesign(self, message: ButterworthFilterSettings) -> None:
+        if type(message) is not ButterworthFilterSettings:
+            return
+
         if self.STATE.design.order != message.order:
             self.STATE.zi = None
         self.STATE.design = message
