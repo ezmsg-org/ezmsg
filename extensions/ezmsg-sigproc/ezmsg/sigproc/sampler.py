@@ -9,7 +9,7 @@ from ezmsg.util.messages.axisarray import AxisArray
 from typing import Optional, Any, Tuple, List, Dict, AsyncGenerator
 
 
-@dataclass(frozen=True)
+@dataclass(unsafe_hash = True)
 class SampleTriggerMessage:
     timestamp: float = field(default_factory=time.time)
     period: Optional[Tuple[float, float]] = None
