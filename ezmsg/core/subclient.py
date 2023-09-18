@@ -177,7 +177,6 @@ class Subscriber:
                     if id not in self._shms or self._shms[id].name != shm_name:
                         if id in self._shms:
                             self._shms[id].close()
-                            await self._shms[id].wait_closed()
                         try:
                             self._shms[id] = await self._shm_service.attach(shm_name)
                         except ValueError:

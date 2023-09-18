@@ -127,8 +127,18 @@ class SHMContext:
                 yield mem
 
     def close(self) -> None:
-        self._shm.close()
+        asyncio.create_task(self.close_shm(), name=f"Close {self._shm.name}")
         self.monitor.cancel()
+
+    async def close_shm(self) -> None:
+        while True:
+            try:
+                self._shm.close()
+                logger.debug("Closed SHM segment.")
+                return
+            except BufferError:
+                logger.debug("BufferError caught... Sleeping.")
+                await asyncio.sleep(1)
 
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
