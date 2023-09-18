@@ -386,3 +386,4 @@ def new_threaded_event_loop(
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
         loop.close()
+        logger.debug("Task thread stopped and closed")
