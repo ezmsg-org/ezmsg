@@ -74,5 +74,5 @@ class Cache:
         self.cache = [None] * self.num_buffers
 
 
-# NOTE: This should be made thread-safe in the future
+# FIXME: This should be made thread-safe in the future
 MessageCache: Dict[UUID, Cache] = dict()
