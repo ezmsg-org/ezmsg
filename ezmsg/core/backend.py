@@ -167,6 +167,8 @@ def run(
     force_single_process: bool = False,
     **components_kwargs: Component,
 ) -> None:
+    # FIXME: This function is the last major re-implementation needed to make this
+    # codebase more maintainable.
     graph_service = GraphService(graph_address)
     shm_service = SHMService()
 
@@ -195,15 +197,19 @@ def run(
         if execution_context is None:
             return
 
+        # FIXME: When done this way, we don't exit the graph_context on exception
         async def create_graph_context() -> GraphContext:
             return await GraphContext(graph_service, shm_service).__aenter__()
 
-        async def cleanup_graph(context: GraphContext) -> None:
-            await context.__aexit__(None, None, None)
-
+        # FIXME: This sort of stuff should all be done in a separate async function...
+        # Done this way, its ugly as hell and opens us up to a lot of issues with
+        # entering and exiting context properly on exceptions.
         graph_context = asyncio.run_coroutine_threadsafe(
             create_graph_context(), loop
         ).result()
+
+        async def cleanup_graph() -> None:
+            await graph_context.__aexit__(None, None, None)
 
         async def setup_graph() -> None:
             for edge in execution_context.connections:
@@ -252,9 +258,7 @@ def run(
 
         finally:
             join_all_other_processes()
-            asyncio.run_coroutine_threadsafe(
-                cleanup_graph(graph_context), loop
-            ).result()
+            asyncio.run_coroutine_threadsafe(cleanup_graph(), loop).result()
 
 
 def collect_processes(
