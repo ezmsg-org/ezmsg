@@ -127,7 +127,7 @@ class ServiceManager(typing.Generic[T]):
             reader, writer = await self.open_connection()
             await close_stream_writer(writer)
 
-        except ConnectionRefusedError as ref_e:
+        except OSError as ref_e:
             if not ensure_server:
                 raise ref_e
 

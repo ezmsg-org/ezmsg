@@ -77,8 +77,10 @@ class GraphContext:
         await self._graph_service.resume()
 
     async def _ensure_servers(self) -> None:
-        self._shm_server = await self._shm_service.ensure()
+        # This order is important so that we fail on non-existent
+        # graph_service before spinning up a shm_service
         self._graph_server = await self._graph_service.ensure()
+        self._shm_server = await self._shm_service.ensure()
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
