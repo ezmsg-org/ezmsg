@@ -54,7 +54,7 @@ def cmdline() -> None:
 
     args = parser.parse_args(namespace=Args)
 
-    graph_address = Address("127.0.0.1", GRAPHSERVER_PORT_DEFAULT)
+    graph_address = Address("0.0.0.0", GRAPHSERVER_PORT_DEFAULT)
     if args.address is not None:
         graph_address = Address.from_string(args.address)
     shm_address_str = os.environ.get(
