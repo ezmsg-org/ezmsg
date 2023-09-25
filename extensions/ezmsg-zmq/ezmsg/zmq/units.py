@@ -51,7 +51,6 @@ class ZMQSenderState(ez.State):
     context: zmq.asyncio.Context
     socket: zmq.asyncio.Socket
     monitor: zmq.asyncio.Socket
-    poller: zmq.Poller
 
 
 class ZMQSenderUnit(ez.Unit):
