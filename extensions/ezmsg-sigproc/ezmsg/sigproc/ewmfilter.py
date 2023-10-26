@@ -108,7 +108,12 @@ class EWMFilter(ez.Collection):
     EWM = EWM()
 
     def configure(self) -> None:
-        self.EWM.apply_settings(EWMSettings(axis=self.SETTINGS.axis, zero_offset=True))
+        self.EWM.apply_settings(
+            EWMSettings(
+                axis=self.SETTINGS.axis, 
+                zero_offset=self.SETTINGS.zero_offset,
+            )
+        )
 
         self.WINDOW.apply_settings(
             WindowSettings(
