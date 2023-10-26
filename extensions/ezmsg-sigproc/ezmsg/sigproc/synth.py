@@ -37,9 +37,13 @@ class Clock(ez.Unit):
 
     @ez.publisher(OUTPUT_CLOCK)
     async def generate(self) -> AsyncGenerator:
+        t_0 = time.time()
+        n_dispatch = 0
         while True:
             if self.STATE.cur_settings.dispatch_rate is not None:
-                await asyncio.sleep(1.0 / self.STATE.cur_settings.dispatch_rate)
+                n_dispatch += 1
+                t_next = t_0 + n_dispatch / self.STATE.cur_settings.dispatch_rate
+                await asyncio.sleep(t_next - time.time())
             yield self.OUTPUT_CLOCK, ez.Flag
 
 
