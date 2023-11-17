@@ -73,9 +73,12 @@ class EWM(ez.Unit):
             buffer_data = buffer.data
             buffer_data = np.moveaxis(buffer_data, axis_idx, 0)
 
+            while scale_arr.ndim < buffer_data.ndim:
+                scale_arr = scale_arr[..., None]
+
             def ewma(data: np.ndarray) -> np.ndarray:
-                mult = scale_arr[:, np.newaxis] * data * pw0
-                out = scale_arr[::-1, np.newaxis] * mult.cumsum(axis=0)
+                mult = scale_arr * data * pw0
+                out = scale_arr[::-1] * mult.cumsum(axis=0)
 
                 if not self.SETTINGS.zero_offset:
                     out = (data[0, :, np.newaxis] * pows[1:]).T + out
