@@ -1,7 +1,6 @@
 import asyncio
 
 from dataclasses import dataclass
-import json
 from pickle import PickleBuffer
 
 import zmq
@@ -107,8 +106,6 @@ class ZMQSenderUnit(ez.Unit):
     async def zmq_subscriber(self, message: ZMQMessage) -> None:
         while self.SETTINGS.wait_for_sub and not self.has_subscribers:
             await asyncio.sleep(STARTUP_WAIT_TIME)
-        if not hasattr(message, "data"):
-            message = ZMQMessage(data=json.dumps(message).encode("utf-8"))
         if self.SETTINGS.multipart is True:
             await self.STATE.socket.send_multipart(
                 (bytes(self.SETTINGS.zmq_topic, "UTF-8"), message.data),
