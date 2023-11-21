@@ -45,6 +45,7 @@ class ZMQSenderSettings(ez.Settings):
     write_addr: str
     zmq_topic: str
     multipart: bool = False
+    wait_for_sub: bool = True
 
 
 class ZMQSenderState(ez.State):
@@ -103,7 +104,7 @@ class ZMQSenderUnit(ez.Unit):
 
     @ez.subscriber(INPUT)
     async def zmq_subscriber(self, message: ZMQMessage) -> None:
-        while not self.has_subscribers:
+        while self.SETTINGS.wait_for_sub and not self.has_subscribers:
             await asyncio.sleep(STARTUP_WAIT_TIME)
         if self.SETTINGS.multipart is True:
             await self.STATE.socket.send_multipart(
