@@ -24,22 +24,7 @@ else:
     from typing import dataclass_transform
 
 
-def handle_stop_iteration(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        yield from func(*args, **kwargs)
-        raise ez.NormalTermination
-
-    return wrapper
-
-
 T = TypeVar("T")
-
-
-@dataclass_transform()
-def create_model(cls: type[T]) -> type[T]:
-    ...
-    return cls
 
 
 @dataclass_transform()
@@ -75,8 +60,7 @@ def gen_to_unit(
     state = args_to_state(func.__name__, type_hints, publish_type, subscribe_type)
 
     def initialize(self):
-        self.STATE.gen = handle_stop_iteration(func)(**asdict(self.SETTINGS))
-        next(self.STATE.gen)
+        self.STATE.gen = func(**asdict(self.SETTINGS))
         for field in fields(self.SETTINGS):
             setattr(self.STATE, field.name, getattr(self.SETTINGS, field.name))
 
@@ -96,7 +80,7 @@ def gen_to_unit(
                 )
             if getattr(self.STATE, state_field_name) != getattr(msg, msg_field_name):
                 setattr(self.STATE, state_field_name, getattr(msg, msg_field_name))
-                self.STATE.gen = handle_stop_iteration(func)(**asdict(self.STATE))
+                self.STATE.gen = func(**asdict(self.STATE))
 
     streams = {}
     ez_task: Callable
@@ -189,7 +173,7 @@ def args_to_settings(
 
 def args_to_state(
     func_name: str, args: Dict[str, Any], yield_type: Any, send_type: Any
-) -> ez.State:
+) -> Type[ez.State]:
     args["gen"] = Generator[yield_type, send_type, None]
     return cast(
         Type[ez.State],
