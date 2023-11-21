@@ -227,9 +227,9 @@ if __name__ == "__main__":
         LOG_OUT = DebugLog()
 
         def configure(self) -> None:
-            self.POW_3.apply_settings(PowSettings(3))
-            self.ADD_12.apply_settings(AddSettings(12))
-            self.POW_0_5.apply_settings(PowSettings(0.5))
+            self.POW_3.apply_settings(AutoPowSettings(3))
+            self.ADD_12.apply_settings(AutoAddSettings(12))
+            self.POW_0_5.apply_settings(AutoPowSettings(0.5))
 
         def network(self):
             return (
