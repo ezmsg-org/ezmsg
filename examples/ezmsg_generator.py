@@ -31,6 +31,7 @@ from typing_extensions import ParamSpec
 from functools import wraps, reduce
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.debuglog import DebugLog
+from ezmsg.util.gen_to_unit import gen_to_unit
 
 # Define type variables for the decorators
 P = ParamSpec("P")
@@ -154,6 +155,9 @@ class Add(Gen):
 
 
 if __name__ == "__main__":
+    # This example will show the offline processing use-case of the generator pattern,
+    # illustrating how the same generator logic used in ezmsg systems can be applied
+    # to process data in a standalone, batch-processing environment.
     print("Running offline example")
     pipeline = compose(
         pow(3),
@@ -165,6 +169,9 @@ if __name__ == "__main__":
     _out = pipeline(_in)
     print(f"Input: {_in.data[::10]}\nOutput: {_out.data[::10]}")
 
+    # This example will show the inheritance-based ezmsg implementation with generators,
+    # highlighting how to integrate generator-based processing logic within ezmsg Units
+    # through object-oriented subclassing to manage stateful computations.
     print("Running online example")
 
     class MessageSender(ez.Unit):
@@ -176,25 +183,63 @@ if __name__ == "__main__":
             await asyncio.sleep(1)
             raise ez.NormalTermination
 
-    send = MessageSender()
-    pow_3 = Pow(PowSettings(3))
-    add_12 = Add(AddSettings(12))
-    pow_0_5 = Pow(PowSettings(0.5))
-    log_in = DebugLog()
-    log_out = DebugLog()
+    class GenOneExample(ez.Collection):
+        SEND = MessageSender()
+        POW_3 = Pow()
+        ADD_12 = Add()
+        POW_0_5 = Pow()
+        LOG_IN = DebugLog()
+        LOG_OUT = DebugLog()
+
+        def configure(self) -> None:
+            self.POW_3.apply_settings(PowSettings(3))
+            self.ADD_12.apply_settings(AddSettings(12))
+            self.POW_0_5.apply_settings(PowSettings(0.5))
+
+        def network(self):
+            return (
+                (self.SEND.OUTPUT, self.POW_3.INPUT),
+                (self.SEND.OUTPUT, self.LOG_IN.INPUT),
+                (self.POW_3.OUTPUT, self.ADD_12.INPUT),
+                (self.ADD_12.OUTPUT, self.POW_0_5.OUTPUT),
+                (self.POW_0_5.OUTPUT, self.LOG_OUT.INPUT),
+            )
 
     ez.run(
-        SEND=send,
-        POW_3=pow_3,
-        ADD_12=add_12,
-        POW_0_5=pow_0_5,
-        LOG_IN=log_in,
-        LOG_OUT=log_out,
-        connections=(
-            (send.OUTPUT, pow_3.INPUT),
-            (send.OUTPUT, log_in.INPUT),
-            (pow_3.OUTPUT, add_12.INPUT),
-            (add_12.OUTPUT, pow_0_5.INPUT),
-            (pow_0_5.OUTPUT, log_out.INPUT),
-        ),
+        SYSTEM=GenOneExample()
+    )
+
+
+    # This example will show the type-hint based introspection to construct ezmsg Units
+    # at runtime, which simplifies the integration of generators into Units, reducing
+    # setup boilerplate, though it omits compile-time type checking in development.
+    print("Running ezmsg system with gen-to-unit")
+
+    AutoAddSettings, AutoAdd = gen_to_unit(add)
+    AutoPowSettings, AutoPow = gen_to_unit(pow)
+
+    class GenTwoExample(ez.Collection):
+        SEND = MessageSender()
+        POW_3 = AutoPow()
+        ADD_12 = AutoAdd()
+        POW_0_5 = AutoPow()
+        LOG_IN = DebugLog()
+        LOG_OUT = DebugLog()
+
+        def configure(self) -> None:
+            self.POW_3.apply_settings(PowSettings(3))
+            self.ADD_12.apply_settings(AddSettings(12))
+            self.POW_0_5.apply_settings(PowSettings(0.5))
+
+        def network(self):
+            return (
+                (self.SEND.OUTPUT, self.POW_3.INPUT),
+                (self.SEND.OUTPUT, self.LOG_IN.INPUT),
+                (self.POW_3.OUTPUT, self.ADD_12.INPUT),
+                (self.ADD_12.OUTPUT, self.POW_0_5.OUTPUT),
+                (self.POW_0_5.OUTPUT, self.LOG_OUT.INPUT),
+            )
+
+    ez.run(
+        SYSTEM=GenTwoExample()
     )
