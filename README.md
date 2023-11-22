@@ -50,9 +50,9 @@ See the extension directory for more details
 
 Additionally, the following extensions are contained in external repositories:
 
-- [ezmsg-panel](https://github.com/griffinmilsap/ezmsg-panel)
-- [ezmsg-blackrock](https://github.com/griffinmilsap/ezmsg-blackrock)
-- [ezmsg-unicorn](https://github.com/griffinmilsap/ezmsg-unicorn)
-- [ezmsg-gadget](https://github.com/griffinmilsap/ezmsg-gadget)
-- [ezmsg-openbci](https://github.com/griffinmilsap/ezmsg-openbci)
-- [ezmsg-ssvep](https://github.com/griffinmilsap/ezmsg-ssvep)
+- [ezmsg-panel](https://github.com/griffinmilsap/ezmsg-panel) -- Plotting tools for `ezmsg` that use [panel](https://github.com/holoviz/panel)
+- [ezmsg-blackrock](https://github.com/griffinmilsap/ezmsg-blackrock) -- Interface for Blackrock Cerebus ecosystem (incl. Neuroport) using `pycbsdk`
+- [ezmsg-unicorn](https://github.com/griffinmilsap/ezmsg-unicorn) -- g.tec Unicorn Hybrid Black integration for `ezmsg`
+- [ezmsg-gadget](https://github.com/griffinmilsap/ezmsg-gadget) -- USB-gadget with HID control integration for Raspberry Pi (Zero/W/2W, 4, CM4)
+- [ezmsg-openbci](https://github.com/griffinmilsap/ezmsg-openbci) -- OpenBCI Cyton serial interface for `ezmsg`
+- [ezmsg-ssvep](https://github.com/griffinmilsap/ezmsg-ssvep) -- Tools for running SSVEP experiments with `ezmsg`
