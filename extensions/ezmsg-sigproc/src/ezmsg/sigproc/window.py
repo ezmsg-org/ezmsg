@@ -18,6 +18,7 @@ class WindowSettings(ez.Settings):
         float
     ] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
     window_shift: Optional[float] = None  # Sec.  If "None", activate "1:1 mode"
+    zero_pad_until: str = "full"  # "full", "shift", "input", "none"
 
 
 class WindowState(ez.State):
@@ -64,16 +65,7 @@ class Window(ez.Unit):
         time_view = np.moveaxis(msg.data, axis_idx, 0)
         samp_shape = time_view.shape[1:]
 
-        # Pre(re?)allocate buffer
-        window_samples = int(self.STATE.cur_settings.window_dur * fs)
-        if (
-            (self.STATE.samp_shape != samp_shape)
-            or (self.STATE.out_fs != fs)
-            or self.STATE.buffer is None
-        ):
-            self.STATE.buffer = np.zeros(tuple([window_samples] + list(samp_shape)))
-
-        self.STATE.window_samples = window_samples
+        self.STATE.window_samples = int(self.STATE.cur_settings.window_dur * fs)
         self.STATE.samp_shape = samp_shape
         self.STATE.out_fs = fs
 
@@ -83,6 +75,24 @@ class Window(ez.Unit):
                 fs * self.STATE.cur_settings.window_shift
             )
 
+        # Prepare zero-padding in buffer
+        if (
+                (self.STATE.samp_shape != samp_shape)
+                or (self.STATE.out_fs != fs)
+                or self.STATE.buffer is None
+        ):
+            zp_flag = self.STATE.cur_settings.zero_pad_until
+            if zp_flag == "shift" and self.STATE.window_shift_samples is not None:
+                n_zero = self.STATE.window_samples - self.STATE.window_shift_samples
+            elif zp_flag == "input":
+                n_zero = self.STATE.window_samples - time_view.shape[0]
+            elif zp_flag == "none":
+                n_zero = 0
+            else:  # zp_flag == "full":
+                n_zero = self.STATE.window_samples
+            n_zero = max(0, n_zero)
+            self.STATE.buffer = np.zeros(tuple([n_zero] + list(samp_shape)))
+
         # Currently we just concatenate the new time samples and clip the output
         # np.roll actually returns a copy, and there's no way to construct a
         # rolling view of the data.  In current numpy implementations, np.concatenate
@@ -90,8 +100,8 @@ class Window(ez.Unit):
         # be a performance bottleneck for large memory arrays.
         self.STATE.buffer = np.concatenate((self.STATE.buffer, time_view), axis=0)
 
-        buffer_offset = np.arange(self.STATE.buffer.shape[0] + time_view.shape[0])
-        buffer_offset -= self.STATE.buffer.shape[0] + 1
+        buffer_offset = np.arange(self.STATE.buffer.shape[0])
+        buffer_offset -= buffer_offset[-time_view.shape[0]]  # Adjust so first new sample = 0
         buffer_offset = (buffer_offset * axis.gain) + axis.offset
 
         outputs: List[Tuple[npt.NDArray, float]] = []
@@ -104,12 +114,10 @@ class Window(ez.Unit):
         else:
             yieldable_size = self.STATE.window_samples + self.STATE.window_shift_samples
             while self.STATE.buffer.shape[0] >= yieldable_size:
-                outputs.append(
-                    (
-                        self.STATE.buffer[: self.STATE.window_samples, ...],
-                        buffer_offset[0],
-                    )
-                )
+                outputs.append((
+                    self.STATE.buffer[: self.STATE.window_samples, ...],
+                    buffer_offset[0],
+                ))
                 self.STATE.buffer = self.STATE.buffer[
                     self.STATE.window_shift_samples :, ...
                 ]
@@ -117,28 +125,23 @@ class Window(ez.Unit):
 
         for out_view, offset in outputs:
             out_view = np.moveaxis(out_view, 0, axis_idx)
+            out_dims = msg.dims
+            out_axes = msg.axes.copy()  # Copy because `replace` doesn't seem to make a copy of dict fields.
+            if axis_name in msg.axes:
+                out_axes[axis_name] = replace(out_axes[axis_name], offset=offset)
 
             if (
                 self.STATE.cur_settings.newaxis is not None
                 and self.STATE.cur_settings.newaxis != self.STATE.cur_settings.axis
             ):
+                out_view = out_view[np.newaxis, ...]
+                out_dims = [self.STATE.cur_settings.newaxis] + msg.dims
+
                 new_gain = 0.0
                 if self.STATE.window_shift_samples is not None:
                     new_gain = axis.gain * self.STATE.window_shift_samples
+                new_axis = AxisArray.Axis(unit=axis.unit, gain=new_gain, offset=offset)
+                out_axes = {**msg.axes, **{self.STATE.cur_settings.newaxis: new_axis}}
 
-                out_axis = replace(axis, unit=axis.unit, gain=new_gain, offset=offset)
-                out_axes = {**msg.axes, **{self.STATE.cur_settings.newaxis: out_axis}}
-                out_dims = [self.STATE.cur_settings.newaxis] + msg.dims
-                out_view = out_view[np.newaxis, ...]
-
-                yield self.OUTPUT_SIGNAL, replace(
-                    msg, data=out_view, dims=out_dims, axes=out_axes
-                )
-
-            else:
-                if axis_name in msg.axes:
-                    out_axes = msg.axes
-                    out_axes[axis_name] = replace(axis, offset=offset)
-                    yield self.OUTPUT_SIGNAL, replace(msg, data=out_view, axes=out_axes)
-                else:
-                    yield self.OUTPUT_SIGNAL, replace(msg, data=out_view)
+            result = replace(msg, data=out_view, dims=out_dims, axes=out_axes)
+            yield self.OUTPUT_SIGNAL, result
