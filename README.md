@@ -57,3 +57,11 @@ Additionally, the following extensions are contained in external repositories:
 - [ezmsg-openbci](https://github.com/griffinmilsap/ezmsg-openbci) -- OpenBCI Cyton serial interface for `ezmsg`
 - [ezmsg-ssvep](https://github.com/griffinmilsap/ezmsg-ssvep) -- Tools for running SSVEP experiments with `ezmsg`
 - [ezmsg-vispy](https://github.com/pperanich/ezmsg-vispy) -- `ezmsg` visualization toolkit using PyQt6 and vispy.
+
+## Publications
+
+A collection of academic papers, journals, and other publications that have cited or utilized `ezmsg` in research and development.
+These publications provide insights into the practical applications and impact of `ezmsg` in various fields.
+
+- [A click-based electrocorticographic brain-computer interface enables long-term high-performance switch-scan spelling](https://doi.org/10.21203/rs.3.rs-3158792/v1)
+- [Stable Decoding from a Speech BCI Enables Control for an Individual with ALS without Recalibration for 3 Months](https://doi.org/10.1002/advs.202304853)
