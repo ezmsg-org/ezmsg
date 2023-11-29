@@ -1,0 +1,146 @@
+from dataclasses import replace
+from typing import Generator, Callable, TypeVar
+from typing_extensions import ParamSpec
+from functools import wraps
+
+import numpy as np
+
+from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.gen_to_unit import gen_to_unit
+
+
+# Define type variables for the decorators
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def consumer(
+    func: Callable[P, Generator[R, R, None]]
+) -> Callable[P, Generator[R, R, None]]:
+    """
+    A decorator that primes a generator by advancing it to the first yield statement.
+
+    This is necessary because a generator cannot receive any input through 'send' until it has
+    been primed to the point of the first 'yield'. Applying this decorator to a generator function
+    ensures that it is immediately ready to accept input.
+
+    Args:
+        func: The generator function to be decorated.
+
+    Returns:
+        The primed generator ready to accept input.
+    """
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[R, R, None]:
+        gen = func(*args, **kwargs)
+        next(gen)  # Prime the generator.
+        return gen
+
+    return wrapper
+
+
+def _tau_from_alpha(alpha: float, dT: float) -> float:
+    """
+    Inverse of _alpha_from_tau. See that function for explanation.
+    """
+    return -dT / np.log(1 - alpha)
+
+
+def _alpha_from_tau(tau: float, dT: float) -> float:
+    """
+    # https://en.wikipedia.org/wiki/Exponential_smoothing#Time_constant
+    :param tau: The amount of time for the smoothed response of a unit step function to reach
+        1 - 1/e approx-eq 63.2%.
+    :param dT: sampling period, or 1 / sampling_rate.
+    :return: alpha, the "fading factor" in exponential smoothing.
+    """
+    return 1 - np.exp(-dT / tau)
+
+
+@consumer
+def scaler(time_constant: float = 1.0, axis: str | None = None) -> Generator[AxisArray, AxisArray, None]:
+    from river import preprocessing
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out = AxisArray(np.array([]), dims=[""])
+    _scaler = None
+    while True:
+        axis_arr_in = yield axis_arr_out
+        data = axis_arr_in.data
+        if axis is None:
+            axis = axis_arr_in.dims[0]
+            axis_idx = 0
+        else:
+            axis_idx = axis_arr_in.get_axis_idx(axis)
+            if axis_idx != 0:
+                data = np.moveaxis(data, axis_idx, 0)
+
+        if _scaler is None:
+            alpha = _alpha_from_tau(time_constant, axis_arr_in.axes[axis].gain)
+            _scaler = preprocessing.AdaptiveStandardScaler(fading_factor=alpha)
+
+        result = []
+        for sample in data:
+            x = {k: v for k, v in enumerate(sample.flatten().tolist())}
+            y = _scaler.learn_one(x).transform_one(x)
+            k = sorted(y.keys())
+            result.append(np.array([y[_] for _ in k]).reshape(sample.shape))
+
+        result = np.stack(result)
+        result = np.moveaxis(result, 0, axis_idx)
+        axis_arr_out = replace(axis_arr_in, data=result)
+
+
+@consumer
+def scaler_np(time_constant: float = 1.0, axis: str | None = None) -> Generator[AxisArray, AxisArray, None]:
+    # The only dependency is numpy.
+    # This is faster for multi-channel data but slower for single-channel data.
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out = AxisArray(np.array([]), dims=[""])
+    means = vars_means = vars_sq_means = None
+    alpha = None
+
+    def _ew_update(arr, prev, _alpha):
+        if np.all(prev == 0):
+            return arr
+        # return _alpha * arr + (1 - _alpha) * prev
+        # Micro-optimization: sub, mult, add (below) is faster than sub, mult, mult, add (above)
+        return prev + _alpha * (arr - prev)
+
+    while True:
+        axis_arr_in = yield axis_arr_out
+
+        data = axis_arr_in.data
+        if axis is None:
+            axis = axis_arr_in.dims[0]
+            axis_idx = 0
+        else:
+            axis_idx = axis_arr_in.get_axis_idx(axis)
+        data = np.moveaxis(data, axis_idx, 0)
+
+        if alpha is None:
+            alpha = _alpha_from_tau(time_constant, axis_arr_in.axes[axis].gain)
+
+        if means is None or means.shape != data[0].shape:
+            vars_sq_means = np.zeros_like(data[0], dtype=float)
+            vars_means = np.zeros_like(data[0], dtype=float)
+            means = np.zeros_like(data[0], dtype=float)
+
+        result = []
+        for sample in data:
+            # Update step
+            vars_means = _ew_update(sample, vars_means, alpha)
+            vars_sq_means = _ew_update(sample**2, vars_sq_means, alpha)
+            means = _ew_update(sample, means, alpha)
+            # Get step
+            varis = vars_sq_means - vars_means ** 2
+            y = ((sample - means) / (varis**0.5))
+            y[np.isnan(y)] = 0.0
+            result.append(y)
+
+        result = np.stack(result, axis=0)
+        result = np.moveaxis(result, 0, axis_idx)
+        axis_arr_out = replace(axis_arr_in, data=result)
+
+
+AdaptiveStandardScalerSettings, AdaptiveStandardScaler = gen_to_unit(scaler_np)
