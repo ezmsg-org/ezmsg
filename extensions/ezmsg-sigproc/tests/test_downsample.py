@@ -10,7 +10,7 @@ from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
 from ezmsg.util.messagecodec import message_log
 from ezmsg.sigproc.downsample import Downsample, DownsampleSettings
-from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
+from ezmsg.sigproc.synth import Counter, CounterSettings
 
 from util import get_test_fn
 from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
@@ -22,14 +22,14 @@ from typing import Optional, List
 
 class DownsampleSystemSettings(ez.Settings):
     num_msgs: int
-    osc_settings: OscillatorSettings
+    counter_settings: CounterSettings
     down_settings: DownsampleSettings
     log_settings: MessageLoggerSettings
     term_settings: TerminateTestSettings
 
 
 class DownsampleSystem(ez.Collection):
-    OSC = Oscillator()
+    COUNT = Counter()
     GATE = MessageGate()
     DOWN = Downsample()
     LOG = MessageLogger()
@@ -40,7 +40,7 @@ class DownsampleSystem(ez.Collection):
     SETTINGS: DownsampleSystemSettings
 
     def configure(self) -> None:
-        self.OSC.apply_settings(self.SETTINGS.osc_settings)
+        self.COUNT.apply_settings(self.SETTINGS.counter_settings)
         self.GATE.apply_settings(
             MessageGateSettings(
                 start_open=True,
@@ -54,8 +54,8 @@ class DownsampleSystem(ez.Collection):
 
     def network(self) -> ez.NetworkDefinition:
         return (
-            (self.OSC.OUTPUT_SIGNAL, self.GATE.INPUT),
-            # ( self.OSC.OUTPUT_SIGNAL, self.DEBUG.INPUT ),
+            (self.COUNT.OUTPUT_SIGNAL, self.GATE.INPUT),
+            # ( self.COUNT.OUTPUT_SIGNAL, self.DEBUG.INPUT ),
             (self.GATE.OUTPUT, self.DOWN.INPUT_SIGNAL),
             # ( self.GATE.OUTPUT, self.DEBUG.INPUT ),
             (self.DOWN.OUTPUT_SIGNAL, self.LOG.INPUT_MESSAGE),
@@ -70,18 +70,16 @@ class DownsampleSystem(ez.Collection):
 def test_downsample_system(
     block_size: int, factor: int, test_name: Optional[str] = None
 ):
-    in_fs = 10.0
-
-    # Ensure 4 seconds of data
-    num_msgs = int((in_fs / block_size) * 4.0)
+    in_fs = 19.0
+    num_msgs = int(4.0 / (block_size / in_fs))  # Ensure 4 seconds of data
 
     test_filename = get_test_fn(test_name)
     ez.logger.info(test_filename)
 
     settings = DownsampleSystemSettings(
         num_msgs=num_msgs,
-        osc_settings=OscillatorSettings(
-            n_time=block_size, freq=1.0, fs=in_fs, dispatch_rate=20.0, sync=True  # Hz
+        counter_settings=CounterSettings(
+            n_time=block_size, fs=in_fs, dispatch_rate=20.0,
         ),
         down_settings=DownsampleSettings(factor=factor),
         log_settings=MessageLoggerSettings(output=test_filename),
@@ -92,38 +90,37 @@ def test_downsample_system(
 
     ez.run(SYSTEM = system)
 
-    messages: List[AxisArray] = []
-    for msg in message_log(test_filename):
-        messages.append(msg)
-
+    messages: List[AxisArray] = [_ for _ in message_log(test_filename)]
     os.remove(test_filename)
-
     ez.logger.info(f"Analyzing recording of { len( messages ) } messages...")
 
-    fs: Optional[float] = None
-    dims: Optional[List[str]] = None
-    data: List[np.ndarray] = []
-    for msg in messages:
-        # In this test, fs should change by factor
-        msg_fs = 1.0 / msg.axes["time"].gain
-        if fs is None:
-            fs = msg_fs
-        assert fs == msg_fs
+    # Check fs
+    out_fs = in_fs / factor
+    assert np.allclose(
+        np.array([1 / msg.axes["time"].gain for msg in messages]),
+        np.ones(len(messages,)) * out_fs
+    )
 
-        # In this test, we should have consistent time dimension
-        if dims is None:
-            dims = msg.dims
-        else:
-            assert dims == msg.dims
+    # Check data
+    time_ax_idx = messages[0].get_axis_idx("time")
+    data = np.concatenate([_.data for _ in messages], axis=time_ax_idx)
+    expected_data = np.arange(data.shape[time_ax_idx]) * factor
+    assert np.array_equal(data, expected_data[:, None])
 
-        data.append(msg.data)
+    # Grab first sample from each message. We will use their values to get the offsets.
+    #  This works because the input is Counter and we validated it above.
+    first_samps = [np.take(msg.data, [0], axis=time_ax_idx) for msg in messages]
 
-    assert fs is not None
-    assert fs - (in_fs / factor) < 0.01
+    # Check that the shape of each message is the same -- the set of shapes will be reduced to a single item.
+    assert len(set([_.shape for _ in first_samps])) == 1
 
-    ez.logger.info("Consistent metadata!")
-
-    # TODO: Write meaningful analyses of the recording to test functionality
+    # Check offsets
+    first_samps = np.concatenate(first_samps, axis=time_ax_idx)
+    expected_offsets = first_samps.squeeze() / out_fs / factor
+    assert np.allclose(
+        np.array([msg.axes["time"].offset for msg in messages]),
+        expected_offsets
+    )
 
     ez.logger.info("Test Complete.")
 
