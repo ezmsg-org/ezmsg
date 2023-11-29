@@ -1,6 +1,12 @@
+"""
+Please note that the `gen_to_unit` function in the current Python file is provided as
+    an experimental feature and is not guaranteed to be actively maintained. It serves
+    as an illustrative example of how generators can be utilized in the `ezmsg` library.
+    However, please be aware that any changes made to the `ezmsg` core may potentially
+    impact the functionality of `gen_to_unit`.
+"""
 import ezmsg.core as ez
 import asyncio
-import functools
 import sys
 from copy import deepcopy
 from inspect import getfullargspec
