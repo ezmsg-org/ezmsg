@@ -56,3 +56,4 @@ Additionally, the following extensions are contained in external repositories:
 - [ezmsg-gadget](https://github.com/griffinmilsap/ezmsg-gadget) -- USB-gadget with HID control integration for Raspberry Pi (Zero/W/2W, 4, CM4)
 - [ezmsg-openbci](https://github.com/griffinmilsap/ezmsg-openbci) -- OpenBCI Cyton serial interface for `ezmsg`
 - [ezmsg-ssvep](https://github.com/griffinmilsap/ezmsg-ssvep) -- Tools for running SSVEP experiments with `ezmsg`
+- [ezmsg-vispy](https://github.com/pperanich/ezmsg-vispy) -- `ezmsg` visualization toolkit using PyQt6 and vispy.
