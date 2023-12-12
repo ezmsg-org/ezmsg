@@ -39,4 +39,3 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN_SIGPROC }}
           packages_dir: extensions/ezmsg-sigproc/dist
-
