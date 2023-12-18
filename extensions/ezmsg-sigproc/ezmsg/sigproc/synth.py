@@ -37,9 +37,13 @@ class Clock(ez.Unit):
 
     @ez.publisher(OUTPUT_CLOCK)
     async def generate(self) -> AsyncGenerator:
+        t_0 = time.time()
+        n_dispatch = 0
         while True:
             if self.STATE.cur_settings.dispatch_rate is not None:
-                await asyncio.sleep(1.0 / self.STATE.cur_settings.dispatch_rate)
+                n_dispatch += 1
+                t_next = t_0 + n_dispatch / self.STATE.cur_settings.dispatch_rate
+                await asyncio.sleep(t_next - time.time())
             yield self.OUTPUT_CLOCK, ez.Flag
 
 
@@ -57,6 +61,8 @@ class CounterSettings(ez.Settings):
     n_ch: int = 1  # Number of channels to synthesize
 
     # Message dispatch rate (Hz), 'realtime', 'ext_clock', or None (fast as possible)
+    #  Note: if dispatch_rate is a float then time offsets will be synthetic and the
+    #  system will run faster or slower than wall clock time.
     dispatch_rate: Optional[Union[float, str]] = None
 
     # If set to an integer, counter will rollover
@@ -65,7 +71,9 @@ class CounterSettings(ez.Settings):
 
 class CounterState(ez.State):
     cur_settings: CounterSettings
-    samp: int = 0  # current sample counter
+    counter_start: int = 0  # next sample's first value
+    clock_zero: float = field(default_factory=time.time)  # time associated with first sample
+    n_sent: int = 0  # It is convenient to know how many samples we have sent.
     clock_event: asyncio.Event
 
 
@@ -82,6 +90,7 @@ class Counter(ez.Unit):
     def initialize(self) -> None:
         self.STATE.clock_event = asyncio.Event()
         self.STATE.clock_event.clear()
+        self.STATE.clock_zero = time.time()
         self.validate_settings(self.SETTINGS)
 
     @ez.subscriber(INPUT_SETTINGS)
@@ -103,38 +112,67 @@ class Counter(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def publish(self) -> AsyncGenerator:
         while True:
-            block_dur = self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
+            # This generator behaves differently depending on `dispatch_rate`
 
+            # 0. Parse dispatch_rate to get bool flags
+            b_realtime = False
+            b_ext_clock = False
+            b_manual_dispatch = False
             dispatch_rate = self.STATE.cur_settings.dispatch_rate
             if dispatch_rate is not None:
                 if isinstance(dispatch_rate, str):
                     if dispatch_rate == "realtime":
-                        await asyncio.sleep(block_dur)
+                        b_realtime = True
                     elif dispatch_rate == "ext_clock":
-                        await self.STATE.clock_event.wait()
-                        self.STATE.clock_event.clear()
+                        b_ext_clock = True
                 else:
-                    await asyncio.sleep(1.0 / dispatch_rate)
+                    b_manual_dispatch = True
 
+            # 1. Sleep, if necessary, until we are at the end of the current block's data production
+            t_now = time.time()
+            if b_realtime:
+                n_next = self.STATE.n_sent + self.STATE.cur_settings.n_time
+                t_next = self.STATE.clock_zero + n_next / self.STATE.cur_settings.fs
+                await asyncio.sleep(t_next - t_now)
+            elif b_ext_clock:
+                await self.STATE.clock_event.wait()
+                self.STATE.clock_event.clear()
+            elif b_manual_dispatch:
+                n_disp_next = 1 + self.STATE.n_sent / self.STATE.cur_settings.n_time
+                t_disp_next = self.STATE.clock_zero + n_disp_next / dispatch_rate
+                await asyncio.sleep(t_disp_next - t_now)
+                
+            # 2. Prepare counters. Same for all timing methods.
             block_samp = np.arange(self.STATE.cur_settings.n_time)[:, np.newaxis]
-
-            t_samp = block_samp + self.STATE.samp
-            self.STATE.samp = t_samp[-1] + 1
-
+            block_samp += self.STATE.counter_start
             if self.STATE.cur_settings.mod is not None:
-                t_samp %= self.STATE.cur_settings.mod
-                self.STATE.samp %= self.STATE.cur_settings.mod
+                block_samp %= self.STATE.cur_settings.mod
+            block_samp = np.tile(block_samp, (1, self.STATE.cur_settings.n_ch))
 
-            t_samp = np.tile(t_samp, (1, self.STATE.cur_settings.n_ch))
+            # 3. Prepare offset - the time associated with block_samp[0]
+            if b_realtime:
+                offset = t_next - self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
+            elif b_ext_clock:
+                offset = time.time() - (self.STATE.cur_settings.n_time - 1) / self.STATE.cur_settings.fs
+            else:
+                # Purely synthetic.
+                offset = self.STATE.n_sent / self.STATE.cur_settings.fs
+                # offset += self.STATE.clock_zero  # ??
 
-            offset_adj = self.STATE.cur_settings.n_time / self.STATE.cur_settings.fs
+            # 4. Update state for next iteration
+            self.STATE.counter_start = block_samp[-1, 0] + 1
+            # if self.STATE.cur_settings.mod is not None:
+            #     self.STATE.counter_start is purposely not modded
+            self.STATE.n_sent += self.STATE.cur_settings.n_time
 
+            # 5. Send block
             out = AxisArray(
-                t_samp,
+                block_samp,
                 dims=["time", "ch"],
                 axes=dict(
                     time=AxisArray.Axis.TimeAxis(
-                        fs=self.STATE.cur_settings.fs, offset=time.time() - offset_adj
+                        fs=self.STATE.cur_settings.fs,
+                        offset=offset
                     )
                 ),
             )
