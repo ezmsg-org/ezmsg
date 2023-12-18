@@ -126,6 +126,8 @@ class Spectrum(ez.Unit):
         new_dims = [d for d in message.dims]
         if self.SETTINGS.out_axis is not None:
             new_dims[axis_idx] = self.SETTINGS.out_axis
+            if self.SETTINGS.out_axis != axis_name:
+                _ = new_axes.pop(axis_name)
 
         out_msg = replace(message, data=spectrum, dims=new_dims, axes=new_axes)
 
