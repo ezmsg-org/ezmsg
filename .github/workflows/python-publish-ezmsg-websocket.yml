@@ -11,31 +11,31 @@ name: Upload Python Package - ezmsg-websocket
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.8'
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.8"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
 
-    - name: Build ezmsg-websocket
-      run: python -m build extensions/ezmsg-websocket
-    - name: Publish ezmsg-websocket
-      uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN_WEBSOCKET }}
-        packages_dir: extensions/ezmsg-websocket/dist
+      - name: Build ezmsg-websocket
+        run: python -m build extensions/ezmsg-websocket
+      - name: Publish ezmsg-websocket
+        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN_WEBSOCKET }}
+          packages_dir: extensions/ezmsg-websocket/dist
