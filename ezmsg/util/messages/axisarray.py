@@ -10,6 +10,9 @@ import numpy.typing as npt
 
 from ezmsg.core.util import either_dict_or_kwargs
 
+# TODO: Typehinting is all wrong in this and 
+# concatenate/transpose should probably not be staticmethods
+
 @dataclass
 class AxisArray:
     data: npt.NDArray
@@ -176,7 +179,7 @@ class AxisArray:
         all_data = [aa.data for aa in aas]
 
         if dim in aa_0.dims:
-            dim_idx = aa_0.axis_idx(dim)
+            dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
             return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes)
 
