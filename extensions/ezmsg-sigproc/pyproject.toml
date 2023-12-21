@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "ezmsg-sigproc"
+version = "1.2.3"
+description = "Timeseries signal processing implementations in ezmsg"
+authors = [
+  "Milsap, Griffin <griffin.milsap@gmail.com>",
+  "Peranich, Preston <pperanich@gmail.com>",
+]
+license = "LICENSE.txt"
+readme = "README.md"
+packages = [{ include = "ezmsg", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+ezmsg = "^3.3.0"
+numpy = "^1.19.5"
+scipy = "^1.6.3"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.0.0"
+pytest-cov = "*"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src", "tests"]
+testpaths = "tests"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

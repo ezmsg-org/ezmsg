@@ -1,3 +1,8 @@
+import importlib.metadata
+
+
+__version__ = importlib.metadata.version("ezmsg")
+
 __all__ = [
     "task",
     "publisher",
