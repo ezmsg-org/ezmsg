@@ -1,6 +1,46 @@
-[build-system]
-requires = [
-	"setuptools>=42",
-	"wheel"
+[tool.poetry]
+name = "ezmsg"
+version = "3.3.4"
+description = "A simple DAG-based computation model"
+authors = [
+  "Milsap, Griffin <griffin.milsap@gmail.com>",
+  "Peranich, Preston <pperanich@gmail.com>",
 ]
-build-backend = "setuptools.build_meta"
+license = "LICENSE.txt"
+readme = "README.md"
+packages = [{ include = "ezmsg", from = "src" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+
+[tool.poetry.scripts]
+ezmsg = "ezmsg.core.command:cmdline"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+typing-extensions = "^4.9.0"
+ezmsg-sigproc = { path = "./extensions/ezmsg-sigproc/", optional = true }
+ezmsg-websocket = { path = "./extensions/ezmsg-websocket/", optional = true }
+ezmsg-zmq = { path = "./extensions/ezmsg-zmq/", optional = true }
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.0.0"
+pytest-asyncio = "*"
+pytest-cov = "*"
+numpy = "^1.24.2"
+flake8 = "*"
+
+[tool.poetry.extras]
+sigproc = ["ezmsg-sigproc"]
+websocket = ["ezmsg-websocket"]
+zmq = ["ezmsg-zmq"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src", "tests"]
+testpaths = "tests"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -7,8 +7,8 @@ from contextlib import suppress
 
 from uuid import UUID, uuid1, getnode
 
+from . import __version__
 from .server import ThreadedAsyncServer, ServiceManager
-from ..version import __version__
 from .dag import DAG, CyclicException
 from .netprotocol import (
     Address,
