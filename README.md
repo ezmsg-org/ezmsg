@@ -27,11 +27,13 @@ Testing `ezmsg` requires:
 ```bash
 $ python3 -m venv env
 $ source env/bin/activate
-(env) $ pip install --upgrade pip
-(env) $ pip install -e ".[test]"
+(env) $ pip install --upgrade pip poetry
+(env) $ poetry install --with test
 
 (env) $ python -m pytest tests # Optionally, Perform tests
 ```
+
+Note that it is generally recommended to install poetry into it's own standalone venv via the `pipx` cli tool.
 
 ## Documentation
 
@@ -40,6 +42,21 @@ https://ezmsg.readthedocs.io/en/latest/
 `ezmsg` is very similar to [`labgraph`](https://www.github.com/facebookresearch/labgraph), so you might get a primer with their documentation and examples. Additionally, there are many examples provided in the examples/tests directories strewn throughout this repository.
 
 ## Extensions
+
+`ezmsg` extensions can be installed individually or all at once. To install all the extension packages in one go, you can use the following command:
+
+```bash
+pip install "ezmsg[all_ext]"
+```
+
+This will install all the available public extension packages for `ezmsg` that are listed in `pyproject.toml`.
+If you prefer to install the extension packages individually, you can use the following command:
+
+```bash
+pip install "ezmsg[zmq,sigproc,...]"
+```
+
+Please note that the `ezmsg` package itself can still be installed without any additional extensions using `pip install ezmsg`.
 
 See the extension directory for more details
 
