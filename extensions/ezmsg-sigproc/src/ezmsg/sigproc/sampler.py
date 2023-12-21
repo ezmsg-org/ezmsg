@@ -8,6 +8,11 @@ from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import Optional, Any, Tuple, List, Dict, AsyncGenerator
 
+## Dev/test apparatus
+import asyncio
+from ezmsg.util.debuglog import DebugLog
+from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
+
 
 @dataclass(unsafe_hash = True)
 class SampleTriggerMessage:
@@ -200,15 +205,6 @@ class Sampler(ez.Unit):
         buf_len = int(self.STATE.cur_settings.buffer_dur * fs)
         self.STATE.buffer = self.STATE.buffer[-buf_len:, ...]
         self.STATE.last_msg = msg
-
-
-## Dev/test apparatus
-import asyncio
-
-from ezmsg.testing.debuglog import DebugLog
-from ezmsg.sigproc.synth import Oscillator, OscillatorSettings
-
-from typing import AsyncGenerator
 
 
 class TriggerGeneratorSettings(ez.Settings):
