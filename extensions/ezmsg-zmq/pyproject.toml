@@ -6,9 +6,9 @@ authors = [
   "Milsap, Griffin <griffin.milsap@gmail.com>",
   "Peranich, Preston <pperanich@gmail.com>",
 ]
-license = "LICENSE.txt"
+license = "MIT"
 readme = "README.md"
-packages = [{ include = "ezmsg/zmq", from = "src" }]
+packages = [{ include = "ezmsg", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.8"
