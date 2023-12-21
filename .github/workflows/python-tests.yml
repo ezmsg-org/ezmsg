@@ -2,51 +2,46 @@ name: Test package
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
-
     strategy:
       matrix:
-        python-version: [3.8, 3.9, '3.10']
+        python-version: [3.8, 3.9, "3.10"]
         os:
-          - 'ubuntu-latest'
-          - 'windows-latest'
-          - 'macos-latest'
+          - "ubuntu-latest"
+          - "windows-latest"
+          - "macos-latest"
     runs-on: ${{matrix.os}}
 
     steps:
-          
-    - uses: actions/checkout@v2
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8
-        pip install -e ".[test]"
-        pip install -e extensions/ezmsg-sigproc
-        pip install -e extensions/ezmsg-websocket
-        pip install -e extensions/ezmsg-zmq
-    
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 . --count --exit-zero --statistics
-    
-    - name: Test ezmsg
-      run: |
-        python -m pytest -v tests
+      - uses: actions/checkout@v2
 
-    - name: Test ezmsg-sigproc
-      run: |
-        python -m pytest -v extensions/ezmsg-sigproc/tests
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip pipx
+          pipx install poetry
+          poetry install -E zmq -E websocket -E sigproc --with test
+
+      - name: Lint with flake8
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --statistics
+
+      - name: Test ezmsg
+        run: |
+          python -m pytest -v tests
+
+      - name: Test ezmsg-sigproc
+        run: |
+          python -m pytest -v extensions/ezmsg-sigproc/tests
