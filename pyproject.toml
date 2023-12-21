@@ -6,7 +6,7 @@ authors = [
   "Milsap, Griffin <griffin.milsap@gmail.com>",
   "Peranich, Preston <pperanich@gmail.com>",
 ]
-license = "LICENSE.txt"
+license = "MIT"
 readme = "README.md"
 packages = [{ include = "ezmsg", from = "src" }]
 classifiers = [
@@ -20,9 +20,17 @@ ezmsg = "ezmsg.core.command:cmdline"
 [tool.poetry.dependencies]
 python = "^3.8"
 typing-extensions = "^4.9.0"
-ezmsg-sigproc = { path = "./extensions/ezmsg-sigproc/", optional = true }
-ezmsg-websocket = { path = "./extensions/ezmsg-websocket/", optional = true }
-ezmsg-zmq = { path = "./extensions/ezmsg-zmq/", optional = true }
+ezmsg-sigproc = { version = "*", source = "pypi", optional = true }
+ezmsg-websocket = { version = "*", source = "pypi", optional = true }
+ezmsg-zmq = { version = "*", source = "pypi", optional = true }
+ezmsg-vispy = { version = "*", source = "pypi", optional = true }
+ezmsg-panel = { git = "https://github.com/griffinmilsap/ezmsg-panel.git", rev = "main", optional = true }
+ezmsg-blackrock = { python = "^3.9", git = "https://github.com/griffinmilsap/ezmsg-blackrock.git", rev = "main", optional = true }
+ezmsg-unicorn = { git = "https://github.com/griffinmilsap/ezmsg-unicorn.git", rev = "main", optional = true }
+ezmsg-gadget = { git = "https://github.com/griffinmilsap/ezmsg-gadget.git", rev = "main", optional = true }
+ezmsg-openbci = { git = "https://github.com/griffinmilsap/ezmsg-openbci.git", rev = "main", optional = true }
+ezmsg-ssvep = { git = "https://github.com/griffinmilsap/ezmsg-ssvep.git", rev = "main", optional = true }
+
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
@@ -35,6 +43,25 @@ flake8 = "*"
 sigproc = ["ezmsg-sigproc"]
 websocket = ["ezmsg-websocket"]
 zmq = ["ezmsg-zmq"]
+panel = ["ezmsg-panel"]
+blackrock = ["ezmsg-blackrock"]
+unicorn = ["ezmsg-unicorn"]
+gadget = ["ezmsg-gadget"]
+openbci = ["ezmsg-openbci"]
+ssvep = ["ezmsg-ssvep"]
+vispy = ["ezmsg-vispy"]
+all_ext = [
+  "ezmsg-sigproc",
+  "ezmsg-websocket",
+  "ezmsg-zmq",
+  "ezmsg-panel",
+  "ezmsg-blackrock",
+  "ezmsg-unicorn",
+  "ezmsg-gadget",
+  "ezmsg-openbci",
+  "ezmsg-ssvep",
+  "ezmsg-vispy",
+]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
