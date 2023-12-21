@@ -1,6 +1,21 @@
-[build-system]
-requires = [
-	"setuptools>=42",
-	"wheel"
+[tool.poetry]
+name = "ezmsg-zmq"
+version = "1.1.5"
+description = "Zero-MQ pub/sub units for ezmsg"
+authors = [
+  "Milsap, Griffin <griffin.milsap@gmail.com>",
+  "Peranich, Preston <pperanich@gmail.com>",
 ]
-build-backend = "setuptools.build_meta"
+license = "LICENSE.txt"
+readme = "README.md"
+packages = [{ include = "ezmsg/zmq", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+pyzmq = "^25.1.2"
+ezmsg = "^3.3.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
