@@ -91,7 +91,9 @@ def test_counter_system(
     if dispatch_rate is None:
         # The number of messages depends on how fast the computer is
         target_messages = len(messages)
-    assert len(messages) == target_messages
+    # This should be an equivalence assertion (==) but the use of TerminateOnTotal does
+    #  not guarantee that MessageLogger will exit before an additional message is received.
+    assert len(messages) >= target_messages
 
     target_samples = block_size * target_messages
     time_idx, ch_idx = messages[0].get_axis_idx("time"), messages[0].get_axis_idx("ch")
