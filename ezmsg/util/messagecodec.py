@@ -1,5 +1,6 @@
 import json
 import time
+import pickle
 import base64
 import typing
 import importlib
@@ -16,6 +17,8 @@ except ImportError:
 
 TYPE = "_type"
 TIMESTAMP_ATTR = "_log_timestamp"
+PICKLE_TYPE = "_pickle"
+PICKLE_DATA = "data"
 NDARRAY_TYPE = "_ndarray"
 NDARRAY_DTYPE = "dtype"
 NDARRAY_SHAPE = "shape"
@@ -62,7 +65,15 @@ class MessageEncoder(json.JSONEncoder):
                 NDARRAY_SHAPE: obj.shape,
             }
 
-        return json.JSONEncoder.default(self, obj)
+        try:
+            return json.JSONEncoder.default(self, obj)
+        
+        except TypeError:
+            buf = base64.b64encode(pickle.dumps(obj))
+            return {
+                TYPE: PICKLE_TYPE,
+                PICKLE_DATA: buf.decode("ascii"),
+            }
 
 class StampedMessage(typing.NamedTuple):
     msg: typing.Any
@@ -91,6 +102,12 @@ class MessageTimestampDecoder(json.JSONDecoder):
                 ):
                     buf = base64.b64decode(data_bytes.encode("ascii"))
                     out_obj = np.frombuffer(buf, dtype=data_dtype).reshape(data_shape)
+                
+            elif obj_type == PICKLE_TYPE:
+                data_bytes: typing.Optional[str] = obj.get(PICKLE_DATA)
+                if isinstance(data_bytes, str):
+                    buf = base64.b64decode(data_bytes.encode("ascii"))
+                    out_obj = pickle.loads(buf)
 
             else:
                 cls = import_type(obj_type)
