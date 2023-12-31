@@ -13,7 +13,7 @@ class SignalInjectorSettings(ez.Settings):
     time_dim: str = 'time' # Input signal needs a time dimension with units in sec.
     frequency: typing.Optional[float] = None # Hz
     amplitude: float = 1.0
-    mixing_seed: int = 0xDEADBEEF
+    mixing_seed: typing.Optional[int] = None
 
 
 class SignalInjectorState(ez.State):
