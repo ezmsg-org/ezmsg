@@ -7,6 +7,7 @@ from dataclasses import field, dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
+import numpy.lib.stride_tricks as nps
 
 from ezmsg.core.util import either_dict_or_kwargs
 
@@ -201,6 +202,49 @@ class AxisArray:
         new_data = np.transpose(aa.data, dim_indices)
         return replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
 
+
+def slice_along_axis(in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: int) -> npt.NDArray:
+    """
+    Slice the input array along a specified axis using the given slice object or integer index.
+
+    Parameters:
+        in_arr (npt.NDArray): The input array to be sliced.
+        sl (Union[slice, int]): The slice object or integer index to use for slicing.
+        axis (int): The axis along which to slice the array.
+
+    Returns:
+        npt.NDArray: The sliced array (view).
+
+    Raises:
+        ValueError: If the axis value is invalid for the input array.
+    """
+    if axis < -in_arr.ndim or axis >= in_arr.ndim:
+        raise ValueError(f"Invalid axis value {axis} for input array with {in_arr.ndim} dimensions.")
+    if axis < 0:
+        axis = in_arr.ndim  + axis
+    all_slice = (slice(None),) * axis + (sl,) + (slice(None),) * (in_arr.ndim - axis - 1)
+    return in_arr[all_slice]
+
+
+def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArray:
+    """
+    Generates a view of an array using a sliding window of specified length along a specified axis of the input array.
+    This is a slightly optimized version of nps.sliding_window_view with a few important differences.
+    Because we only accept a single nwin and a single axis, we can skip some checks.
+    The new `win` axis precedes immediately the original target axis, unlike sliding_window_view where the
+     target axis is moved to the end of the output.
+
+    Parameters:
+        in_arr (npt.NDArray): The input array.
+        nwin (int): The size of the sliding window.
+        axis (int): The axis along which the sliding window will be applied.
+
+    Returns:
+        npt.NDArray: A view to the input array with the sliding window applied.
+    """
+    out_strides = in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis+1:]
+    out_shape = in_arr.shape[:axis] + (in_arr.shape[axis]-(nwin-1),) + (nwin,) + in_arr.shape[axis+1:]
+    return nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
 
 def _as2d(
     in_arr: npt.NDArray, axis: int = 0
