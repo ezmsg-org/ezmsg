@@ -189,13 +189,9 @@ def window(
 
 class WindowSettings(ez.Settings):
     axis: Optional[str] = None
-    newaxis: Optional[
-        str
-    ] = None  # Optional new axis for output.  If "None" - no new axes on output
-    window_dur: Optional[
-        float
-    ] = None  # Sec.  If "None" -- passthrough; window_shift is ignored.
-    window_shift: Optional[float] = None  # Sec.  If "None", activate "1:1 mode"
+    newaxis: Optional[str] = None  # new axis for output. No new axes if None
+    window_dur: Optional[float] = None  # Sec. passthrough if None
+    window_shift: Optional[float] = None  # Sec. Use "1:1 mode" if None
     zero_pad_until: str = "full"  # "full", "shift", "input", "none"
 
 
@@ -214,17 +210,14 @@ class Window(ez.Unit):
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
-        self.STATE.gen = window(
-            axis=self.STATE.cur_settings.axis,
-            newaxis=self.STATE.cur_settings.newaxis,
-            window_dur=self.STATE.cur_settings.window_dur,
-            window_shift=self.STATE.cur_settings.window_shift,
-            zero_pad_until=self.STATE.cur_settings.zero_pad_until
-        )
+        self.construct_generator()
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: WindowSettings) -> None:
         self.STATE.cur_settings = msg
+        self.construct_generator()
+
+    def construct_generator(self):
         self.STATE.gen = window(
             axis=self.STATE.cur_settings.axis,
             newaxis=self.STATE.cur_settings.newaxis,
