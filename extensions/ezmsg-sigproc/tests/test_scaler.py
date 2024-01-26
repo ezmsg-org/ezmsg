@@ -58,8 +58,8 @@ class ScalerTestSystem(ez.Collection):
 
     def network(self) -> ez.NetworkDefinition:
         return (
-            (self.COUNTER.OUTPUT_SIGNAL, self.SCALER.INPUT),
-            (self.SCALER.OUTPUT, self.LOG.INPUT_MESSAGE),
+            (self.COUNTER.OUTPUT_SIGNAL, self.SCALER.INPUT_SIGNAL),
+            (self.SCALER.OUTPUT_SIGNAL, self.LOG.INPUT_MESSAGE),
             (self.LOG.OUTPUT_MESSAGE, self.TERM.INPUT_MESSAGE)
         )
 
