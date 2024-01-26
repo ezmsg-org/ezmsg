@@ -1,11 +1,11 @@
 from dataclasses import replace
-from typing import Generator
+from typing import Generator, Optional
 
 import numpy as np
 
+import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.util.gen_to_unit import gen_to_unit
-from ezmsg.util.generator import consumer
+from ezmsg.util.generator import consumer, GenAxisArray
 
 
 def _tau_from_alpha(alpha: float, dt: float) -> float:
@@ -27,7 +27,7 @@ def _alpha_from_tau(tau: float, dt: float) -> float:
 
 
 @consumer
-def scaler(time_constant: float = 1.0, axis: str | None = None) -> Generator[AxisArray, AxisArray, None]:
+def scaler(time_constant: float = 1.0, axis: Optional[str] = None) -> Generator[AxisArray, AxisArray, None]:
     from river import preprocessing
     axis_arr_in = AxisArray(np.array([]), dims=[""])
     axis_arr_out = AxisArray(np.array([]), dims=[""])
@@ -60,7 +60,7 @@ def scaler(time_constant: float = 1.0, axis: str | None = None) -> Generator[Axi
 
 
 @consumer
-def scaler_np(time_constant: float = 1.0, axis: str | None = None) -> Generator[AxisArray, AxisArray, None]:
+def scaler_np(time_constant: float = 1.0, axis: Optional[str] = None) -> Generator[AxisArray, AxisArray, None]:
     # The only dependency is numpy.
     # This is faster for multi-channel data but slower for single-channel data.
     axis_arr_in = AxisArray(np.array([]), dims=[""])
@@ -111,4 +111,16 @@ def scaler_np(time_constant: float = 1.0, axis: str | None = None) -> Generator[
         axis_arr_out = replace(axis_arr_in, data=result)
 
 
-AdaptiveStandardScalerSettings, AdaptiveStandardScaler = gen_to_unit(scaler_np)
+class AdaptiveStandardScalerSettings(ez.Settings):
+    time_constant: float = 1.0
+    axis: Optional[str] = None
+
+
+class AdaptiveStandardScaler(GenAxisArray):
+    SETTINGS: AdaptiveStandardScalerSettings
+
+    def construct_generator(self):
+        self.STATE.gen = scaler_np(
+            time_constant=self.SETTINGS.time_constant,
+            axis=self.SETTINGS.axis
+        )
