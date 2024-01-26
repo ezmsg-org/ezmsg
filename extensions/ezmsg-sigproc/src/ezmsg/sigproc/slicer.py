@@ -1,10 +1,10 @@
 from dataclasses import replace
-from typing import Generator
+from typing import Generator, Optional
 
 import numpy as np
+import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray, slice_along_axis
-from ezmsg.util.gen_to_unit import gen_to_unit
-from ezmsg.util.generator import consumer
+from ezmsg.util.generator import consumer, GenAxisArray
 
 
 """
@@ -35,7 +35,7 @@ def parse_slice(s: str) -> tuple[slice]:
 
 @consumer
 def slicer(
-    selection: str = "", axis: str | None = None
+    selection: str = "", axis: Optional[str] = None
 ) -> Generator[AxisArray, AxisArray, None]:
     axis_arr_in = AxisArray(np.array([]), dims=[""])
     axis_arr_out = AxisArray(np.array([]), dims=[""])
@@ -63,4 +63,15 @@ def slicer(
         )
 
 
-SlicerSettings, Slicer = gen_to_unit(slicer)
+class SlicerSettings(ez.Settings):
+    selection: str = ""
+    axis: Optional[str] = None
+
+
+class Slicer(GenAxisArray):
+    SETTINGS: SlicerSettings
+
+    def construct_generator(self):
+        self.STATE.gen = slicer(
+            selection=self.SETTINGS.selection, axis=self.SETTINGS.axis
+        )
