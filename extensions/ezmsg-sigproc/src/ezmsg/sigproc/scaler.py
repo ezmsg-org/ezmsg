@@ -50,7 +50,8 @@ def scaler(time_constant: float = 1.0, axis: Optional[str] = None) -> Generator[
         result = []
         for sample in data:
             x = {k: v for k, v in enumerate(sample.flatten().tolist())}
-            y = _scaler.learn_one(x).transform_one(x)
+            _scaler.learn_one(x)
+            y = _scaler.transform_one(x)
             k = sorted(y.keys())
             result.append(np.array([y[_] for _ in k]).reshape(sample.shape))
 
