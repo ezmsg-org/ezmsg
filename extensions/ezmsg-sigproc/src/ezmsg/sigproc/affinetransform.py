@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Generator, Optional, Union
 
 import numpy as np
+import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.util.gen_to_unit import gen_to_unit
-from ezmsg.util.generator import consumer
+from ezmsg.util.generator import consumer, GenAxisArray
 
 
 @consumer
@@ -52,7 +52,21 @@ def affine_transform(
         axis_arr_out = replace(axis_arr_in, data=data)
 
 
-AffineTransformSettings, AffineTransform = gen_to_unit(affine_transform)
+class AffineTransformSettings(ez.Settings):
+    weights: Union[np.ndarray, str, Path]
+    axis: Optional[str] = None
+    right_multiply: bool = True
+
+
+class AffineTransform(GenAxisArray):
+    SETTINGS: AffineTransformSettings
+
+    def construct_generator(self):
+        self.STATE.gen = affine_transform(
+            weights=self.SETTINGS.weights,
+            axis=self.SETTINGS.axis,
+            right_multiply=self.SETTINGS.right_multiply,
+        )
 
 
 @consumer
@@ -93,4 +107,18 @@ def common_rereference(
         axis_arr_out = replace(axis_arr_in, data=axis_arr_in.data - ref_data)
 
 
-CommonRereferenceSettings, CommonRereference = gen_to_unit(common_rereference)
+class CommonRereferenceSettings(ez.Settings):
+    mode: str = "mean"
+    axis: Optional[str] = None
+    include_current: bool = True
+
+
+class CommonRereference(GenAxisArray):
+    SETTINGS: CommonRereferenceSettings
+
+    def construct_generator(self):
+        self.STATE.gen = common_rereference(
+            mode=self.SETTINGS.mode,
+            axis=self.SETTINGS.axis,
+            include_current=self.SETTINGS.include_current,
+        )
