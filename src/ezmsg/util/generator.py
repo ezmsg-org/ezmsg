@@ -1,5 +1,5 @@
 import ezmsg.core as ez
-from ezmsg.util.messages.message import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray
 import traceback
 from typing import Any, AsyncGenerator, Generator, Callable, TypeVar
 from typing_extensions import ParamSpec
