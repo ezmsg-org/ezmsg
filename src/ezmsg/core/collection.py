@@ -36,8 +36,8 @@ class CollectionMeta(ComponentMeta):
 class Collection(Component, metaclass=CollectionMeta):
     """Collections can contain subunits and connect them together"""
 
-    def __init__(self, settings: typing.Optional[Settings] = None):
-        super(Collection, self).__init__(settings)
+    def __init__(self, *args, settings: typing.Optional[Settings] = None, **kwargs):
+        super(Collection, self).__init__(*args, settings=settings, **kwargs)
 
         self._components = deepcopy(self.__class__.__components__)
         for comp_name, comp in self.components.items():
