@@ -1,4 +1,5 @@
 from dataclasses import replace
+import traceback
 from typing import AsyncGenerator, Optional, Tuple, List, Generator, Union
 
 import ezmsg.core as ez
