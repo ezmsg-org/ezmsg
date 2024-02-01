@@ -28,7 +28,7 @@ class SampleMessage:
 
 @consumer
 def sampler(
-buffer_dur: float,
+        buffer_dur: float,
         axis: Optional[str] = None,
         period: Optional[Tuple[float, float]] = None,
         value: Any = None,
@@ -94,7 +94,7 @@ buffer_dur: float,
             req_buf_len = int((_period[1] - _period[0]) * fs)
             if req_buf_len >= max_buf_len:
                 ez.logger.warning(
-                    f"Sampling failed: {period=} >= {self.STATE.cur_settings.buffer_dur=}"
+                    f"Sampling failed: {period=} >= {buffer_dur=}"
                 )
                 continue
 
