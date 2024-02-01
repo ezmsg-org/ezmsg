@@ -61,8 +61,8 @@ class UnitMeta(ComponentMeta):
 class Unit(Component, metaclass=UnitMeta):
     """Units can subscribe, publish, and have tasks"""
 
-    def __init__(self, settings: Optional[Settings] = None):
-        super(Unit, self).__init__(settings)
+    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
+        super(Unit, self).__init__(*args, settings=settings, **kwargs)
 
         for task_name, task in self.__class__.__tasks__.items():
             self._tasks[task_name] = task
