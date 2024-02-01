@@ -23,6 +23,7 @@ from typing import (
     Type,
     TypeVar,
 )
+from ezmsg.util.messages.axisarray import AxisArray
 
 if sys.version_info < (3, 12):
     from typing_extensions import dataclass_transform
@@ -88,6 +89,7 @@ def gen_to_unit(
                 setattr(self.STATE, state_field_name, getattr(msg, msg_field_name))
                 self.STATE.gen = func(**asdict(self.STATE))
 
+    stream_suffix = {AxisArray: "_SIGNAL"}  # Add more message types if accessible in core.
     streams = {}
     ez_task: Callable
     if subscribe_type is type(None) and publish_type is type(None):
@@ -102,7 +104,7 @@ def gen_to_unit(
 
     elif subscribe_type is type(None) and publish_type is not type(None):
         _output = ez.OutputStream(publish_type, **output_stream_kwargs)
-        streams["OUTPUT"] = _output
+        streams["OUTPUT" + stream_suffix.get(publish_type,  "")] = _output
 
         @ez.publisher(_output)
         async def publish(self):
@@ -114,8 +116,7 @@ def gen_to_unit(
 
     elif subscribe_type is not type(None) and publish_type is type(None):
         _input = ez.InputStream(subscribe_type)
-
-        streams["INPUT"] = _input
+        streams["INPUT"+ stream_suffix.get(subscribe_type,  "")] = _input
 
         @ez.subscriber(_input)
         async def subscribe(self, msg) -> None:
@@ -127,9 +128,8 @@ def gen_to_unit(
     else:
         _input = ez.InputStream(subscribe_type)
         _output = ez.OutputStream(publish_type, **output_stream_kwargs)
-
-        streams["INPUT"] = _input
-        streams["OUTPUT"] = _output
+        streams["INPUT" + stream_suffix.get(subscribe_type,  "")] = _input
+        streams["OUTPUT" + stream_suffix.get(publish_type,  "")] = _output
 
         @ez.subscriber(_input)
         @ez.publisher(_output)
