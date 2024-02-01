@@ -9,11 +9,11 @@ import numpy as np
 from ezmsg.util.messages.axisarray import AxisArray, slice_along_axis
 from ezmsg.util.generator import consumer
 
-## Dev/test apparatus
+# Dev/test apparatus
 import asyncio
 
 
-@dataclass(unsafe_hash = True)
+@dataclass(unsafe_hash=True)
 class SampleTriggerMessage:
     timestamp: float = field(default_factory=time.time)
     period: Optional[Tuple[float, float]] = None
@@ -81,7 +81,7 @@ def sampler(
             _value = msg_in.value if msg_in.value is not None else value
 
             if _period is None:
-                ez.logger.warning(f"Sampling failed: period not specified")
+                ez.logger.warning("Sampling failed: period not specified")
                 continue
 
             # Check that period is valid
@@ -160,14 +160,16 @@ def sampler(
                     stop = start + int(fs * (trig.period[1] - trig.period[0]))
                     if buffer.shape[axis_idx] > stop:
                         # Trigger period fully enclosed in buffer.
-                        msg_out.append(SampleMessage(
-                                                trigger=trig,
-                            sample=replace(
-                                msg_in,
-                                data=slice_along_axis(buffer, slice(start, stop), axis_idx),
-                                axes={**msg_in.axes, axis: replace(axis_info, offset=buffer_offset[start])}
+                        msg_out.append(
+                            SampleMessage(
+                                trigger=trig,
+                                sample=replace(
+                                    msg_in,
+                                    data=slice_along_axis(buffer, slice(start, stop), axis_idx),
+                                    axes={**msg_in.axes, axis: replace(axis_info, offset=buffer_offset[start])}
+                                )
                             )
-                        ))
+                        )
                         triggers.remove(trig)
 
             buf_len = int(buffer_dur * fs)
