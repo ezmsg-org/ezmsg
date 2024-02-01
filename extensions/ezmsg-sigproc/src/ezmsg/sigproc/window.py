@@ -1,11 +1,10 @@
 from dataclasses import replace
 import traceback
-from typing import AsyncGenerator, Optional, Tuple, List, Generator, Union
+from typing import AsyncGenerator, Optional, Tuple, List, Generator
 
 import ezmsg.core as ez
 import numpy as np
 import numpy.typing as npt
-import numpy.lib.stride_tricks as nps
 
 from ezmsg.util.messages.axisarray import AxisArray, slice_along_axis, sliding_win_oneaxis
 from ezmsg.util.generator import consumer
@@ -99,7 +98,6 @@ def window(
             n_zero = max(0, window_samples - req_samples)
             buffer_shape = axis_arr_in.data.shape[:axis_idx] + (n_zero,) + axis_arr_in.data.shape[axis_idx + 1:]
             buffer = np.zeros(buffer_shape)
-            ndims_tail = buffer.ndim - axis_idx - 1
             prev_samp_shape = samp_shape
             prev_fs = fs
 
