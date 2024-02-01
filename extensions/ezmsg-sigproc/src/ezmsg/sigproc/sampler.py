@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass, replace, field
 import time
-from typing import Optional, Any, Tuple, List, Dict, Union, AsyncGenerator, Generator
+from typing import Optional, Any, Tuple, List, Union, AsyncGenerator, Generator
 
 import ezmsg.core as ez
 import numpy as np
@@ -33,7 +33,7 @@ def sampler(
         period: Optional[Tuple[float, float]] = None,
         value: Any = None,
         estimate_alignment: bool = True
-) -> Generator[Union[AxisArray, SampleTriggerMessage], list[SampleMessage], None]:
+) -> Generator[Union[AxisArray, SampleTriggerMessage], List[SampleMessage], None]:
     """
     A generator function that samples data into a buffer, accepts triggers, and returns slices of sampled
     data around the trigger time.
@@ -192,7 +192,7 @@ class SamplerSettings(ez.Settings):
 
 class SamplerState(ez.State):
     cur_settings: SamplerSettings
-    gen: Generator[Union[AxisArray, SampleTriggerMessage], list[SampleMessage], None]
+    gen: Generator[Union[AxisArray, SampleTriggerMessage], List[SampleMessage], None]
 
 
 class Sampler(ez.Unit):
