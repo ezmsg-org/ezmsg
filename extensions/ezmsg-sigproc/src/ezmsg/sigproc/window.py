@@ -1,10 +1,10 @@
 from dataclasses import replace
-from typing import AsyncGenerator, Optional, Tuple, List, Generator, Union
+import traceback
+from typing import AsyncGenerator, Optional, Tuple, List, Generator
 
 import ezmsg.core as ez
 import numpy as np
 import numpy.typing as npt
-import numpy.lib.stride_tricks as nps
 
 from ezmsg.util.messages.axisarray import AxisArray, slice_along_axis, sliding_win_oneaxis
 from ezmsg.util.generator import consumer
@@ -66,6 +66,10 @@ def window(
     while True:
         axis_arr_in = yield axis_arr_out
 
+        if window_dur is None:
+            axis_arr_out = [axis_arr_in]
+            continue
+
         if axis is None:
             axis = axis_arr_in.dims[0]
         axis_idx = axis_arr_in.get_axis_idx(axis)
@@ -94,7 +98,6 @@ def window(
             n_zero = max(0, window_samples - req_samples)
             buffer_shape = axis_arr_in.data.shape[:axis_idx] + (n_zero,) + axis_arr_in.data.shape[axis_idx + 1:]
             buffer = np.zeros(buffer_shape)
-            ndims_tail = buffer.ndim - axis_idx - 1
             prev_samp_shape = samp_shape
             prev_fs = fs
 
@@ -229,10 +232,6 @@ class Window(ez.Unit):
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
-        if self.STATE.cur_settings.window_dur is None:
-            yield self.OUTPUT_SIGNAL, msg
-            return
-
         try:
             out_msgs = self.STATE.gen.send(msg)
             for out_msg in out_msgs:
