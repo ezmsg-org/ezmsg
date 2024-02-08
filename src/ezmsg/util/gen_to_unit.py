@@ -109,7 +109,8 @@ def gen_to_unit(
         @ez.publisher(_output)
         async def publish(self):
             while True:
-                yield self.OUTPUT, next(self.STATE.gen)
+                OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type,  "")]
+                yield OUTPUT, next(self.STATE.gen)
                 await asyncio.sleep(sleep_time)
 
         ez_task = publish
@@ -136,7 +137,8 @@ def gen_to_unit(
         async def subscribe_publish(self, msg):
             self.check_fields(msg)
             res = self.STATE.gen.send(msg)
-            yield self.OUTPUT, res
+            OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type,  "")]
+            yield OUTPUT, res
 
         ez_task = subscribe_publish
 
