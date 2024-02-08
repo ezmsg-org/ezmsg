@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass, replace, field
 import time
-from typing import Optional, Any, Tuple, List, Dict, Union, AsyncGenerator, Generator
+from typing import Optional, Any, Tuple, List, Union, AsyncGenerator, Generator
 
 import ezmsg.core as ez
 import numpy as np
@@ -9,11 +9,11 @@ import numpy as np
 from ezmsg.util.messages.axisarray import AxisArray, slice_along_axis
 from ezmsg.util.generator import consumer
 
-## Dev/test apparatus
+# Dev/test apparatus
 import asyncio
 
 
-@dataclass(unsafe_hash = True)
+@dataclass(unsafe_hash=True)
 class SampleTriggerMessage:
     timestamp: float = field(default_factory=time.time)
     period: Optional[Tuple[float, float]] = None
@@ -28,12 +28,12 @@ class SampleMessage:
 
 @consumer
 def sampler(
-buffer_dur: float,
+        buffer_dur: float,
         axis: Optional[str] = None,
         period: Optional[Tuple[float, float]] = None,
         value: Any = None,
         estimate_alignment: bool = True
-) -> Generator[Union[AxisArray, SampleTriggerMessage], list[SampleMessage], None]:
+) -> Generator[Union[AxisArray, SampleTriggerMessage], List[SampleMessage], None]:
     """
     A generator function that samples data into a buffer, accepts triggers, and returns slices of sampled
     data around the trigger time.
@@ -81,7 +81,7 @@ buffer_dur: float,
             _value = msg_in.value if msg_in.value is not None else value
 
             if _period is None:
-                ez.logger.warning(f"Sampling failed: period not specified")
+                ez.logger.warning("Sampling failed: period not specified")
                 continue
 
             # Check that period is valid
@@ -94,7 +94,7 @@ buffer_dur: float,
             req_buf_len = int((_period[1] - _period[0]) * fs)
             if req_buf_len >= max_buf_len:
                 ez.logger.warning(
-                    f"Sampling failed: {period=} >= {self.STATE.cur_settings.buffer_dur=}"
+                    f"Sampling failed: {period=} >= {buffer_dur=}"
                 )
                 continue
 
@@ -160,14 +160,16 @@ buffer_dur: float,
                     stop = start + int(fs * (trig.period[1] - trig.period[0]))
                     if buffer.shape[axis_idx] > stop:
                         # Trigger period fully enclosed in buffer.
-                        msg_out.append(SampleMessage(
-                                                trigger=trig,
-                            sample=replace(
-                                msg_in,
-                                data=slice_along_axis(buffer, slice(start, stop), axis_idx),
-                                axes={**msg_in.axes, axis: replace(axis_info, offset=buffer_offset[start])}
+                        msg_out.append(
+                            SampleMessage(
+                                trigger=trig,
+                                sample=replace(
+                                    msg_in,
+                                    data=slice_along_axis(buffer, slice(start, stop), axis_idx),
+                                    axes={**msg_in.axes, axis: replace(axis_info, offset=buffer_offset[start])}
+                                )
                             )
-                        ))
+                        )
                         triggers.remove(trig)
 
             buf_len = int(buffer_dur * fs)
@@ -192,7 +194,7 @@ class SamplerSettings(ez.Settings):
 
 class SamplerState(ez.State):
     cur_settings: SamplerSettings
-    gen: Generator[Union[AxisArray, SampleTriggerMessage], list[SampleMessage], None]
+    gen: Generator[Union[AxisArray, SampleTriggerMessage], List[SampleMessage], None]
 
 
 class Sampler(ez.Unit):
