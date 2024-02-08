@@ -62,6 +62,24 @@ def calculate_expected_results(orig, fs, win_shift, zero_pad, msg_block_size, sh
     return expected, tvec
 
 
+def test_window_gen_nodur():
+    """
+    Test window generator method when window_dur is None. Should be a simple pass through.
+    """
+    nchans = 64
+    data_len = 20
+    data = np.arange(nchans * data_len, dtype=float).reshape((nchans, data_len))
+    test_msg = AxisArray(
+        data=data,
+        dims=["ch", "time"],
+        axes={"time": AxisArray.Axis.TimeAxis(fs=500., offset=0.)}
+    )
+    gen = window(window_dur=None)
+    result = gen.send(test_msg)
+    assert result[0] is test_msg
+    assert np.shares_memory(result[0].data, test_msg.data)
+
+
 @pytest.mark.parametrize("msg_block_size", [1, 5, 10, 20, 60])
 @pytest.mark.parametrize("newaxis", [None, "win"])
 @pytest.mark.parametrize("win_dur", [0.2, 1.0])
@@ -200,6 +218,7 @@ class WindowSystem(ez.Collection):
     (10, "step", 0.2, 1.0, "shift", 500.0),
     (20, "step", 1.0, 1.0, "shift", 500.0),
     (10, "step", 1.0, 1.0, "none", 500.0),
+    (20, None, None, None, "input", 10.0),
 ])
 def test_window_system(
     msg_block_size: int,
@@ -211,7 +230,7 @@ def test_window_system(
     test_name: Optional[str] = None,
 ):
     # Calculate expected dimensions.
-    win_len = int(win_dur * fs)
+    win_len = int((win_dur or 1.0) * fs)
     shift_len = int(win_shift * fs) if win_shift is not None else msg_block_size
     # num_msgs should be the greater value between (2 full windows + a shift) or 4.0 seconds
     data_len = max(2 * win_len + shift_len - 1, int(4.0 * fs))
@@ -250,10 +269,10 @@ def test_window_system(
         # In this test, fs should never change
         assert 1.0 / msg.axes["time"].gain == fs
         # In this test, we should have consistent dimensions
-        assert msg.dims == [newaxis, "time", "ch"] if newaxis else ["time", "ch"]
+        assert msg.dims == ([newaxis, "time", "ch"] if newaxis else ["time", "ch"])
         # Window should always output the same shape data
         assert msg.shape[msg.get_axis_idx("ch")] == 1  # Counter yields only one channel.
-        assert msg.shape[msg.get_axis_idx("time")] == win_len
+        assert msg.shape[msg.get_axis_idx("time")] == (msg_block_size if win_dur is None else win_len)
 
     ez.logger.info("Consistent metadata!")
 
@@ -284,8 +303,11 @@ def test_window_system(
                                                 1, data_len, num_msgs, 0)
 
     # Compare results to expected
-    assert np.array_equal(data, expected)
-    assert np.allclose(offsets, tvec)
+    if win_dur is None:
+        assert np.array_equal(data, sent_data.reshape((num_msgs, msg_block_size, -1)))
+    else:
+        assert np.array_equal(data, expected)
+        assert np.allclose(offsets, tvec)
 
     ez.logger.info("Test Complete.")
 
