@@ -8,12 +8,10 @@ Please note that the `gen_to_unit` function in the current Python file is provid
 import ezmsg.core as ez
 import asyncio
 import sys
-from copy import deepcopy
-from inspect import getfullargspec
+import inspect
 from dataclasses import asdict, fields
 from typing import (
     Callable,
-    get_type_hints,
     get_args,
     Any,
     Generator,
@@ -41,15 +39,16 @@ def gen_to_unit(
     output_stream_kwargs: dict = {},
     msg_to_state: dict = {},
 ) -> Tuple[Any, Any]:
-    type_hints = deepcopy(get_type_hints(func))
-    generator_type_hint = type_hints.pop("return")
+    sig = inspect.signature(func)
+
+    # Parse the generator type hint in the return annotation
+    generator_type_hint = sig.return_annotation
     if not hasattr(generator_type_hint, "__origin__") or not issubclass(
         generator_type_hint.__origin__, Generator
     ):
         raise ValueError(
             f"Function return type expected to be Generator, found: {generator_type_hint}"
         )
-
     gen_args = get_args(generator_type_hint)
     if len(gen_args) < 3:
         raise ValueError(
@@ -57,14 +56,17 @@ def gen_to_unit(
         )
     publish_type, subscribe_type, _ = gen_args
 
-    # Create Settings
-    argspec = getfullargspec(func)
-    defaults = dict(zip(argspec.args[::-1], (argspec.defaults or ())[::-1]))
-    defaults.update(argspec.kwonlydefaults or {})
-    settings = args_to_settings(func.__name__, type_hints, defaults)
+    # Create Settings class from function signature parameters
+    _defaults = {}
+    _type_hints = {}
+    for param in sig.parameters.values():
+        if param.default is not inspect.Parameter.empty:
+            _defaults[param.name] = param.default
+        _type_hints[param.name] = param.annotation  # OK if empty, needed for untyped params
+    settings = args_to_settings(func.__name__, _type_hints, _defaults)
 
     # Create State
-    state = args_to_state(func.__name__, type_hints, publish_type, subscribe_type)
+    state = args_to_state(func.__name__, _type_hints, publish_type, subscribe_type)
 
     def initialize(self):
         self.STATE.gen = func(**asdict(self.SETTINGS))
