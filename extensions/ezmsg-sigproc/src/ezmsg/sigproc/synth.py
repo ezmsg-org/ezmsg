@@ -1,15 +1,41 @@
 import asyncio
-import time
 from dataclasses import dataclass, replace, field
+import time
+from typing import Optional, Generator, AsyncGenerator, Union
 
-import ezmsg.core as ez
 import numpy as np
-
+import ezmsg.core as ez
+from ezmsg.util.generator import consumer
 from ezmsg.util.messages.axisarray import AxisArray
 
 from .butterworthfilter import ButterworthFilter, ButterworthFilterSettings
 
-from typing import Optional, AsyncGenerator, Union
+
+# CLOCK -- generate events at a specified rate #
+def clock(
+    dispatch_rate: Optional[float]
+) -> Generator[ez.Flag, None, None]:
+    n_dispatch = -1
+    t_0 = time.time()
+    while True:
+        if dispatch_rate is not None:
+            n_dispatch += 1
+            t_next = t_0 + n_dispatch / dispatch_rate
+            time.sleep(max(0, t_next - time.time()))
+        yield ez.Flag()
+
+
+async def aclock(
+    dispatch_rate: Optional[float]
+) -> AsyncGenerator[ez.Flag, None]:
+    t_0 = time.time()
+    n_dispatch = -1
+    while True:
+        if dispatch_rate is not None:
+            n_dispatch += 1
+            t_next = t_0 + n_dispatch / dispatch_rate
+            await asyncio.sleep(t_next - time.time())
+        yield ez.Flag()
 
 
 class ClockSettings(ez.Settings):
@@ -19,6 +45,7 @@ class ClockSettings(ez.Settings):
 
 class ClockState(ez.State):
     cur_settings: ClockSettings
+    gen: AsyncGenerator
 
 
 class Clock(ez.Unit):
@@ -30,21 +57,20 @@ class Clock(ez.Unit):
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
+        self.construct_generator()
+
+    def construct_generator(self):
+        self.STATE.gen = aclock(self.STATE.cur_settings.dispatch_rate)
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: ClockSettings) -> None:
         self.STATE.cur_settings = msg
+        self.construct_generator()
 
     @ez.publisher(OUTPUT_CLOCK)
     async def generate(self) -> AsyncGenerator:
-        t_0 = time.time()
-        n_dispatch = 0
-        while True:
-            if self.STATE.cur_settings.dispatch_rate is not None:
-                n_dispatch += 1
-                t_next = t_0 + n_dispatch / self.STATE.cur_settings.dispatch_rate
-                await asyncio.sleep(t_next - time.time())
-            yield self.OUTPUT_CLOCK, ez.Flag
+        async for msg in self.STATE.gen:
+            yield self.OUTPUT_CLOCK, msg
 
 
 class CounterSettings(ez.Settings):
