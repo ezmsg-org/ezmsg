@@ -70,7 +70,7 @@ def sampler(
     while True:
         msg_in = yield msg_out
         msg_out = []
-        if type(msg_in) is SampleTriggerMessage:
+        if isinstance(msg_in, SampleTriggerMessage):
             if last_msg_stats is None or buffer is None:
                 # We've yet to see any data; drop the trigger.
                 continue
@@ -106,7 +106,7 @@ def sampler(
             new_trig_msg = replace(msg_in, timestamp=trigger_ts, period=_period, value=_value)
             triggers.append(new_trig_msg)
 
-        elif type(msg_in) is AxisArray:
+        elif isinstance(msg_in, AxisArray):
             if axis is None:
                 axis = msg_in.dims[0]
             axis_idx = msg_in.get_axis_idx(axis)
