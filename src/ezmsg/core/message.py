@@ -36,7 +36,13 @@ class Message(ABC, metaclass=MessageMeta):
         )
 
 
-class Flag(Message):
+@dataclass
+class Flag:
     """Message with no contents"""
-
     ...
+
+
+# class Flag(Message):
+#     """Message with no contents"""
+#
+#     ...
