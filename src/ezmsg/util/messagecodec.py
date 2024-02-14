@@ -84,8 +84,8 @@ class MessageTimestampDecoder(json.JSONDecoder):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
 
     def object_hook(self, obj: typing.Dict[str, typing.Any]) -> typing.Any:
-        obj_type: typing.Optional[str] = obj.get(TYPE)
-        timestamp: typing.Optional[float] = obj.get(TIMESTAMP_ATTR)
+        obj_type: typing.Optional[str] = obj.get(TYPE, None)
+        timestamp: typing.Optional[float] = obj.get(TIMESTAMP_ATTR, None)
 
         out_obj: typing.Any = obj
 
@@ -115,7 +115,8 @@ class MessageTimestampDecoder(json.JSONDecoder):
                 if TIMESTAMP_ATTR in obj: 
                     del obj[TIMESTAMP_ATTR]
                 out_obj = cls(**obj)
-                setattr(out_obj, TIMESTAMP_ATTR, timestamp)
+                if timestamp is not None:
+                    setattr(out_obj, TIMESTAMP_ATTR, timestamp)
 
         return out_obj
     
