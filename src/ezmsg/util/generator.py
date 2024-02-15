@@ -7,12 +7,13 @@ from functools import wraps, reduce
 
 # Define type variables for the decorators
 P = ParamSpec("P")
-R = TypeVar("R")
+Y = TypeVar("Y")
+S = TypeVar("S")
 
 
 def consumer(
-    func: Callable[P, Generator[R, R, None]]
-) -> Callable[P, Generator[R, R, None]]:
+    func: Callable[P, Generator[Y, S, None]]
+) -> Callable[P, Generator[Y, S, None]]:
     """
     A decorator that primes a generator by advancing it to the first yield statement.
 
@@ -28,7 +29,7 @@ def consumer(
     """
 
     @wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[R, R, None]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[Y, S, None]:
         gen = func(*args, **kwargs)
         next(gen)  # Prime the generator.
         return gen
