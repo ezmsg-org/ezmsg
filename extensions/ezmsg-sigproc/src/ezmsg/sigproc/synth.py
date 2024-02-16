@@ -70,8 +70,8 @@ class Clock(ez.Unit):
 
     @ez.publisher(OUTPUT_CLOCK)
     async def generate(self) -> AsyncGenerator:
-        async for msg in self.STATE.gen:
-            yield self.OUTPUT_CLOCK, msg
+        while True:
+            yield self.OUTPUT_CLOCK, await anext(self.STATE.gen)
 
 
 # COUNTER - Generate incrementing integer. fs and dispatch_rate parameters combine to give many options. #
