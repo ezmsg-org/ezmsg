@@ -11,7 +11,7 @@ from ezmsg.util.generator import consumer
 
 
 @consumer
-def window(
+def windowing(
         axis: Optional[str] = None,
         newaxis: Optional[str] = None,
         window_dur: Optional[float] = None,
@@ -221,7 +221,7 @@ class Window(ez.Unit):
         self.construct_generator()
 
     def construct_generator(self):
-        self.STATE.gen = window(
+        self.STATE.gen = windowing(
             axis=self.STATE.cur_settings.axis,
             newaxis=self.STATE.cur_settings.newaxis,
             window_dur=self.STATE.cur_settings.window_dur,

@@ -13,7 +13,7 @@ from ezmsg.util.messagegate import MessageGate, MessageGateSettings
 from ezmsg.util.messagelogger import MessageLogger, MessageLoggerSettings
 from ezmsg.util.messagecodec import message_log
 from ezmsg.sigproc.synth import Counter, CounterSettings
-from ezmsg.sigproc.window import Window, WindowSettings, window
+from ezmsg.sigproc.window import Window, WindowSettings, windowing
 
 from util import get_test_fn
 from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
@@ -74,7 +74,7 @@ def test_window_gen_nodur():
         dims=["ch", "time"],
         axes={"time": AxisArray.Axis.TimeAxis(fs=500., offset=0.)}
     )
-    gen = window(window_dur=None)
+    gen = windowing(window_dur=None)
     result = gen.send(test_msg)
     assert result[0] is test_msg
     assert np.shares_memory(result[0].data, test_msg.data)
@@ -110,7 +110,7 @@ def test_window_generator(
     n_msgs = int(np.ceil(data_len / msg_block_size))
 
     # Instantiate the generator function
-    gen = window(axis="time", newaxis=newaxis, window_dur=win_dur, window_shift=win_shift, zero_pad_until=zero_pad)
+    gen = windowing(axis="time", newaxis=newaxis, window_dur=win_dur, window_shift=win_shift, zero_pad_until=zero_pad)
 
     # Create inputs and send them to the generator, collecting the results along the way.
     test_msg = AxisArray(
