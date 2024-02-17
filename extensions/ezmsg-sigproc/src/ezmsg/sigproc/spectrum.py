@@ -88,9 +88,6 @@ def spectrum(
             if out_axis is None:
                 out_axis = axis_name
             new_dims = axis_arr_in.dims[:axis_idx] + [out_axis, ] + axis_arr_in.dims[axis_idx + 1:]
-            new_axes = {**axis_arr_in.axes, **{out_axis: freq_axis}}
-            if out_axis != axis_name:
-                new_axes.pop(axis_name, None)
 
             f_transform = lambda x: x
             if transform != SpectralTransform.RAW_COMPLEX:
@@ -104,6 +101,10 @@ def spectrum(
                         f_transform = lambda x: 10 * np.log10(f1(x))
                     else:
                         f_transform = f1
+
+        new_axes = {**axis_arr_in.axes, **{out_axis: freq_axis}}
+        if out_axis != axis_name:
+            new_axes.pop(axis_name, None)
 
         spec = np.fft.fft(axis_arr_in.data * window, axis=axis_idx) / n_time
         spec = np.fft.fftshift(spec, axes=axis_idx)
