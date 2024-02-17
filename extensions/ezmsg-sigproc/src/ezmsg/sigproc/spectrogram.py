@@ -1,33 +1,48 @@
 from dataclasses import field, replace
-from typing import AsyncGenerator
+import typing
+
+import numpy as np
 
 import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.sigproc.window import Window, WindowSettings
-from ezmsg.sigproc.spectral import Spectrum, SpectrumSettings, WindowFunction, SpectralTransform, SpectralOutput
+from ezmsg.util.generator import compose, consumer, GenAxisArray
+from ezmsg.util.messages.modify import modify_axis, ModifyAxis, ModifyAxisSettings
+from ezmsg.sigproc.window import windowing, Window, WindowSettings
+from ezmsg.sigproc.spectrum import (
+    spectrum, Spectrum, SpectrumSettings,
+    WindowFunction, SpectralTransform, SpectralOutput
+)
 
 
-class ModifyAxisSettings(ez.Settings):
-    name_map: dict | None
+@consumer
+def spectrogram(
+    window_dur: typing.Optional[float] = None,
+    window_shift: typing.Optional[float] = None,
+    window: WindowFunction = WindowFunction.HANNING,
+    transform: SpectralTransform = SpectralTransform.REL_DB,
+    output: SpectralOutput = SpectralOutput.POSITIVE
+) -> typing.Generator[typing.Optional[AxisArray], AxisArray, None]:
 
+    # pipeline = compose(
+    f_win = windowing(axis="time", newaxis="step", window_dur=window_dur, window_shift=window_shift)
+    f_spec = spectrum(axis="time", window=window, transform=transform, output=output)
+    f_modify = modify_axis(name_map={"step": "time"})
+    # )
 
-class ModifyAxis(ez.Unit):
-    SETTINGS: ModifyAxisSettings
+    # State variables
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out: typing.Optional[AxisArray] = None
 
-    INPUT_SIGNAL = ez.InputStream(AxisArray)
-    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+    while True:
+        axis_arr_in = yield axis_arr_out
 
-    @ez.subscriber(INPUT_SIGNAL)
-    @ez.publisher(OUTPUT_SIGNAL)
-    async def on_data(self, msg: AxisArray) -> AsyncGenerator:
-        if self.SETTINGS.name_map is not None:
-            new_dims = msg.dims
-            new_axes = msg.axes
-            for k, v in self.SETTINGS.name_map.items():
-                if k in new_dims:
-                    new_axes[v] = new_axes.pop(k)
-                    new_dims[new_dims.index(k)] = v
-        yield self.OUTPUT_SIGNAL, replace(msg, dims=new_dims, axes=new_axes)
+        axis_arr_out = None
+        wins = f_win.send(axis_arr_in)
+        if len(wins):
+            specs = f_spec.send(wins[0])
+            if specs is not None:
+                axis_arr_out = f_modify.send(specs)
+        # axis_arr_out = pipeline(axis_arr_in)
 
 
 class SpectrogramSettings(ez.Settings):
