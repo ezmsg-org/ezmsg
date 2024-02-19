@@ -6,16 +6,20 @@ from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.sigproc.spectrum import WindowFunction, SpectralTransform, SpectralOutput
 from ezmsg.sigproc.spectrogram import spectrogram
 
+from util import create_messages_with_periodic_signal
+
 
 def _debug_plot(
         ax_arr: AxisArray,
-        targ_fsets: typing.Optional[typing.Tuple[typing.List[float], typing.List[float]]] = None
+        sin_params: typing.List[typing.Dict[str, float]] = None
 ):
     import matplotlib.pyplot as plt
 
-    t_vec = ax_arr.axes["time"].offset + np.arange(ax_arr.data.shape[1] * ax_arr.axes["time"].gain)
+    t_ix = ax_arr.get_axis_idx("time")
+    t_vec = ax_arr.axes["time"].offset + np.arange(ax_arr.data.shape[t_ix] * ax_arr.axes["time"].gain)
     t_vec -= ax_arr.axes["time"].gain / 2
-    f_vec = ax_arr.axes["freq"].offset + np.arange(ax_arr.data.shape[1] * ax_arr.axes["freq"].gain)
+    f_ix = ax_arr.get_axis_idx("freq")
+    f_vec = ax_arr.axes["freq"].offset + np.arange(ax_arr.data.shape[f_ix] * ax_arr.axes["freq"].gain)
     f_vec -= ax_arr.axes["freq"].gain / 2
     plt.imshow(
         ax_arr.data[..., 0].T,
@@ -26,47 +30,32 @@ def _debug_plot(
     plt.xlabel("Time")
     plt.ylabel("Frequency")
 
-    if targ_fsets is not None:
-        n_splits = len(targ_fsets)
-        per_split = len(t_vec) // n_splits
-        for split_ix in range(n_splits):
-            x_vec = split_ix * per_split + np.arange(per_split)
-            for yy in targ_fsets[split_ix]:
-                plt.plot(x_vec, yy * np.ones_like(x_vec), linestyle="--", color="r", linewidth=1.0)
+    if sin_params is not None:
+        for s_p in sin_params:
+            xx = (s_p.get("offset", 0.0) + t_vec[0], s_p.get("offset", 0.0) + t_vec[0] + s_p["dur"])
+            yy = (s_p["f"], s_p["f"])
+            plt.plot(xx, yy, linestyle="--", color="r", linewidth=1.0)
 
 
 def test_spectrogram():
     win_dur = 1.0
     win_step_dur = 0.5
-
-    # Test data is 10 seconds in duration:
-    #  First 5 seconds -- sum of sinusoids at specified frequencies
-    #  Second 5 seconds -- sum of different sinusoids
-    f_sets = (
-        [10., 20., 70.],
-        [14., 35., 300.]
-    )
-    seg_dur = 5.0
     fs = 1000.
-    t_seg = np.arange(int(seg_dur * fs)) / fs
-    data = np.array([])
-    for f_set in f_sets:
-        data = np.hstack((
-            data,
-            np.sum(np.vstack(
-                [1.0 * np.sin(2 * np.pi * f * t_seg + 0) for f in f_set]
-            ), axis=0)
-        ))
-
-    n_msgs = 30
-    offset = 0.0
-    messages = []
-    for split_dat in np.array_split(data[:, None], n_msgs, axis=0):
-        _time_axis = AxisArray.Axis.TimeAxis(fs=fs, offset=offset)
-        messages.append(
-            AxisArray(split_dat, dims=["time", "ch"], axes={"time": _time_axis})
-        )
-        offset += split_dat.shape[0] / fs
+    seg_dur = 5.0
+    sin_params = [
+        {"f": 10.0, "dur": seg_dur, "offset": 0.0},
+        {"f": 20.0, "dur": seg_dur, "offset": 0.0},
+        {"f": 70.0, "dur": seg_dur, "offset": 0.0},
+        {"f": 14.0, "dur": seg_dur, "offset": seg_dur},
+        {"f": 35.0, "dur": seg_dur, "offset": seg_dur},
+        {"f": 300.0, "dur": seg_dur, "offset": seg_dur},
+    ]
+    messages = create_messages_with_periodic_signal(
+        sin_params=sin_params,
+        fs=fs,
+        msg_dur=0.4,
+        win_step_dur=None  # The spectrogram will do the windowing
+    )
 
     gen = spectrogram(
         window_dur=win_dur,
@@ -80,13 +69,12 @@ def test_spectrogram():
     results = [_ for _ in results if _ is not None]  # Drop None
 
     # Check that the windows span the expected times.
-    total_dur = seg_dur * len(f_sets)
-    expected_delta = total_dur - win_step_dur
-    delta_win_starts = (results[-1].axes["time"].offset - results[0].axes["time"].offset)
-    assert np.abs(delta_win_starts - expected_delta) < 1e-9
+    expected_t_span = 2 * seg_dur
+    data_t_span = (results[-1].axes["time"].offset + win_step_dur) - results[0].axes["time"].offset
+    assert np.abs(expected_t_span - data_t_span) < 1e-9
     all_deltas = np.diff([_.axes["time"].offset for _ in results])
     assert np.allclose(all_deltas, win_step_dur + np.zeros((len(results) - 1)))
 
-    result = AxisArray.concatenate(*results, dim="time")
+    # result = AxisArray.concatenate(*results, dim="time")
     # TODO: Check spectral peaks change over time. _debug_plot is useful if not automatic.
-    # _debug_plot(result, targ_fsets=f_sets)
+    # _debug_plot(result, sin_params=sin_params)
