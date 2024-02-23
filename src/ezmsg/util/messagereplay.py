@@ -50,7 +50,7 @@ class MessageReplay(ez.Unit):
 
     OUTPUT_REPLAY_STATUS = ez.OutputStream(ReplayStatusMessage)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.STATE.replay_files = asyncio.Queue()
         if self.SETTINGS.filename is not None:
             self.STATE.replay_files.put_nowait(self.SETTINGS)
@@ -126,9 +126,6 @@ class MessageReplay(ez.Unit):
                             f"Could not load line {line_idx} from {self.SETTINGS.filename}"
                         )
                     else:
-                        if isinstance(msg, LogStart):
-                            continue
-
                         ts = msg["ts"]
                         obj = msg["obj"]
                         if last_msg_t is None and ts is not None:
@@ -154,6 +151,9 @@ class MessageReplay(ez.Unit):
                                     )
                                     await asyncio.sleep(sleep_time)
                                 last_msg_t = ts
+
+                        if isinstance(obj, LogStart):
+                            continue
 
                         yield self.OUTPUT_MESSAGE, obj
                         pub_msgs += 1

@@ -9,7 +9,11 @@ import ezmsg.core as ez
 
 from .messagecodec import MessageEncoder, LogStart
 
-from typing import Optional, Any, Dict, AsyncGenerator, Any
+from typing import Optional, Any, Dict, AsyncGenerator
+
+
+def log_object(obj: Any) -> str:
+    return json.dumps({"ts": time.time(), "obj": obj}, cls=MessageEncoder)
 
 
 class MessageLoggerSettings(ez.Settings):
@@ -40,7 +44,7 @@ class MessageLogger(ez.Unit):
         if not filepath.parent.exists():
             filepath.parent.mkdir(parents=True, exist_ok=True)
         output_f = open(filepath, mode="w")
-        strmessage: str = json.dumps(LogStart(), cls=MessageEncoder)
+        strmessage = log_object(LogStart())
         output_f.write(f"{strmessage}\n")
         output_f.flush()
         self.STATE.output_files[filepath] = output_f
@@ -58,7 +62,7 @@ class MessageLogger(ez.Unit):
 
         return filepath
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         """Note that files defined at startup are not published to outputs"""
         if self.SETTINGS.output is not None:
             self.open_file(self.SETTINGS.output)
@@ -80,15 +84,13 @@ class MessageLogger(ez.Unit):
     @ez.subscriber(INPUT_MESSAGE)
     @ez.publisher(OUTPUT_MESSAGE)
     async def on_message(self, message: Any) -> AsyncGenerator:
-        strmessage: str = json.dumps(
-            {"ts": time.time(), "obj": message}, cls=MessageEncoder
-        )
+        strmessage = log_object(message)
         for output_f in self.STATE.output_files.values():
             output_f.write(f"{strmessage}\n")
             output_f.flush()
         yield (self.OUTPUT_MESSAGE, message)
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """Note that files that are closed at shutdown don't publish messages"""
         for filepath in list(self.STATE.output_files):
             self.close_file(filepath)
