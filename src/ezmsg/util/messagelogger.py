@@ -1,4 +1,5 @@
 import json
+import time
 
 from io import TextIOWrapper
 from dataclasses import field
@@ -10,7 +11,7 @@ from .messagecodec import MessageEncoder, LogStart
 
 from typing import Optional, Any, Dict, AsyncGenerator, Any
 
-    
+
 class MessageLoggerSettings(ez.Settings):
     output: Optional[Path] = None
 
@@ -79,7 +80,9 @@ class MessageLogger(ez.Unit):
     @ez.subscriber(INPUT_MESSAGE)
     @ez.publisher(OUTPUT_MESSAGE)
     async def on_message(self, message: Any) -> AsyncGenerator:
-        strmessage: str = json.dumps(message, cls=MessageEncoder)
+        strmessage: str = json.dumps(
+            {"ts": time.time(), "obj": message}, cls=MessageEncoder
+        )
         for output_f in self.STATE.output_files.values():
             output_f.write(f"{strmessage}\n")
             output_f.flush()

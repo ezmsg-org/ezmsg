@@ -1,13 +1,15 @@
 import asyncio
 import json
 import typing
+import time
 
 from dataclasses import field, dataclass, replace
 from pathlib import Path
 
 import ezmsg.core as ez
 
-from .messagecodec import MessageTimestampDecoder, LogStart, TIMESTAMP_ATTR
+from .messagecodec import MessageDecoder, LogStart
+
 
 @dataclass
 class ReplayStatusMessage:
@@ -16,28 +18,32 @@ class ReplayStatusMessage:
     total: int
     done: bool = False
 
+
 @dataclass
 class FileReplayMessage:
     filename: typing.Optional[Path] = None
 
     # 0 = realtime (if timestamps in file), None = as fast as possible
-    rate: typing.Optional[float] = None # Hz
+    rate: typing.Optional[float] = None  # Hz
+
 
 class MessageReplaySettings(ez.Settings, FileReplayMessage):
     progress: bool = False
+
 
 class MessageReplayState(ez.State):
     replay_files: "asyncio.Queue[FileReplayMessage]"
     running: asyncio.Event
     stop: asyncio.Event
 
+
 class MessageReplay(ez.Unit):
     SETTINGS: MessageReplaySettings
     STATE: MessageReplayState
 
     INPUT_FILE = ez.InputStream(FileReplayMessage)
-    INPUT_PAUSED = ez.InputStream(bool) # Pause state; True = paused, False = running
-    INPUT_STOP = ez.InputStream(bool) # True = clear queue
+    INPUT_PAUSED = ez.InputStream(bool)  # Pause state; True = paused, False = running
+    INPUT_STOP = ez.InputStream(bool)  # True = clear queue
 
     OUTPUT_MESSAGE = ez.OutputStream(typing.Any)
     OUTPUT_TOTAL = ez.OutputStream(int)
@@ -66,7 +72,7 @@ class MessageReplay(ez.Unit):
 
     @ez.subscriber(INPUT_STOP)
     async def stop(self, clear_queue: bool) -> None:
-        if clear_queue: # If we stop with "true"; clear the queue
+        if clear_queue:  # If we stop with "true"; clear the queue
             while not self.STATE.replay_files.empty():
                 self.STATE.replay_files.get_nowait()
         self.STATE.stop.set()
@@ -76,7 +82,6 @@ class MessageReplay(ez.Unit):
     @ez.publisher(OUTPUT_REPLAY_STATUS)
     async def replay(self) -> typing.AsyncGenerator:
         while True:
-
             replay_file = await self.STATE.replay_files.get()
             if replay_file.filename is None:
                 continue
@@ -88,18 +93,21 @@ class MessageReplay(ez.Unit):
 
             if self.STATE.stop.is_set():
                 self.STATE.stop.clear()
-            
-            pub_msgs = 0
-            with open(replay_file.filename, "r") as f:
 
+            pub_msgs = 0
+            playback_t0 = float()
+            replay_t0 = float()
+            with open(replay_file.filename, "r") as f:
                 if self.SETTINGS.progress:
                     try:
                         import tqdm
-                        f = tqdm.tqdm(f, total = num_msgs)
+
+                        f = tqdm.tqdm(f, total=num_msgs)
                     except ImportError:
-                        ez.logger.info('progress requires tqdm installed')
-                        
+                        ez.logger.info("progress requires tqdm installed")
+
                 for line_idx, line in enumerate(f):
+                    processing_start_time = time.time()
 
                     if not self.STATE.running.is_set():
                         await self.STATE.running.wait()
@@ -108,37 +116,49 @@ class MessageReplay(ez.Unit):
                         self.STATE.stop.clear()
                         break
 
-                    replay_msg = replace(replay_msg, idx = line_idx + 1)
+                    replay_msg = replace(replay_msg, idx=line_idx + 1)
                     yield self.OUTPUT_REPLAY_STATUS, replay_msg
 
                     try:
-                        obj = json.loads(line, cls=MessageTimestampDecoder)
+                        msg = json.loads(line, cls=MessageDecoder)
                     except json.JSONDecodeError:
-                        ez.logger.warning(f"Could not load line {line_idx} from {self.SETTINGS.filename}")
+                        ez.logger.warning(
+                            f"Could not load line {line_idx} from {self.SETTINGS.filename}"
+                        )
                     else:
+                        if isinstance(msg, LogStart):
+                            continue
 
-                        ts: typing.Optional[float] = getattr(obj, TIMESTAMP_ATTR)
+                        ts = msg["ts"]
+                        obj = msg["obj"]
                         if last_msg_t is None and ts is not None:
                             last_msg_t = ts
-
-                        if isinstance(obj, LogStart):
-                            continue
+                            playback_t0 = ts
+                            replay_t0 = time.time()
 
                         if replay_file.rate is not None:
                             if replay_file.rate > 0:
                                 await asyncio.sleep(1.0 / replay_file.rate)
                             elif (
-                                replay_file.rate == 0 and \
-                                last_msg_t is not None and \
-                                ts is not None
+                                replay_file.rate == 0
+                                and last_msg_t is not None
+                                and ts is not None
                             ):
-                                await asyncio.sleep(max(ts - last_msg_t, 0.0))
+                                lag = (time.time() - replay_t0) - (ts - playback_t0)
+                                if lag < 0.0:
+                                    processing_time = (
+                                        time.time() - processing_start_time
+                                    )
+                                    sleep_time = max(
+                                        ts - (last_msg_t + processing_time), 0.0
+                                    )
+                                    await asyncio.sleep(sleep_time)
                                 last_msg_t = ts
 
                         yield self.OUTPUT_MESSAGE, obj
                         pub_msgs += 1
 
-            yield self.OUTPUT_REPLAY_STATUS, replace(replay_msg, done = True)
+            yield self.OUTPUT_REPLAY_STATUS, replace(replay_msg, done=True)
             yield self.OUTPUT_TOTAL, pub_msgs
 
 
@@ -161,4 +181,3 @@ class MessageCollector(ez.Unit):
     @property
     def messages(self) -> typing.List[typing.Any]:
         return self.STATE.messages
-
