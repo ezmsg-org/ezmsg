@@ -120,10 +120,15 @@ class MessageDecoder(json.JSONDecoder):
         return out_obj
 
 
-def message_log(fname: Path) -> typing.Generator[typing.Any, None, None]:
+def message_log(
+    fname: Path, return_object: bool = True
+) -> typing.Generator[typing.Any, None, None]:
     with open(fname, "r") as f:
         for l in f:
             obj = json.loads(l, cls=MessageDecoder)
             if isinstance(obj, LogStart):
                 continue
-            yield obj
+            if return_object is True:
+                yield obj["obj"]
+            else:
+                yield obj
