@@ -1,18 +1,21 @@
+import typing
+
 import ezmsg.core as ez
 import scipy.signal
 import numpy as np
 
-from .filter import Filter, FilterState, FilterSettingsBase
+from .filter import filtergen, Filter, FilterState, FilterSettingsBase
 
-from typing import Optional, Tuple, Union
+from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.generator import consumer
 
 
 class ButterworthFilterSettings(FilterSettingsBase):
     order: int = 0
-    cuton: Optional[float] = None  # Hz
-    cutoff: Optional[float] = None  # Hz
+    cuton: typing.Optional[float] = None  # Hz
+    cutoff: typing.Optional[float] = None  # Hz
 
-    def filter_specs(self) -> Optional[Tuple[str, Union[float, Tuple[float, float]]]]:
+    def filter_specs(self) -> typing.Optional[typing.Tuple[str, typing.Union[float, typing.Tuple[float, float]]]]:
         if self.cuton is None and self.cutoff is None:
             return None
         elif self.cuton is None and self.cutoff is not None:
@@ -73,7 +76,7 @@ class ButterworthFilter(Filter):
         self.STATE.filt_designed = True
         super().initialize()
 
-    def design_filter(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def design_filter(self) -> typing.Optional[typing.Tuple[np.ndarray, np.ndarray]]:
         specs = self.STATE.design.filter_specs()
         if self.STATE.design.order > 0 and specs is not None:
             btype, cut = specs
