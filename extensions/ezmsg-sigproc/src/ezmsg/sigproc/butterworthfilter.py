@@ -26,6 +26,38 @@ class ButterworthFilterSettings(FilterSettingsBase):
                 return "bandstop", (self.cutoff, self.cuton)
 
 
+@consumer
+def butter(
+    axis: typing.Optional[str],
+    order: int = 0,
+    cuton: typing.Optional[float] = None,
+    cutoff: typing.Optional[float] = None,
+    coef_type: str = "ba",
+) -> typing.Generator[AxisArray, AxisArray, None]:
+    # IO
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out = AxisArray(np.array([]), dims=[""])
+
+    btype, cutoffs = ButterworthFilterSettings(
+        order=order, cuton=cuton, cutoff=cutoff
+    ).filter_specs()
+
+    # We cannot calculate coefs yet because we do not know input sample rate
+    coefs = None
+    filter_gen = filtergen(axis, coefs, coef_type)  # Passthrough.
+
+    while True:
+        axis_arr_in = yield axis_arr_out
+        if coefs is None and order > 0:
+            fs = 1 / axis_arr_in.axes[axis or axis_arr_in.dims[0]].gain
+            coefs = scipy.signal.butter(
+                order, Wn=cutoffs, btype=btype, fs=fs, output=coef_type
+            )
+            filter_gen = filtergen(axis, coefs, coef_type)
+
+        axis_arr_out = filter_gen.send(axis_arr_in)
+
+
 class ButterworthFilterState(FilterState):
     design: ButterworthFilterSettings
 
