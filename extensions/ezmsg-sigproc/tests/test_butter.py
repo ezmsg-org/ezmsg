@@ -7,7 +7,7 @@ from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.sigproc.butterworthfilter import (
     ButterworthFilterSettings as LegacyButterSettings,
 )
-from ezmsg.sigproc.filter import butter
+from ezmsg.sigproc.butterworthfilter import butter
 from ezmsg.sigproc.butterworthfilter import ButterworthFilterSettings as LegacyButterSettings
 
 
