@@ -100,6 +100,7 @@ class AttachEchoProcess(AttachTestProcess):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="canonical port isn't always available")
 async def test_attach(event_loop: asyncio.AbstractEventLoop):
     graph_service = ez.GraphService(address=ez.GraphService.default_address())
     shm_service = ez.SHMService(address=ez.SHMService.default_address())
