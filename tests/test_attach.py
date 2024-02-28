@@ -69,28 +69,31 @@ class AttachTestProcess(Process):
         super().__init__()
         self.settings = settings
 
-TX_TOPIC = 'TX'
-RX_TOPIC = 'RX'
-ACK_TOPIC = 'ACK'
+
+TX_TOPIC = "TX"
+RX_TOPIC = "RX"
+ACK_TOPIC = "ACK"
+
 
 class TransmitReceiveProcess(AttachTestProcess):
     def run(self) -> None:
         txrx = TransmitReceive(self.settings)
         ez.run(
-            TXRX = txrx,
-            connections = (
+            TXRX=txrx,
+            connections=(
                 (txrx.OUTPUT, TX_TOPIC),
                 (RX_TOPIC, txrx.INPUT),
                 (txrx.ACK, ACK_TOPIC),
-            )
+            ),
         )
+
 
 class AttachEchoProcess(AttachTestProcess):
     def run(self) -> None:
         for _ in range(self.settings.num_messages):
             echo = Echo()
             ez.run(
-                ECHO = echo,
+                ECHO=echo,
                 connections=(
                     (TX_TOPIC, echo.INPUT),
                     (echo.OUTPUT, RX_TOPIC),
@@ -100,7 +103,8 @@ class AttachEchoProcess(AttachTestProcess):
 
 
 @pytest.mark.asyncio
-async def test_attach(event_loop: asyncio.AbstractEventLoop):
+async def test_attach():
+    event_loop = asyncio.get_running_loop()
     graph_service = ez.GraphService(address=ez.GraphService.default_address())
     shm_service = ez.SHMService(address=ez.SHMService.default_address())
     graph_server = graph_service.create_server()
@@ -126,6 +130,6 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_attach(loop))
+        loop.run_until_complete(test_attach())
     finally:
         loop.close()
