@@ -82,3 +82,7 @@ These publications provide insights into the practical applications and impact o
 
 - [A click-based electrocorticographic brain-computer interface enables long-term high-performance switch-scan spelling](https://doi.org/10.21203/rs.3.rs-3158792/v1)
 - [Stable Decoding from a Speech BCI Enables Control for an Individual with ALS without Recalibration for 3 Months](https://doi.org/10.1002/advs.202304853)
+ 
+## Financial Support
+
+`ezmsg` is supported by Johns Hopkins University (JHU), the JHU Applied Physics Laboratory (APL), and by the Wyss Center for Bio and Neuro Engineering.
