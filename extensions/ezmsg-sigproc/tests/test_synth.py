@@ -121,8 +121,6 @@ async def test_acounter(
     dispatch_rate: typing.Optional[typing.Union[float, str]],
     mod: typing.Optional[int]
 ):
-    assert dispatch_rate != "ext_clock"
-
     target_dur = 2.6  # 2.6 seconds per test
     if dispatch_rate is None:
         # No sleep / wait
@@ -130,6 +128,9 @@ async def test_acounter(
     elif isinstance(dispatch_rate, str):
         if dispatch_rate == "realtime":
             chunk_dur = block_size / fs
+        elif dispatch_rate == "ext_clock":
+            # No sleep / wait
+            chunk_dur = 0.1
     else:
         # Note: float dispatch_rate will yield different number of samples than expected by target_dur and fs
         chunk_dur = 1. / dispatch_rate
@@ -154,15 +155,12 @@ async def test_acounter(
         expected_data = expected_data % mod
     assert np.array_equal(agg.data[:, 0], expected_data)
 
-    offsets = np.array([_.axes["time"].offset for _ in messages])
+    offsets = np.array([m.axes["time"].offset for m in messages])
     expected_offsets = np.arange(target_messages) * block_size / fs
-    if dispatch_rate == "realtime":
+    if dispatch_rate == "realtime" or dispatch_rate == "ext_clock":
         expected_offsets += offsets[0]  # offsets are in real-time
         atol = 0.002
-    elif dispatch_rate == "ext_clock":
-        # Offsets should be mostly identical and quite rapid
-        ...
-    elif isinstance(dispatch_rate, float):
+    else:
         # Offsets are synthetic.
         atol = 1.e-8
     assert np.allclose(offsets[2:], expected_offsets[2:], atol=atol)
