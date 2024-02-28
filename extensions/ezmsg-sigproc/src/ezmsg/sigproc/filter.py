@@ -1,13 +1,21 @@
+import asyncio
+import typing
+
 from dataclasses import dataclass, replace, field
 
 import ezmsg.core as ez
 import scipy.signal
+
 import numpy as np
-import asyncio
+import numpy.typing as npt
 
 from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.generator import consumer
 
-from typing import AsyncGenerator, Optional, Tuple
+@dataclass
+class FilterCoefficients:
+    b: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
+    a: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
 
 def _normalize_coefs(
         coefs: typing.Union[FilterCoefficients, typing.Tuple[npt.NDArray, npt.NDArray],npt.NDArray]
@@ -25,8 +33,8 @@ def _normalize_coefs(
 
 @consumer
 def filtergen(
-    axis: str, coefs: Optional[Tuple[np.ndarray]], coef_type: str
-) -> Generator[AxisArray, AxisArray, None]:
+    axis: str, coefs: typing.Optional[typing.Tuple[np.ndarray]], coef_type: str
+) -> typing.Generator[AxisArray, AxisArray, None]:
     # Massage inputs
     if coefs is not None and not isinstance(coefs, tuple):
         # scipy.signal functions called with first arg `*coefs`, but sos coefs are a single ndarray.
@@ -77,12 +85,12 @@ def filtergen(
             
 @consumer
 def butter(
-    axis: Optional[str],
+    axis: typing.Optional[str],
     order: int = 0,
-    cuton: Optional[float] = None,
-    cutoff: Optional[float] = None,
+    cuton: typing.Optional[float] = None,
+    cutoff: typing.Optional[float] = None,
     coef_type: str = "ba",
-) -> Generator[AxisArray, AxisArray, None]:
+) -> typing.Generator[AxisArray, AxisArray, None]:
     # IO
     axis_arr_in = AxisArray(np.array([]), dims=[""])
     axis_arr_out = AxisArray(np.array([]), dims=[""])
@@ -107,30 +115,24 @@ def butter(
         axis_arr_out = filter_gen.send(axis_arr_in)
 
 
-@dataclass
-class FilterCoefficients:
-    b: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
-    a: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0]))
-
-
 class FilterSettingsBase(ez.Settings):
-    axis: Optional[str] = None
-    fs: Optional[float] = None
+    axis: typing.Optional[str] = None
+    fs: typing.Optional[float] = None
 
 
 class FilterSettings(FilterSettingsBase):
     # If you'd like to statically design a filter, define it in settings
-    filt: Optional[FilterCoefficients] = None
+    filt: typing.Optional[FilterCoefficients] = None
 
 
 class FilterState(ez.State):
-    axis: Optional[str] = None
-    zi: Optional[np.ndarray] = None
+    axis: typing.Optional[str] = None
+    zi: typing.Optional[np.ndarray] = None
     filt_designed: bool = False
-    filt: Optional[FilterCoefficients] = None
+    filt: typing.Optional[FilterCoefficients] = None
     filt_set: asyncio.Event = field(default_factory=asyncio.Event)
-    samp_shape: Optional[Tuple[int, ...]] = None
-    fs: Optional[float] = None  # Hz
+    samp_shape: typing.Optional[typing.Tuple[int, ...]] = None
+    fs: typing.Optional[float] = None  # Hz
 
 
 class Filter(ez.Unit):
@@ -141,7 +143,7 @@ class Filter(ez.Unit):
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
-    def design_filter(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def design_filter(self) -> typing.Optional[typing.Tuple[np.ndarray, np.ndarray]]:
         raise NotImplementedError("Must implement 'design_filter' in Unit subclass!")
 
     # Set up filter with static initialization if specified
@@ -181,7 +183,7 @@ class Filter(ez.Unit):
 
     @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def apply_filter(self, msg: AxisArray) -> AsyncGenerator:
+    async def apply_filter(self, msg: AxisArray) -> typing.AsyncGenerator:
         axis_name = msg.dims[0] if self.STATE.axis is None else self.STATE.axis
         axis_idx = msg.get_axis_idx(axis_name)
         axis = msg.get_axis(axis_name)
