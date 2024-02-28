@@ -20,7 +20,7 @@ simple_graph_2 = [("w", "x"), ("w", "y"), ("x", "z"), ("y", "z")]
 
 
 @pytest.mark.asyncio
-async def test_graph(event_loop: asyncio.AbstractEventLoop):
+async def test_graph():
     async with GraphContext() as context:
         a_pub = await context.publisher("a")
         e_sub = await context.subscriber("e")
@@ -54,7 +54,7 @@ async def test_graph(event_loop: asyncio.AbstractEventLoop):
 
 
 @pytest.mark.asyncio
-async def test_comms(event_loop: asyncio.AbstractEventLoop):
+async def test_comms():
     async with GraphContext() as context:
         a_pub = await context.publisher("a")
         e_sub = await context.subscriber("e")
@@ -96,7 +96,7 @@ async def test_comms(event_loop: asyncio.AbstractEventLoop):
 
 
 @pytest.mark.asyncio
-async def test_order(event_loop: asyncio.AbstractEventLoop):
+async def test_order():
     async with GraphContext() as context:
         b_pub = await context.publisher("b")
         c_sub = await context.subscriber("c")
@@ -117,7 +117,7 @@ async def test_order(event_loop: asyncio.AbstractEventLoop):
 
 
 @pytest.mark.asyncio
-async def test_disconnect(event_loop: asyncio.AbstractEventLoop):
+async def test_disconnect():
     async with GraphContext() as context:
         a_pub = await context.publisher("a")
         e_sub = await context.subscriber("e")
@@ -221,7 +221,8 @@ class Receiver(AsyncProcess):
 
 
 @pytest.mark.asyncio
-async def test_multiprocess(event_loop: asyncio.AbstractEventLoop):
+async def test_multiprocess():
+    event_loop = asyncio.get_running_loop()
     async with GraphContext() as context:
         await context.connect("sender", "receiver")
 
@@ -243,6 +244,6 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_graph(loop))
+        loop.run_until_complete(test_graph())
     finally:
         loop.close()
