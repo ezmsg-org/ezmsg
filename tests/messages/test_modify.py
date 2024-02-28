@@ -7,11 +7,11 @@ from ezmsg.util.messages.modify import modify_axis, ModifyAxis, ModifyAxisSettin
 
 
 @pytest.mark.parametrize("name_map", [None, {"step": "time"}])
-def test_modify_axis(name_map: typing.Optional[dict[str, str]]):
+def test_modify_axis(name_map: typing.Optional[typing.Dict[str, str]]):
     input_ax_arr = AxisArray(
         data=np.arange(60).reshape(3, 5, 4),
         dims=["step", "freq", "ch"],
-        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)}
+        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)},
     )
 
     gen = modify_axis(name_map)
