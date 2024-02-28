@@ -11,25 +11,24 @@ from ezmsg.util.generator import consumer
 
 
 @consumer
-def window(
-        axis: Optional[str] = None,
-        newaxis: Optional[str] = None,
-        window_dur: Optional[float] = None,
-        window_shift: Optional[float] = None,
-        zero_pad_until: str = "input"
+def windowing(
+    axis: Optional[str] = None,
+    newaxis: Optional[str] = None,
+    window_dur: Optional[float] = None,
+    window_shift: Optional[float] = None,
+    zero_pad_until: str = "input"
 ) -> Generator[AxisArray, List[AxisArray], None]:
     """
     Window function that generates windows of data from an input `AxisArray`.
-
-    :param axis: (Optional[str]): The axis along which to segment windows.
+    :param axis: The axis along which to segment windows.
         If None, defaults to the first dimension of the first seen AxisArray.
-    :param newaxis (Optional[str]): Optional new axis for the output. If None, no new axes will be added.
+    :param newaxis: Optional new axis for the output. If None, no new axes will be added.
         If a string, windows will be stacked in a new axis with key `newaxis`, immediately preceding the windowed axis.
-    :param window_dur (Optional[float]): The duration of the window in seconds.
+    :param window_dur: The duration of the window in seconds.
         If None, the function acts as a passthrough and all other parameters are ignored.
-    :param window_shift (Optional[float]): The shift of the window in seconds.
+    :param window_shift: The shift of the window in seconds.
         If None (default), windowing operates in "1:1 mode", where each input yields exactly one most-recent window.
-    :param zero_pad_until (str): Determines how the function initializes the buffer.
+    :param zero_pad_until: Determines how the function initializes the buffer.
         Can be one of "input" (default), "full", "shift", or "none". If `window_shift` is None then this field is
         ignored and "input" is always used.
         "input" (default) initializes the buffer with the input then prepends with zeros to the window size.
@@ -40,8 +39,10 @@ def window(
     :return:
         A (primed) generator that accepts .send(an AxisArray object) and yields a list of windowed
         AxisArray objects. The list will always be length-1 if `newaxis` is not None or `window_shift` is None.
-
     """
+    # TODO: The return should be an AxisArray. i.e., always add a new axis. The Unit can do a multi-yield-per-pub
+    #  if the parameterization does not expect a newaxis.
+
     if window_shift is None and zero_pad_until != "input":
         ez.logger.warning("`zero_pad_until` must be 'input' if `window_shift` is None. "
                           f"Ignoring received argument value: {zero_pad_until}")
@@ -221,7 +222,7 @@ class Window(ez.Unit):
         self.construct_generator()
 
     def construct_generator(self):
-        self.STATE.gen = window(
+        self.STATE.gen = windowing(
             axis=self.STATE.cur_settings.axis,
             newaxis=self.STATE.cur_settings.newaxis,
             window_dur=self.STATE.cur_settings.window_dur,
@@ -233,6 +234,9 @@ class Window(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
         try:
+            # TODO: Refactor window generator so it always returns an axis array.
+            #  Then, if the configuration is such that a new "win" axis is not expected,
+            #  then iterate over the "win" axis -- dropping the "win" axis in the process.
             out_msgs = self.STATE.gen.send(msg)
             for out_msg in out_msgs:
                 yield self.OUTPUT_SIGNAL, out_msg
