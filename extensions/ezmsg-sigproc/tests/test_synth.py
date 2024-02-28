@@ -47,7 +47,7 @@ async def test_aclock_agen(dispatch_rate: typing.Optional[float]):
     result = []
     t_start = time.time()
     while len(result) < n_target:
-        new_result = await anext(agen)
+        new_result = await agen.__anext__()
         result.append(new_result)
     t_elapsed = time.time() - t_start
     assert all([_ == ez.Flag() for _ in result])
@@ -107,57 +107,11 @@ def test_clock_system(
     assert len(messages) >= n_target
 
 
-# TEST COUNTER #
-@pytest.mark.parametrize("mode", ["interleaved", "blockwise"])
-@pytest.mark.asyncio
-async def test_acounter_external(
-    mode: str,
-    n_time: int = 8,
-    fs: float = 72.0,
-    n_ch: int = 3
-):
-    assert mode in ["interleaved", "blockwise"]
-    n_clocks = 20
-
-    agen = acounter(n_time=n_time, fs=fs, n_ch=n_ch, dispatch_rate="ext_clock", mod=None)
-
-    # First attempts yield nothing.
-    for _ in range(3):
-        assert await anext(agen) is None
-
-    results = []
-    if mode == "blockwise":
-        for _ in range(n_clocks):
-            tmp = await agen.asend(ez.Flag())
-            await asyncio.sleep(0.0099)
-        results = [await anext(agen) for _ in range(n_clocks + 1)]
-        assert results[-1] is None
-        results = results[:-1]
-    elif mode == "interleaved":
-        for _ in range(n_clocks):
-            _ = await agen.asend(ez.Flag())
-            res = await anext(agen)
-            results.append(res)
-            await asyncio.sleep(0.009)
-
-    for ax_arr in results:
-        assert type(ax_arr) is AxisArray
-        assert ax_arr.data.shape == (n_time, n_ch)
-        assert "time" in ax_arr.axes
-        assert ax_arr.axes["time"].gain == 1 / fs
-
-    offsets = np.array([_.axes["time"].offset for _ in results])
-    deltas = np.diff(offsets)
-    assert np.logical_and(0.009 < deltas, deltas < 0.012).all()
-
-    agg = AxisArray.concatenate(*results, dim="time")
-    assert np.array_equal(agg.data[:, 0], np.arange(n_clocks * n_time))
-
 
 @pytest.mark.parametrize("block_size", [1, 20])
 @pytest.mark.parametrize("fs", [10.0, 1000.0])
 @pytest.mark.parametrize("n_ch", [3])
-@pytest.mark.parametrize("dispatch_rate", [None, "realtime", 2.0, 20.0])  # "ext_clock" needs a separate test
+@pytest.mark.parametrize("dispatch_rate", [None, "realtime", "ext_clock", 2.0, 20.0])  # "ext_clock" needs a separate test
 @pytest.mark.parametrize("mod", [2 ** 3, None])
 @pytest.mark.asyncio
 async def test_acounter(
@@ -173,8 +127,9 @@ async def test_acounter(
     if dispatch_rate is None:
         # No sleep / wait
         chunk_dur = 0.1
-    elif dispatch_rate == "realtime":
-        chunk_dur = block_size / fs
+    elif isinstance(dispatch_rate, str):
+        if dispatch_rate == "realtime":
+            chunk_dur = block_size / fs
     else:
         # Note: float dispatch_rate will yield different number of samples than expected by target_dur and fs
         chunk_dur = 1. / dispatch_rate
@@ -182,7 +137,7 @@ async def test_acounter(
 
     # Run generator
     agen = acounter(block_size, fs, n_ch=n_ch, dispatch_rate=dispatch_rate, mod=mod)
-    messages = [await anext(agen) for _ in range(target_messages)]
+    messages = [await agen.__anext__() for _ in range(target_messages)]
 
     # Test contents of individual messages
     for ax_arr in messages:
@@ -201,10 +156,13 @@ async def test_acounter(
 
     offsets = np.array([_.axes["time"].offset for _ in messages])
     expected_offsets = np.arange(target_messages) * block_size / fs
-    if dispatch_rate is not None and dispatch_rate == "realtime":
+    if dispatch_rate == "realtime":
         expected_offsets += offsets[0]  # offsets are in real-time
         atol = 0.002
-    else:
+    elif dispatch_rate == "ext_clock":
+        # Offsets should be mostly identical and quite rapid
+        ...
+    elif isinstance(dispatch_rate, float):
         # Offsets are synthetic.
         atol = 1.e-8
     assert np.allclose(offsets[2:], expected_offsets[2:], atol=atol)
@@ -260,8 +218,9 @@ def test_counter_system(
     if dispatch_rate is None:
         # No sleep / wait
         chunk_dur = 0.1
-    elif dispatch_rate == "realtime":
-        chunk_dur = block_size / fs
+    elif isinstance(dispatch_rate, str):
+        if dispatch_rate == "realtime":
+            chunk_dur = block_size / fs
     else:
         # Note: float dispatch_rate will yield different number of samples than expected by target_dur and fs
         chunk_dur = 1. / dispatch_rate
