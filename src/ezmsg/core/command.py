@@ -1,9 +1,11 @@
 import os
+import base64
 import asyncio
 import argparse
 import logging
 import subprocess
 import typing
+import webbrowser
 
 from collections import defaultdict
 from uuid import uuid4
@@ -43,7 +45,7 @@ def cmdline() -> None:
     parser.add_argument(
         "command",
         help="command for ezmsg",
-        choices=["serve", "start", "shutdown", "graphviz"],
+        choices=["serve", "start", "shutdown", "graphviz", "mermaid"],
     )
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
@@ -113,10 +115,14 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
     elif cmd == "shutdown":
         try:
             await graph_service.shutdown()
-            logger.info(f"Issued shutdown command to GraphServer @ {graph_service.address}")
+            logger.info(
+                f"Issued shutdown command to GraphServer @ {graph_service.address}"
+            )
 
         except ConnectionRefusedError:
-            logger.warning(f"Could not issue shutdown command to GraphServer @ {graph_service.address}; server not running?")
+            logger.warning(
+                f"Could not issue shutdown command to GraphServer @ {graph_service.address}; server not running?"
+            )
 
     elif cmd == "graphviz":
         try:
@@ -148,7 +154,9 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
                         new_conns = conns.copy()
                         new_conns.remove(proxy_topic)
                         new_conns.union(downstreams)
-                        logger.info(f"Updating connections for {node} from {conns} to {new_conns}")
+                        logger.info(
+                            f"Updating connections for {node} from {conns} to {new_conns}"
+                        )
                         graph_connections[node] = new_conns
 
         graph_connections = dag.graph.copy()
@@ -192,7 +200,7 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
                         ),
                         IND,
                     )
-                elif type(g[leaf]) == str:
+                elif isinstance(g[leaf], str):
                     out += indent(f"{node_map[g[leaf]]} [label={leaf}];" + "\n", IND)
             return out
 
@@ -209,3 +217,102 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         )
 
         print(graphviz_out)
+    elif cmd == "mermaid":
+        try:
+            dag: DAG = await graph_service.dag()
+        except (ConnectionRefusedError, ConnectionResetError):
+            logger.info(
+                f"GraphServer not running @{graph_address}, or host is refusing connections"
+            )
+            return
+
+        graph_connections = dag.graph.copy()
+        # Let's eliminate proxy topics, i.e. connections with inputs and outputs.
+        source_nodes = []
+        for node, conns in graph_connections.items():
+            if len(conns) > 0:
+                source_nodes += [node]
+        proxy_topics = []
+        for conns in graph_connections.values():
+            for conn in conns:
+                if conn in source_nodes and conn not in proxy_topics:
+                    proxy_topics += [conn]
+        # Replace Proxy Topics with actual source and downstream
+        for proxy_topic in proxy_topics:
+            downstreams = graph_connections.pop(proxy_topic)
+            logger.info(f"{proxy_topic} downstream connetions: {downstreams}")
+            for node, conns in graph_connections.items():
+                for conn in conns:
+                    if conn == proxy_topic:
+                        new_conns = conns.copy()
+                        new_conns.remove(proxy_topic)
+                        new_conns.union(downstreams)
+                        logger.info(
+                            f"Updating connections for {node} from {conns} to {new_conns}"
+                        )
+                        graph_connections[node] = new_conns
+
+        graph_connections = dag.graph.copy()
+        # Let's come up with UUID node names
+        nodes = set(graph_connections.keys())
+        node_map = {name: f"{str(uuid4())}" for name in nodes}
+
+        # Construct the graph
+        def tree():
+            return defaultdict(tree)
+
+        graph: defaultdict = tree()
+
+        connections = ""
+        for node, conns in graph_connections.items():
+            subgraph = graph
+            path = node.split("/")
+            route = path[:-1]
+            stream = path[-1]
+            for seg in route:
+                subgraph = subgraph[seg]
+            subgraph[stream] = node
+
+            for sub in conns:
+                connections += f"{node_map[node]} --> {node_map[sub]}" + "\n"
+
+        # Now convert to dot syntax
+        def recurse_graph(g: defaultdict):
+            out = ""
+            for leaf in g:
+                if type(g[leaf]) == defaultdict:
+                    out += indent(
+                        "\n".join(
+                            [
+                                f"subgraph {leaf.lower()} [{leaf}]",
+                                # "direction LR",
+                                f"{recurse_graph(g[leaf])}",
+                                "end",
+                                "",
+                            ]
+                        ),
+                        IND,
+                    )
+                elif isinstance(g[leaf], str):
+                    out += indent(f"{node_map[g[leaf]]}[{leaf}]" + "\n", IND)
+            return out
+
+        subgraph_tree = recurse_graph(graph)
+
+        mermaid = "\n".join(
+            [
+                "flowchart LR",
+                subgraph_tree,
+                indent(connections, IND),
+            ]
+        )
+
+        # print(mermaid)
+        webbrowser.open(mm(mermaid))
+
+
+def mm(graph):
+    graphbytes = graph.encode("utf8")
+    base64_bytes = base64.b64encode(graphbytes)
+    base64_string = base64_bytes.decode("ascii")
+    return f"https://mermaid.ink/img/{base64_string}"
