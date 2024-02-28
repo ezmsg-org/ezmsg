@@ -9,6 +9,103 @@ from ezmsg.util.messages.axisarray import AxisArray
 
 from typing import AsyncGenerator, Optional, Tuple
 
+def _normalize_coefs(
+        coefs: typing.Union[FilterCoefficients, typing.Tuple[npt.NDArray, npt.NDArray],npt.NDArray]
+) -> typing.Tuple[str, typing.Tuple[npt.NDArray,...]]:
+    coef_type = "ba"
+    if coefs is not None:
+        # scipy.signal functions called with first arg `*coefs`.
+        # Make sure we have a tuple of coefficients.
+        if isinstance(coefs, npt.NDArray):
+            coef_type = "sos"
+            coefs = (coefs,)  # sos funcs just want a single ndarray.
+        elif isinstance(coefs, FilterCoefficients):
+            coefs = (FilterCoefficients.b, FilterCoefficients.a)
+    return coef_type, coefs
+
+@consumer
+def filtergen(
+    axis: str, coefs: Optional[Tuple[np.ndarray]], coef_type: str
+) -> Generator[AxisArray, AxisArray, None]:
+    # Massage inputs
+    if coefs is not None and not isinstance(coefs, tuple):
+        # scipy.signal functions called with first arg `*coefs`, but sos coefs are a single ndarray.
+        coefs = (coefs,)
+
+    # Init IO
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out = AxisArray(np.array([]), dims=[""])
+
+    filt_func = {"ba": scipy.signal.lfilter, "sos": scipy.signal.sosfilt}[coef_type]
+    zi_func = {"ba": scipy.signal.lfilter_zi, "sos": scipy.signal.sosfilt_zi}[coef_type]
+
+    # State variables
+    axis_idx = None
+    zi = None
+    expected_shape = None
+
+    while True:
+        axis_arr_in = yield axis_arr_out
+
+        if coefs is None:
+            # passthrough if we do not have a filter design.
+            axis_arr_out = axis_arr_in
+            continue
+
+        if axis_idx is None:
+            axis_name = axis_arr_in.dims[0] if axis is None else axis
+            axis_idx = axis_arr_in.get_axis_idx(axis_name)
+
+        dat_in = axis_arr_in.data
+
+        # Re-calculate/reset zi if necessary
+        samp_shape = dat_in.shape[:axis_idx] + dat_in.shape[axis_idx + 1 :]
+        if zi is None or samp_shape != expected_shape:
+            expected_shape = samp_shape
+            n_tail = dat_in.ndim - axis_idx - 1
+            zi = zi_func(*coefs)
+            zi_expand = (None,) * axis_idx + (slice(None),) + (None,) * n_tail
+            n_tile = dat_in.shape[:axis_idx] + (1,) + dat_in.shape[axis_idx + 1 :]
+            if coef_type == "sos":
+                # sos zi must keep its leading dimension (`order / 2` for low|high; `order` for bpass|bstop)
+                zi_expand = (slice(None),) + zi_expand
+                n_tile = (1,) + n_tile
+            zi = np.tile(zi[zi_expand], n_tile)
+
+        dat_out, zi = filt_func(*coefs, dat_in, axis=axis_idx, zi=zi)
+        axis_arr_out = replace(axis_arr_in, data=dat_out)
+            
+@consumer
+def butter(
+    axis: Optional[str],
+    order: int = 0,
+    cuton: Optional[float] = None,
+    cutoff: Optional[float] = None,
+    coef_type: str = "ba",
+) -> Generator[AxisArray, AxisArray, None]:
+    # IO
+    axis_arr_in = AxisArray(np.array([]), dims=[""])
+    axis_arr_out = AxisArray(np.array([]), dims=[""])
+
+    btype, cutoffs = LegacyButterSettings(
+        order=order, cuton=cuton, cutoff=cutoff
+    ).filter_specs()
+
+    # We cannot calculate coefs yet because we do not know input sample rate
+    coefs = None
+    filter_gen = filtergen(axis, coefs, coef_type)  # Passthrough.
+
+    while True:
+        axis_arr_in = yield axis_arr_out
+        if coefs is None and order > 0:
+            fs = 1 / axis_arr_in.axes[axis or axis_arr_in.dims[0]].gain
+            coefs = scipy.signal.butter(
+                order, Wn=cutoffs, btype=btype, fs=fs, output=coef_type
+            )
+            filter_gen = filtergen(axis, coefs, coef_type)
+
+        axis_arr_out = filter_gen.send(axis_arr_in)
+
 
 @dataclass
 class FilterCoefficients:
