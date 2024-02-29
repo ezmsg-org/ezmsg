@@ -25,7 +25,7 @@ ezmsg-websocket = { version = "*", source = "pypi", optional = true }
 ezmsg-zmq = { version = "*", source = "pypi", optional = true }
 ezmsg-vispy = { version = "*", source = "pypi", optional = true }
 ezmsg-panel = { git = "https://github.com/griffinmilsap/ezmsg-panel.git", rev = "main", optional = true }
-ezmsg-blackrock = { python = "^3.9", git = "https://github.com/griffinmilsap/ezmsg-blackrock.git", rev = "main", optional = true }
+ezmsg-blackrock = { python = "^3.9", git = "https://github.com/CerebusOSS/ezmsg-blackrock.git", rev = "main", optional = true }
 ezmsg-unicorn = { git = "https://github.com/griffinmilsap/ezmsg-unicorn.git", rev = "main", optional = true }
 ezmsg-gadget = { git = "https://github.com/griffinmilsap/ezmsg-gadget.git", rev = "main", optional = true }
 ezmsg-openbci = { git = "https://github.com/griffinmilsap/ezmsg-openbci.git", rev = "main", optional = true }
