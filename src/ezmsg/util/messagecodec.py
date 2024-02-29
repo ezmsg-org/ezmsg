@@ -126,7 +126,7 @@ def message_log(
     with open(fname, "r") as f:
         for l in f:
             obj = json.loads(l, cls=MessageDecoder)
-            if isinstance(obj, LogStart):
+            if isinstance(obj["obj"], LogStart):
                 continue
             if return_object is True:
                 yield obj["obj"]
