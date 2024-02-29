@@ -52,4 +52,4 @@ jobs:
 
       - name: Test ezmsg-sigproc
         run: |
-          cd extensions/ezmsg-sigproc && poetry run python -m pytest -v tests
+          poetry run python -m pytest -v extensions/ezmsg-sigproc/tests
