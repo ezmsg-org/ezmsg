@@ -14,6 +14,7 @@ from ezmsg.core.util import either_dict_or_kwargs
 # TODO: Typehinting is all wrong in this and 
 # concatenate/transpose should probably not be staticmethods
 
+
 @dataclass
 class AxisArray:
     data: npt.NDArray
@@ -206,6 +207,8 @@ class AxisArray:
 def slice_along_axis(in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: int) -> npt.NDArray:
     """
     Slice the input array along a specified axis using the given slice object or integer index.
+     Integer arguments to `sl` will cause the sliced dimension to be dropped.
+     Use `slice(my_int, my_int+1, None)` to keep the sliced dimension.
 
     Parameters:
         in_arr (npt.NDArray): The input array to be sliced.
@@ -220,8 +223,8 @@ def slice_along_axis(in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: in
     """
     if axis < -in_arr.ndim or axis >= in_arr.ndim:
         raise ValueError(f"Invalid axis value {axis} for input array with {in_arr.ndim} dimensions.")
-    if axis < 0:
-        axis = in_arr.ndim  + axis
+    if -in_arr.ndim <= axis < 0:
+        axis = in_arr.ndim + axis
     all_slice = (slice(None),) * axis + (sl,) + (slice(None),) * (in_arr.ndim - axis - 1)
     return in_arr[all_slice]
 
@@ -230,9 +233,11 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
     """
     Generates a view of an array using a sliding window of specified length along a specified axis of the input array.
     This is a slightly optimized version of nps.sliding_window_view with a few important differences.
-    Because we only accept a single nwin and a single axis, we can skip some checks.
-    The new `win` axis precedes immediately the original target axis, unlike sliding_window_view where the
+    * This only accepts a single nwin and a single axis, thus we can skip some checks.
+    * The new `win` axis precedes immediately the original target axis, unlike sliding_window_view where the
      target axis is moved to the end of the output.
+    Combine this with slice_along_axis(..., sl=slice(None, None, step), axis=axis) to step the window
+     by more than 1 sample at a time.
 
     Parameters:
         in_arr (npt.NDArray): The input array.
@@ -241,10 +246,19 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
 
     Returns:
         npt.NDArray: A view to the input array with the sliding window applied.
+
+    Note: There is a known edge case when nwin == shape[axis] + 1. While this should raise
+        an error because the window is larger than the input, the implementation ends up
+        returning a 0-length window. We could check for this but this function is intended
+        to have minimal latency so we have decided to skip the checks and deal with the
+        support issues as they arise.
     """
+    if -in_arr.ndim <= axis < 0:
+        axis = in_arr.ndim + axis
     out_strides = in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis+1:]
     out_shape = in_arr.shape[:axis] + (in_arr.shape[axis]-(nwin-1),) + (nwin,) + in_arr.shape[axis+1:]
     return nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
+
 
 def _as2d(
     in_arr: npt.NDArray, axis: int = 0
