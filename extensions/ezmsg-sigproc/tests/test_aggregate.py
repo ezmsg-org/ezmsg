@@ -15,7 +15,6 @@ def test_aggregate(agg_func: AggregationFunction):
     fs = 1024.0
     bands = [(5.0, 20.0), (30.0, 50.0)]
     targ_ax = "freq"
-    agg_func = AggregationFunction.MEAN
 
     n_samples = int(data_dur * fs)
     data = np.arange(n_samples * n_chans * n_freqs).reshape(n_samples, n_chans, n_freqs)
