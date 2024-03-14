@@ -34,7 +34,9 @@ class CollectionMeta(ComponentMeta):
 
 
 class Collection(Component, metaclass=CollectionMeta):
-    """Collections can contain subunits and connect them together"""
+    """
+    Connects ``Units`` together by defining a graph which connects ``OutputStreams`` to ``InputStreams``.
+    """
 
     def __init__(self, *args, settings: typing.Optional[Settings] = None, **kwargs):
         super(Collection, self).__init__(*args, settings=settings, **kwargs)
@@ -44,11 +46,23 @@ class Collection(Component, metaclass=CollectionMeta):
             setattr(self, comp_name, comp)
 
     def configure(self) -> None:
-        """This is where to percolate apply_settings to subnodes"""
+        """
+        A lifecycle hook that runs when the ``Collection`` is instantiated.
+        This is the best place to call ``Unit.apply_settings()`` on each member ``Unit`` of the ``Collection``.
+        """
         ...
 
     def network(self) -> NetworkDefinition:
+        """
+        Override this method and have the definition return a ``NetworkDefinition`` which defines how
+        ``InputStreams`` and ``OutputStreams`` from member ``Units`` will be connected.
+        """
         return ()
 
     def process_components(self) -> typing.Collection[Component]:
+        """
+        Override this method and have the definition return a tuple which contains ``Units`` and ``Collections``
+        which should run in their own processes.
+        :return: the ``Collection``.
+        """
         return (self,)

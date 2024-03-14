@@ -1,3 +1,10 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath('../../src'))
+sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-sigproc/src'))
+# sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-websocket/src'))
+# sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-zmq/src'))
+
 # Configuration file for the Sphinx documentation builder.
 
 # -- Project information
@@ -6,8 +13,8 @@ project = "ezmsg"
 copyright = "2022, JHU/APL"
 author = "JHU/APL"
 
-release = "3.0"
-version = "3.0.0"
+release = "3.3.4"
+version = "3.3.4"
 
 # -- General configuration
 
@@ -17,6 +24,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.napoleon"
 ]
 
 intersphinx_mapping = {
@@ -33,3 +41,5 @@ html_theme = "sphinx_rtd_theme"
 
 # -- Options for EPUB output
 epub_show_urls = "footnote"
+
+add_module_names = False
