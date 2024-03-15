@@ -62,5 +62,8 @@ def linkcode_resolve(domain, info):
     filename = info['module'].replace('.', '/')
     if "sigproc" in filename:
         return f"{code_url}extensions/ezmsg-sigproc/src/{filename}.py"
+    elif "core" in filename:
+        return f"{code_url}src/ezmsg/core/__init__.py"
     else:
         return f"{code_url}src/{filename}.py"
+
