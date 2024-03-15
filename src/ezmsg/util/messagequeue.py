@@ -6,7 +6,7 @@ from ezmsg.util.rate import Rate
 
 class MessageQueueSettings(ez.Settings):
     """
-    Settings for MessageQueue class.
+    Settings for :obj:`MessageQueue` class.
 
     Args:
         maxsize: The maximum number of items which the queue will hold.

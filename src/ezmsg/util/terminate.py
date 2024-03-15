@@ -10,7 +10,7 @@ from typing import Optional, Any
 
 class TerminateOnTimeoutSettings(ez.Settings):
     """
-    Settings for ``TerminateOnTimeout`` Unit.
+    Settings for :obj:`TerminateOnTimeout` Unit.
 
     Args:
         time: Terminate if no message has been received in this time (sec)
@@ -53,7 +53,7 @@ class TerminateOnTimeout(ez.Unit):
 
 class TerminateOnTotalSettings(ez.Settings):
     """
-    Settings for ``TerminateOnTotal`` Unit.
+    Settings for :obj:`TerminateOnTotal` Unit.
 
     Args:
         total: The total number of messages to terminate after.

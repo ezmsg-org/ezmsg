@@ -73,7 +73,7 @@ class ComponentMeta(ABCMeta):
 
 class Component(Addressable, metaclass=ComponentMeta):
     """
-    Metaclass which ``Units`` and ``Collections`` inherit from.
+    Metaclass which :obj:`Unit` and :obj:`Collection` inherit from.
     """
 
     SETTINGS: Settings
@@ -139,7 +139,8 @@ class Component(Addressable, metaclass=ComponentMeta):
         """
         Update the ``Component``‘s ``Settings`` object.
 
-        :param settings: An instance of the class-specific ``Settings``.
+        Args:
+            settings: An instance of the class-specific ``Settings``.
 
         """
         self.SETTINGS = settings

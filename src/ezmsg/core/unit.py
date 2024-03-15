@@ -110,7 +110,7 @@ class Unit(Component, metaclass=UnitMeta):
 def publisher(stream: OutputStream):
     """
     A decorator for a method that publishes to a stream in the task/messaging thread.
-    An async function will yield messages on the designated ``OutputStream``.
+    An async function will yield messages on the designated :obj:`OutputStream`.
 
     .. code-block:: python
 
@@ -141,7 +141,7 @@ def publisher(stream: OutputStream):
 def subscriber(stream: InputStream, zero_copy: bool = False):
     """
     A decorator for a method that subscribes to a stream in the task/messaging thread.
-    An async function will run once per message received from the ``InputStream`` it subscribes to.
+    An async function will run once per message received from the :obj:`InputStream` it subscribes to.
 
     Example:
 
@@ -172,8 +172,8 @@ def subscriber(stream: InputStream, zero_copy: bool = False):
 
 def main(func: Callable):
     """
-    A decorator which designates this function to run as the main thread for this ``Unit``.
-    A ``Unit`` may only have one of these.
+    A decorator which designates this function to run as the main thread for this :obj:`Unit`.
+    A :obj:`Unit` may only have one of these.
     """
     setattr(func, MAIN_ATTR, True)
     return func
@@ -200,7 +200,7 @@ def timeit(func: Callable):
 
 def thread(func: Callable):
     """
-    A decorator which designates this function to run as a background thread for this ``Unit``.
+    A decorator which designates this function to run as a background thread for this `:obj:`Unit`.
     """
     setattr(func, THREAD_ATTR, True)
     return func

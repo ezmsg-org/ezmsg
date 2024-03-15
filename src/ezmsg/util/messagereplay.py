@@ -45,10 +45,10 @@ class FileReplayMessage:
 
 class MessageReplaySettings(ez.Settings, FileReplayMessage):
     """
-    Settings for ``MesssageReplay`` Unit.
+    Settings for :obj:`MesssageReplay` Unit.
 
     Args:
-        progress: will use tqdm to indicate progress through the file. Tqdm must be installed.
+        progress: will use tqdm to indicate progress through the file. tqdm must be installed.
     """
     progress: bool = False
 
@@ -61,7 +61,7 @@ class MessageReplayState(ez.State):
 
 class MessageReplay(ez.Unit):
     """
-    Stream messages from files created by ``MessageLogger``.
+    Stream messages from files created by :obj:`MessageLogger`.
     Stores a queue of files to stream and streams from them in order.
     """
 

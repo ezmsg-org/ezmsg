@@ -168,24 +168,25 @@ def run(
     **components_kwargs: Component,
 ) -> None:
     """
-    Begin execution of a set of ``Components``.
+    Begin execution of a set of :obj:`Component` s.
 
-    `The old method` run_system() `has been deprecated and uses` run() `instead.`
+    `The old method` :obj:`run_system` `has been deprecated and uses` ``run()`` `instead.`
 
-    :param components: represents the nodes in the directed acyclic graph. It is a dictionary which contains the
-        ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()``
-        for each ``Unit`` and ``configure()`` for each ``Collection``, if defined.
-    :param root_name:
-    :param connections: represents the edges is a ``NetworkDefinition`` which connects
-        ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph
-        using the contents of this parameter.
-    :param process_components: a list of ``Components`` which should live in their own process.
-    :param backend_process: is currently under development.
-    :param graph_address: the hostname and port of the graph server which ``ezmsg`` should connect to.
-        If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
-    :param force_single_process: run all ``Components`` in one process.
-        This is necessary when running ``ezmsg`` in a notebook.
-    :param components_kwargs:
+    Args:
+        components: represents the nodes in the directed acyclic graph. It is a dictionary which contains the
+            ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()``
+            for each :obj:`Unit` and ``configure()`` for each :obj:`Collection`, if defined.
+        root_name:
+        connections: represents the edges is a ``NetworkDefinition`` which connects
+            ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph
+            using the contents of this parameter.
+        process_components: a list of ``Components`` which should live in their own process.
+        backend_process: is currently under development.
+        graph_address: the hostname and port of the graph server which ``ezmsg`` should connect to.
+            If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
+        force_single_process: run all ``Components`` in one process.
+            This is necessary when running ``ezmsg`` in a notebook.
+        components_kwargs:
     """
     # FIXME: This function is the last major re-implementation needed to make this
     # codebase more maintainable.

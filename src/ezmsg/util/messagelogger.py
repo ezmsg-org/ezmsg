@@ -18,10 +18,10 @@ def log_object(obj: Any) -> str:
 
 class MessageLoggerSettings(ez.Settings):
     """
-    Settings for ``MessageLogger`` Unit.
+    Settings for :obj:`MessageLogger` Unit.
 
     Args:
-        output: ``pathlib.Path`` for a file where the messages will be logged.
+        output: :py:class:`pathlib.Path` for a file where the messages will be logged.
             If the file path already exists, the existing file will be truncated to 0 length.
     """
     output: Optional[Path] = None
@@ -35,7 +35,7 @@ class MessageLogger(ez.Unit):
     """
     Logs all messages it receives to a file.
     File path can be set in ``SETTINGS`` or set dynamically by passing a
-    ``pathlib.Path`` to ``INPUT_START``.
+    :py:class:`pathlib.Path` to ``INPUT_START``.
     """
 
     SETTINGS: MessageLoggerSettings
@@ -43,14 +43,14 @@ class MessageLogger(ez.Unit):
 
     INPUT_START = ez.InputStream(Path)
     """
-    Pass a ``pathlib.Path`` 
+    Pass a :py:class:`pathlib.Path` 
     to begin logging messages to that path. If the file path already exists, the existing 
     file will be truncated to 0 length. If the file is already open, nothing will happen.
     """
 
     INPUT_STOP = ez.InputStream(Path)
     """
-    Pass a ``pathlib.Path`` 
+    Pass a :py:class:`pathlib.Path` 
     to stop logging messages to that path.
     """
 

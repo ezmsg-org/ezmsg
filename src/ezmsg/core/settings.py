@@ -29,7 +29,7 @@ class SettingsMeta(ABCMeta):
 
 class Settings(ABC, metaclass=SettingsMeta):
     """
-    To pass parameters into a ``Component``, inherit from ``Settings``.
+    To pass parameters into a :obj:`Component`, inherit from ``Settings``.
 
     .. code-block:: python
 

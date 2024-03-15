@@ -3,6 +3,13 @@ Utility Classes
 
 Classes which implement functionality which is commonly useful for ``ezmsg`` pipelines.
 
+AxisArray
+---------
+
+.. automodule:: ezmsg.util.messages.axisarray
+   :show-inheritance:
+   :members:
+
 DebugLog
 --------
 

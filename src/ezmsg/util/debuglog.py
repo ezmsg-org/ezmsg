@@ -5,7 +5,7 @@ from typing import AsyncGenerator, Optional, Any
 
 class DebugLogSettings(ez.Settings):
     """
-    ``Settings`` class associated with ``DebugLog``
+    ``Settings`` class associated with :obj:`DebugLog`
 
     Args:
         name: Useful name for the logger. The name is included in the logstring so that if multiple DebugLogs

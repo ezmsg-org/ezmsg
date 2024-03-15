@@ -12,7 +12,7 @@ class GateMessage:
 
 class MessageGateSettings(ez.Settings):
     """
-    Settings for ``MessageGate`` unit.
+    Settings for :obj:`MessageGate` unit.
 
     Args:
         start_open: sets the gate's initial state to allow messages to flow through or be discarded. ``True`` will
