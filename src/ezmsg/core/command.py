@@ -1,4 +1,5 @@
 import os
+import sys
 import base64
 import asyncio
 import argparse
@@ -97,7 +98,7 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
 
     elif cmd == "start":
         popen = subprocess.Popen(
-            ["python", "-m", "ezmsg.core", "serve", f"--address={graph_address}"]
+            [sys.executable, "-m", "ezmsg.core", "serve", f"--address={graph_address}"]
         )
 
         while True:
