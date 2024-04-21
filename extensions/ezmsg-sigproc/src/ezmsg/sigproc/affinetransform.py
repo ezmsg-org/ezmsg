@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Generator, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.generator import consumer, GenAxisArray
@@ -86,6 +87,10 @@ class AffineTransform(GenAxisArray):
         )
 
 
+def zeros_for_noop(data: npt.NDArray, **ignore_kwargs) -> npt.NDArray:
+    return np.zeros_like(data)
+
+
 @consumer
 def common_rereference(
     mode: str = "mean", axis: Optional[str] = None, include_current: bool = True
@@ -105,7 +110,10 @@ def common_rereference(
     axis_arr_in = AxisArray(np.array([]), dims=[""])
     axis_arr_out = AxisArray(np.array([]), dims=[""])
 
-    func = {"mean": np.mean, "median": np.median}[mode]
+    if mode == "passthrough":
+        include_current = True
+
+    func = {"mean": np.mean, "median": np.median, "passthrough": zeros_for_noop}[mode]
 
     while True:
         axis_arr_in = yield axis_arr_out
