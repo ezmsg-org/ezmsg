@@ -1,7 +1,7 @@
 from dataclasses import replace
 import os
 from pathlib import Path
-from typing import Generator, Optional, Union
+import typing
 
 import numpy as np
 import numpy.typing as npt
@@ -12,10 +12,10 @@ from ezmsg.util.generator import consumer, GenAxisArray
 
 @consumer
 def affine_transform(
-    weights: Union[np.ndarray, str, Path],
-    axis: Optional[str] = None,
+    weights: typing.Union[np.ndarray, str, Path],
+    axis: typing.Optional[str] = None,
     right_multiply: bool = True,
-) -> Generator[AxisArray, AxisArray, None]:
+) -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Perform affine transformations on streaming data.
 
@@ -70,8 +70,8 @@ class AffineTransformSettings(ez.Settings):
     Settings for :obj:`AffineTransform`.
     See :obj:`affine_transform` for argument details.
     """
-    weights: Union[np.ndarray, str, Path]
-    axis: Optional[str] = None
+    weights: typing.Union[np.ndarray, str, Path]
+    axis: typing.Optional[str] = None
     right_multiply: bool = True
 
 
@@ -93,8 +93,8 @@ def zeros_for_noop(data: npt.NDArray, **ignore_kwargs) -> npt.NDArray:
 
 @consumer
 def common_rereference(
-    mode: str = "mean", axis: Optional[str] = None, include_current: bool = True
-) -> Generator[AxisArray, AxisArray, None]:
+    mode: str = "mean", axis: typing.Optional[str] = None, include_current: bool = True
+) -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Perform common average referencing (CAR) on streaming data.
 
@@ -150,7 +150,7 @@ class CommonRereferenceSettings(ez.Settings):
     See :obj:`common_rereference` for argument details.
     """
     mode: str = "mean"
-    axis: Optional[str] = None
+    axis: typing.Optional[str] = None
     include_current: bool = True
 
 
