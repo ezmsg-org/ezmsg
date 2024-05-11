@@ -24,8 +24,10 @@ def windowing(
     Args:
         axis: The axis along which to segment windows.
             If None, defaults to the first dimension of the first seen AxisArray.
-        newaxis: Optional new axis for the output. If None, no new axes will be added.
-            If a string, windows will be stacked in a new axis with key `newaxis`, immediately preceding the windowed axis.
+        newaxis: New axis on which windows are delimited, immediately
+        preceding the target windowed axis. The data length along newaxis may be 0 if
+        this most recent push did not provide enough data for a new window.
+        If window_shift is None then the newaxis length will always be 1.
         window_dur: The duration of the window in seconds.
             If None, the function acts as a passthrough and all other parameters are ignored.
         window_shift: The shift of the window in seconds.
