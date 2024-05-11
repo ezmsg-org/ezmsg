@@ -80,3 +80,15 @@ def test_common_rereference():
         gen = affine_transform(weights=weights, axis="ch")
         axis_arr_out = gen.send(axis_arr_in)
         assert np.allclose(axis_arr_out.data, expected_out)
+
+
+def test_car_passthrough():
+    n_times = 300
+    n_chans = 64
+    in_dat = np.arange(n_times * n_chans).reshape(n_times, n_chans)
+    axis_arr_in = AxisArray(in_dat, dims=["time", "ch"])
+
+    gen = common_rereference(mode="passthrough")
+    axis_arr_out = gen.send(axis_arr_in)
+    assert np.array_equal(axis_arr_out.data, in_dat)
+    assert not np.may_share_memory(axis_arr_out.data, in_dat)
