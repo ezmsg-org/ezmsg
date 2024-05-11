@@ -39,6 +39,9 @@ def affine_transform(
         weights = weights.T
     weights = np.ascontiguousarray(weights)
 
+    b_first = True
+    new_xform_ax: typing.Optional[AxisArray.Axis] = None
+
     while True:
         axis_arr_in = yield axis_arr_out
 
@@ -47,6 +50,43 @@ def affine_transform(
             axis_idx = -1
         else:
             axis_idx = axis_arr_in.get_axis_idx(axis)
+
+        if b_first:
+            # First data sample. Determine if we need to modify the transformed axis.
+            b_first = False
+            if (
+                    axis in axis_arr_in.axes
+                    and hasattr(axis_arr_in.axes[axis], "labels")
+                    and weights.shape[0] != weights.shape[1]
+            ):
+                in_labels = axis_arr_in.axes[axis].labels
+                new_labels = []
+                n_in = weights.shape[1 if right_multiply else 0]
+                n_out = weights.shape[0 if right_multiply else 1]
+                if len(in_labels) != n_in:
+                    # Something upstream did something it wasn't supposed to. We will drop the labels.
+                    ez.logger.warning(f"Received {len(in_labels)} for {n_in} inputs. Check upstream labels.")
+                else:
+                    b_used_inputs = np.any(weights, axis=0 if right_multiply else 1)
+                    b_filled_outputs = np.any(weights, axis=1 if right_multiply else 0)
+                    if np.all(b_used_inputs) and np.all(b_filled_outputs):
+                        # All inputs are used and all outputs are used, but n_in != n_out.
+                        # Mapping cannot be determined.
+                        new_labels = []
+                    elif np.all(b_used_inputs):
+                        # Strange scenario: New outputs are filled with empty data.
+                        in_ix = 0
+                        new_labels = []
+                        for out_ix in range(n_out):
+                            if b_filled_outputs[out_ix]:
+                                new_labels.append(in_labels[in_ix])
+                                in_ix += 1
+                            else:
+                                new_labels.append("")
+                    elif np.all(b_filled_outputs):
+                        # Transform is dropping some of the inputs.
+                        new_labels = np.array(in_labels)[b_used_inputs].tolist()
+                new_xform_ax = replace(axis_arr_in.axes[axis], labels=new_labels)
 
         data = axis_arr_in.data
 
@@ -62,7 +102,12 @@ def affine_transform(
             data = np.moveaxis(data, axis_idx, -1)
             data = np.matmul(data, weights)
             data = np.moveaxis(data, -1, axis_idx)
-        axis_arr_out = replace(axis_arr_in, data=data)
+
+        replace_kwargs = {"data": data}
+        if new_xform_ax is not None:
+            replace_kwargs["axes"] = {**axis_arr_in.axes, axis: new_xform_ax}
+
+        axis_arr_out = replace(axis_arr_in, **replace_kwargs)
 
 
 class AffineTransformSettings(ez.Settings):
