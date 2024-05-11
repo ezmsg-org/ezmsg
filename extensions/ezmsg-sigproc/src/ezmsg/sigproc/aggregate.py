@@ -82,9 +82,14 @@ def ranged_aggregate(
                     inds = np.where(np.logical_and(ax_vec >= start, ax_vec <= stop))[0]
                     mids.append(np.mean(inds) * target_axis.gain + target_axis.offset)
                     slices.append(np.s_[inds[0]:inds[-1] + 1])
-                out_axis = AxisArray.Axis(
-                    unit=target_axis.unit, offset=mids[0], gain=(mids[1] - mids[0]) if len(mids) > 1 else 1.0
-                )
+                out_ax_kwargs = {
+                    "unit": target_axis.unit,
+                    "offset": mids[0],
+                    "gain": (mids[1] - mids[0]) if len(mids) > 1 else 1.0
+                }
+                if hasattr(target_axis, "labels"):
+                    out_ax_kwargs["labels"] = [f"{_[0]} - {_[1]}" for _ in bands]
+                out_axis = replace(target_axis, **out_ax_kwargs)
 
             agg_func = AGGREGATORS[operation]
             out_data = [

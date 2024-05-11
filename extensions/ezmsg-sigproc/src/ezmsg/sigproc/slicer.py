@@ -49,6 +49,7 @@ def slicer(
     axis_arr_out = AxisArray(np.array([]), dims=[""])
     _slice = None
     b_change_dims = False
+    new_axis = None  # Will hold updated metadata
 
     while True:
         axis_arr_in = yield axis_arr_out
@@ -58,16 +59,24 @@ def slicer(
         axis_idx = axis_arr_in.get_axis_idx(axis)
 
         if _slice is None:
+            # Calculate the slice
             _slices = parse_slice(selection)
             if len(_slices) == 1:
                 _slice = _slices[0]
-                b_change_dims = isinstance(_slice, int)
+                b_change_dims = isinstance(_slice, int)  # If we drop the sliced dimension
             else:
                 # Multiple slices, but this cannot be done in a single step, so we convert the slices
                 #  to a discontinuous set of integer indexes.
                 indices = np.arange(axis_arr_in.data.shape[axis_idx])
                 indices = np.hstack([indices[_] for _ in _slices])
                 _slice = np.s_[indices]
+            # Create the output axis.
+            if axis in axis_arr_in.axes and hasattr(axis_arr_in.axes[axis], "labels"):
+                new_labels = axis_arr_in.axes[axis].labels[_slice]
+                new_axis = replace(
+                    axis_arr_in.axes[axis],
+                    labels=new_labels
+                )
 
         if b_change_dims:
             out_dims = [_ for dim_ix, _ in enumerate(axis_arr_in.dims) if dim_ix != axis_idx]
@@ -75,7 +84,10 @@ def slicer(
             out_axes.pop(axis, None)
         else:
             out_dims = axis_arr_in.dims
-            out_axes = axis_arr_in.axes
+            if new_axis is not None:
+                out_axes = {k: (v if k != axis else new_axis) for k, v in axis_arr_in.axes.items()}
+            else:
+                out_axes = axis_arr_in.axes
 
         axis_arr_out = replace(
             axis_arr_in,
