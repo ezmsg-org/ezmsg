@@ -66,7 +66,7 @@ class LoadTestPublisher(ez.Unit):
                 break
 
             yield self.OUTPUT, LoadTestSample(
-                _timestamp=time.perf_counter(),
+                _timestamp=time.time(),
                 counter=self.counter,
                 dynamic_data=np.zeros(
                     int(self.SETTINGS.dynamic_size // 8), dtype=np.float32
@@ -101,7 +101,7 @@ class LoadTestSubscriber(ez.Unit):
                 f"{sample.counter - self.STATE.counter-1} samples skipped!"
             )
         self.STATE.received_data.append(
-            (sample._timestamp, time.perf_counter(), sample.counter)
+            (sample._timestamp, time.time(), sample.counter)
         )
         self.STATE.counter = sample.counter
 
