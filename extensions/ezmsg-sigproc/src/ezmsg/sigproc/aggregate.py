@@ -1,3 +1,4 @@
+import copy
 from dataclasses import replace
 import typing
 
@@ -70,7 +71,8 @@ def ranged_aggregate(
             axis_arr_out = axis_arr_in
         else:
             if slices is None or target_axis != axis_arr_in.get_axis(axis_name):
-                # Calculate the slices. If we are operating on time axis then
+                # If we have yet to calculate slices, or if the axis we are operating on
+                #  has changed (e.g., "time" or "win" axis always changes), then recalculate slices.
                 axis_name = axis or axis_arr_in.dims[0]
                 ax_idx = axis_arr_in.get_axis_idx(axis_name)
                 target_axis = axis_arr_in.axes[axis_name]
@@ -96,12 +98,12 @@ def ranged_aggregate(
                 agg_func(slice_along_axis(axis_arr_in.data, sl, axis=ax_idx), axis=ax_idx)
                 for sl in slices
             ]
-            new_axes = {**axis_arr_in.axes, axis_name: out_axis}
-            axis_arr_out = replace(
-                axis_arr_in,
-                data=np.stack(out_data, axis=ax_idx),
-                axes=new_axes
-            )
+            axis_arr_out = copy.copy(axis_arr_in)
+            axis_arr_out.data = np.stack(out_data, axis=ax_idx)
+            axis_arr_out.axes = {
+                k: (v if k != axis_name else out_axis)
+                for k, v in axis_arr_out.axes.items()
+            }
 
 
 class RangedAggregateSettings(ez.Settings):
@@ -120,9 +122,20 @@ class RangedAggregate(GenAxisArray):
     """
     SETTINGS: RangedAggregateSettings
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
     def construct_generator(self):
         self.STATE.gen = ranged_aggregate(
             axis=self.SETTINGS.axis,
             bands=self.SETTINGS.bands,
             operation=self.SETTINGS.operation
         )
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret
+

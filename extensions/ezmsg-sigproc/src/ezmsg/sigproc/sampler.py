@@ -1,4 +1,5 @@
 from collections import deque
+import copy
 from dataclasses import dataclass, replace, field
 import time
 from typing import Optional, Any, Tuple, List, Union, AsyncGenerator, Generator
@@ -76,27 +77,27 @@ def sampler(
 
     while True:
         msg_in = yield msg_out
-        msg_out = []
-        if isinstance(msg_in, SampleTriggerMessage):
-            if last_msg_stats is None or buffer is None:
-                # We've yet to see any data; drop the trigger.
-                continue
-            fs = last_msg_stats["fs"]
-            axis_idx = last_msg_stats["axis_idx"]
+        msg_out: list[SampleMessage] = []  # Output is list because SampleMessage can only encode 1 trigger
 
+        if isinstance(msg_in, SampleTriggerMessage):
+            # Process a trigger and store it in a queue
+
+            # If we've yet to see any data then drop the trigger.
+            if last_msg_stats is None or buffer is None:
+                continue
+
+            # Sanity check trigger
             _period = msg_in.period if msg_in.period is not None else period
             _value = msg_in.value if msg_in.value is not None else value
-
             if _period is None:
                 ez.logger.warning("Sampling failed: period not specified")
                 continue
-
-            # Check that period is valid
             if _period[0] >= _period[1]:
                 ez.logger.warning(f"Sampling failed: invalid period requested ({_period})")
                 continue
 
             # Check that period is compatible with buffer duration.
+            fs = last_msg_stats["fs"]
             max_buf_len = int(np.round(buffer_dur * fs))
             req_buf_len = int(np.round((_period[1] - _period[0]) * fs))
             if req_buf_len >= max_buf_len:
@@ -107,13 +108,15 @@ def sampler(
 
             trigger_ts: float = msg_in.timestamp
             if not estimate_alignment:
-                # Override the trigger timestamp with the next sample's likely timestamp.
+                # If we trust the order of messages more than we trust the embedded timestamps,
+                # override the trigger timestamp with the next sample's likely timestamp.
                 trigger_ts = last_msg_stats["offset"] + (last_msg_stats["n_samples"] + 1) / fs
 
             new_trig_msg = replace(msg_in, timestamp=trigger_ts, period=_period, value=_value)
             triggers.append(new_trig_msg)
 
         elif isinstance(msg_in, AxisArray):
+            # Process data: buffer, and if adequate, take a triggered sample.
             if axis is None:
                 axis = msg_in.dims[0]
             axis_idx = msg_in.get_axis_idx(axis)
@@ -160,23 +163,22 @@ def sampler(
                     )
                     triggers.remove(trig)
 
-                # TODO: Speed up with searchsorted?
                 t_start = trig.timestamp + trig.period[0]
                 if t_start >= buffer_offset[0]:
                     start = np.searchsorted(buffer_offset, t_start)
                     stop = start + int(np.round(fs * (trig.period[1] - trig.period[0])))
                     if buffer.shape[axis_idx] > stop:
-                        # Trigger period fully enclosed in buffer.
-                        msg_out.append(
-                            SampleMessage(
-                                trigger=trig,
-                                sample=replace(
-                                    msg_in,
-                                    data=slice_along_axis(buffer, slice(start, stop), axis_idx),
-                                    axes={**msg_in.axes, axis: replace(axis_info, offset=buffer_offset[start])}
-                                )
-                            )
-                        )
+                        # Trigger period fully enclosed in buffer. Make a Sample!
+                        sample = copy.copy(msg_in)
+                        sample.data = slice_along_axis(buffer, slice(start, stop), axis_idx)
+                        out_axis = copy.copy(axis_info)
+                        out_axis.offset = buffer_offset[start]
+                        sample.axes = {
+                            k: (v if k != axis else out_axis)
+                            for k, v in sample.axes.items()
+                        }
+                        msg_out.append(SampleMessage(trigger=trig, sample=sample))
+
                         triggers.remove(trig)
 
             buf_len = int(buffer_dur * fs)
@@ -236,11 +238,11 @@ class Sampler(ez.Unit):
         self.STATE.cur_settings = msg
         self.construct_generator()
 
-    @ez.subscriber(INPUT_TRIGGER)
+    @ez.subscriber(INPUT_TRIGGER, zero_copy=True)
     async def on_trigger(self, msg: SampleTriggerMessage) -> None:
         _ = self.STATE.gen.send(msg)
 
-    @ez.subscriber(INPUT_SIGNAL)
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SAMPLE)
     async def on_signal(self, msg: AxisArray) -> AsyncGenerator:
         pub_samples = self.STATE.gen.send(msg)

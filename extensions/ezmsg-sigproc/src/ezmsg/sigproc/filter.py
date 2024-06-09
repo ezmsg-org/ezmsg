@@ -1,14 +1,13 @@
 import asyncio
-import typing
-
+import copy
 from dataclasses import dataclass, replace, field
-
-import ezmsg.core as ez
-import scipy.signal
+import typing
 
 import numpy as np
 import numpy.typing as npt
+import scipy.signal
 
+import ezmsg.core as ez
 from ezmsg.util.messages.axisarray import AxisArray
 from ezmsg.util.generator import consumer
 
@@ -95,7 +94,8 @@ def filtergen(
             zi = np.tile(zi[zi_expand], n_tile)
 
         dat_out, zi = filt_func(*coefs, dat_in, axis=axis_idx, zi=zi)
-        axis_arr_out = replace(axis_arr_in, data=dat_out)
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_arr_out.data = dat_out
 
 
 class FilterSettingsBase(ez.Settings):

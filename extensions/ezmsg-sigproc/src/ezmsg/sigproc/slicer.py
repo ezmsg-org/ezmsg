@@ -1,3 +1,4 @@
+import copy
 from dataclasses import replace
 import typing
 
@@ -71,30 +72,27 @@ def slicer(
                 indices = np.hstack([indices[_] for _ in _slices])
                 _slice = np.s_[indices]
             # Create the output axis.
-            if axis in axis_arr_in.axes and hasattr(axis_arr_in.axes[axis], "labels"):
+            if (axis in axis_arr_in.axes
+                    and hasattr(axis_arr_in.axes[axis], "labels")
+                    and len(axis_arr_in.axes[axis].labels) > 0):
                 new_labels = axis_arr_in.axes[axis].labels[_slice]
                 new_axis = replace(
                     axis_arr_in.axes[axis],
                     labels=new_labels
                 )
 
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_arr_out.data = slice_along_axis(axis_arr_in.data, _slice, axis_idx)
         if b_change_dims:
-            out_dims = [_ for dim_ix, _ in enumerate(axis_arr_in.dims) if dim_ix != axis_idx]
-            out_axes = axis_arr_in.axes.copy()
-            out_axes.pop(axis, None)
-        else:
-            out_dims = axis_arr_in.dims
-            if new_axis is not None:
-                out_axes = {k: (v if k != axis else new_axis) for k, v in axis_arr_in.axes.items()}
-            else:
-                out_axes = axis_arr_in.axes
-
-        axis_arr_out = replace(
-            axis_arr_in,
-            dims=out_dims,
-            axes=out_axes,
-            data=slice_along_axis(axis_arr_in.data, _slice, axis_idx),
-        )
+            # Dropping the target axis
+            axis_arr_out.dims = [_ for dim_ix, _ in enumerate(axis_arr_in.dims) if dim_ix != axis_idx]
+            axis_arr_out.axes = {k: v for k, v in axis_arr_in.axes.items() if k != axis}
+        elif new_axis is not None:
+            # Slicing labels
+            axis_arr_out.axes = {
+                k: (v if k != axis else new_axis)
+                for k, v in axis_arr_out.axes.items()
+            }
 
 
 class SlicerSettings(ez.Settings):
@@ -105,7 +103,17 @@ class SlicerSettings(ez.Settings):
 class Slicer(GenAxisArray):
     SETTINGS: SlicerSettings
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
     def construct_generator(self):
         self.STATE.gen = slicer(
             selection=self.SETTINGS.selection, axis=self.SETTINGS.axis
         )
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret

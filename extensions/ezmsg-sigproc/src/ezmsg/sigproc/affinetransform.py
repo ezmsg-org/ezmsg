@@ -1,3 +1,4 @@
+import copy
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -92,7 +93,7 @@ def affine_transform(
 
         if data.shape[axis_idx] == (weights.shape[0] - 1):
             # The weights are stacked A|B where A is the transform and B is a single row
-            #  in the equation y = Ax + B. This supports NeuroKey's weights matrices.
+            #  in the equation y = Ax + B. We append a column of ones to our data.
             sample_shape = data.shape[:axis_idx] + (1,) + data.shape[axis_idx+1:]
             data = np.concatenate((data, np.ones(sample_shape).astype(data.dtype)), axis=axis_idx)
 
@@ -103,11 +104,14 @@ def affine_transform(
             data = np.matmul(data, weights)
             data = np.moveaxis(data, -1, axis_idx)
 
-        replace_kwargs = {"data": data}
+        # Prepare the output.
+        axis_arr_out = copy.copy(axis_arr_in)  # Shallow copy is faster than replace(...)
+        axis_arr_out.data = data
         if new_xform_ax is not None:
-            replace_kwargs["axes"] = {**axis_arr_in.axes, axis: new_xform_ax}
-
-        axis_arr_out = replace(axis_arr_in, **replace_kwargs)
+            axis_arr_out.axes = {
+                k: (v if k != axis else new_xform_ax)
+                for k, v in axis_arr_out.axes.items()
+            }
 
 
 class AffineTransformSettings(ez.Settings):
@@ -124,12 +128,23 @@ class AffineTransform(GenAxisArray):
     """:obj:`Unit` for :obj:`affine_transform`"""
     SETTINGS: AffineTransformSettings
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
     def construct_generator(self):
         self.STATE.gen = affine_transform(
             weights=self.SETTINGS.weights,
             axis=self.SETTINGS.axis,
             right_multiply=self.SETTINGS.right_multiply,
         )
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret
+
 
 
 def zeros_for_noop(data: npt.NDArray, **ignore_kwargs) -> npt.NDArray:
@@ -186,7 +201,8 @@ def common_rereference(
             ref_data = (N / (N - 1)) * ref_data - axis_arr_in.data / (N - 1)
             # Side note: I profiled using affine_transform and it's about 30x slower than this implementation.
 
-        axis_arr_out = replace(axis_arr_in, data=axis_arr_in.data - ref_data)
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_arr_out.data = axis_arr_in.data - ref_data  # Do not use `-=` here!
 
 
 class CommonRereferenceSettings(ez.Settings):
@@ -205,9 +221,20 @@ class CommonRereference(GenAxisArray):
     """
     SETTINGS: CommonRereferenceSettings
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
     def construct_generator(self):
         self.STATE.gen = common_rereference(
             mode=self.SETTINGS.mode,
             axis=self.SETTINGS.axis,
             include_current=self.SETTINGS.include_current,
         )
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret
+

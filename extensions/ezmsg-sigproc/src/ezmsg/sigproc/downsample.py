@@ -37,23 +37,13 @@ def downsample(
 
     # state variables
     s_idx: int = 0  # Index of the next msg's first sample into the virtual rotating ds_factor counter.
-    template: typing.Optional[AxisArray] = None
 
     while True:
         axis_arr_in = yield axis_arr_out
 
         if axis is None:
             axis = axis_arr_in.dims[0]
-        axis_info = axis_arr_in.get_axis(axis)
         axis_idx = axis_arr_in.get_axis_idx(axis)
-
-        if template is None:
-            # Reset state variables
-            s_idx = 0
-            # Template used as a convenient struct for holding metadata and size-zero data.
-            template = copy.deepcopy(axis_arr_in)
-            template.axes[axis].gain *= factor
-            template.data = slice_along_axis(template.data, slice(None, 0, None), axis=axis_idx)
 
         n_samples = axis_arr_in.data.shape[axis_idx]
         samples = np.arange(s_idx, s_idx + n_samples) % factor
@@ -61,22 +51,18 @@ def downsample(
             # Update state for next iteration.
             s_idx = samples[-1] + 1
 
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_info_out = copy.copy(axis_arr_in.axes[axis])
+        axis_info_out.gain *= factor
         pub_samples = np.where(samples == 0)[0]
         if len(pub_samples) > 0:
-            # Update the template directly, because we want
-            #  future size-0 msgs to have approx. correct offset.
-            update_ax = template.axes[axis]
-            update_ax.offset = axis_info.offset + axis_info.gain * pub_samples[0].item()
-            axis_arr_out = replace(
-                template,
-                data=slice_along_axis(axis_arr_in.data, pub_samples, axis=axis_idx),
-                axes={**template.axes, axis: replace(update_ax, offset=update_ax.offset)}
-            )
-            template.axes[axis].offset = axis_info.offset + axis_info.gain * (n_samples + 1)
+            axis_arr_out.data = slice_along_axis(axis_arr_in.data, pub_samples, axis=axis_idx)
+            axis_info_out.offset += axis_arr_in.axes[axis].gain * pub_samples[0].item()
         else:
-            # This iteration did not yield any samples. Return a size-0 array
-            #  with time offset expected for _next_ sample.
-            axis_arr_out = template
+            axis_arr_out.data = slice_along_axis(axis_arr_in.data, slice(None, 0, None), axis=axis_idx)
+        axis_arr_out.axes = {
+            k: (v if k != axis else axis_info_out) for k, v in axis_arr_out.axes.items()
+        }
 
 
 class DownsampleSettings(ez.Settings):

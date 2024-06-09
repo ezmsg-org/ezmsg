@@ -1,4 +1,6 @@
+import copy
 from dataclasses import replace
+import typing
 from typing import Generator, Optional
 
 import numpy as np
@@ -134,7 +136,8 @@ def scaler_np(
 
         result[np.isnan(result)] = 0.0
         result = np.moveaxis(result, 0, axis_idx)
-        axis_arr_out = replace(axis_arr_in, data=result)
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_arr_out.data = result
 
 
 class AdaptiveStandardScalerSettings(ez.Settings):
@@ -150,8 +153,18 @@ class AdaptiveStandardScaler(GenAxisArray):
     """Unit for :obj:`scaler_np`"""
     SETTINGS: AdaptiveStandardScalerSettings
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
     def construct_generator(self):
         self.STATE.gen = scaler_np(
             time_constant=self.SETTINGS.time_constant,
             axis=self.SETTINGS.axis
         )
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret

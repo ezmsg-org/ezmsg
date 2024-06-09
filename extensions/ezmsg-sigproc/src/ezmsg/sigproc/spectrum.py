@@ -1,4 +1,4 @@
-from dataclasses import replace
+import copy
 import enum
 from typing import Optional, Generator, AsyncGenerator
 
@@ -59,11 +59,11 @@ class SpectralOutput(OptionsEnum):
 
 @consumer
 def spectrum(
-    axis: Optional[str] = None,
-    out_axis: Optional[str] = "freq",
-    window: WindowFunction = WindowFunction.HANNING,
-    transform: SpectralTransform = SpectralTransform.REL_DB,
-    output: SpectralOutput = SpectralOutput.POSITIVE
+        axis: Optional[str] = None,
+        out_axis: Optional[str] = "freq",
+        window: WindowFunction = WindowFunction.HANNING,
+        transform: SpectralTransform = SpectralTransform.REL_DB,
+        output: SpectralOutput = SpectralOutput.POSITIVE
 ) -> Generator[AxisArray, AxisArray, None]:
     """
     Calculate a spectrum on a data slice.
@@ -85,8 +85,9 @@ def spectrum(
     axis_arr_out = AxisArray(np.array([]), dims=[""])
 
     axis_name = axis
-    axis_idx = None
-    n_time = None
+    axis_idx: Optional[int] = None
+    n_time: Optional[int] = None
+    freq_axis: Optional[AxisArray.Axis] = None
 
     while True:
         axis_arr_in = yield axis_arr_out
@@ -96,24 +97,24 @@ def spectrum(
 
         # Initial setup
         if n_time is None or axis_idx is None or axis_arr_in.data.shape[axis_idx] != n_time:
+            # Retrieve info from axis we will modify
             axis_idx = axis_arr_in.get_axis_idx(axis_name)
             _axis = axis_arr_in.get_axis(axis_name)
             n_time = axis_arr_in.data.shape[axis_idx]
+            # Prepare common parameters
             freqs = np.fft.fftshift(np.fft.fftfreq(n_time, d=_axis.gain), axes=-1)
             window = WINDOWS[window](n_time)
-            window = window.reshape([1] * axis_idx + [len(window),] + [1] * (axis_arr_in.data.ndim-2))
+            window = window.reshape([1] * axis_idx + [len(window), ] + [1] * (axis_arr_in.data.ndim - 2))
             if (transform != SpectralTransform.RAW_COMPLEX and
                     not (transform == SpectralTransform.REAL or transform == SpectralTransform.IMAG)):
                 scale = np.sum(window ** 2.0) * _axis.gain
+            # Prepare output frequency axis
             axis_offset = freqs[0]
             if output == SpectralOutput.POSITIVE:
                 axis_offset = freqs[n_time // 2]
             freq_axis = AxisArray.Axis(
                 unit="Hz", gain=1.0 / (_axis.gain * n_time), offset=axis_offset
             )
-            if out_axis is None:
-                out_axis = axis_name
-            new_dims = axis_arr_in.dims[:axis_idx] + [out_axis, ] + axis_arr_in.dims[axis_idx + 1:]
 
             f_transform = lambda x: x
             if transform != SpectralTransform.RAW_COMPLEX:
@@ -128,9 +129,8 @@ def spectrum(
                     else:
                         f_transform = f1
 
-        new_axes = {**axis_arr_in.axes, **{out_axis: freq_axis}}
-        if out_axis != axis_name:
-            new_axes.pop(axis_name, None)
+            if out_axis is None:
+                out_axis = axis_name
 
         spec = np.fft.fft(axis_arr_in.data * window, axis=axis_idx) / n_time
         spec = np.fft.fftshift(spec, axes=axis_idx)
@@ -142,7 +142,14 @@ def spectrum(
         elif output == SpectralOutput.NEGATIVE:
             spec = slice_along_axis(spec, slice(None, n_time // 2), axis_idx)
 
-        axis_arr_out = replace(axis_arr_in, data=spec, dims=new_dims, axes=new_axes)
+        axis_arr_out = copy.copy(axis_arr_in)
+        axis_arr_out.data = spec
+        axis_arr_out.axes = {k: v for k, v in axis_arr_out.axes.items() if k != out_axis}
+        axis_arr_out.axes[out_axis] = freq_axis
+        if out_axis != axis_name:
+            # Drop axis_name from dims and axes
+            axis_arr_out.dims = axis_arr_in.dims[:axis_idx] + [out_axis, ] + axis_arr_in.dims[axis_idx + 1:]
+            axis_arr_out.axes.pop(axis_name, None)
 
 
 class SpectrumSettings(ez.Settings):
@@ -163,20 +170,17 @@ class SpectrumState(ez.State):
     cur_settings: SpectrumSettings
 
 
-class Spectrum(GenAxisArray):
+class Spectrum(ez.Unit):
     """Unit for :obj:`spectrum`"""
     SETTINGS: SpectrumSettings
     STATE: SpectrumState
 
+    INPUT_SIGNAL = ez.InputStream(AxisArray)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
     INPUT_SETTINGS = ez.InputStream(SpectrumSettings)
 
     def initialize(self) -> None:
         self.STATE.cur_settings = self.SETTINGS
-        super().initialize()
-
-    @ez.subscriber(INPUT_SETTINGS)
-    async def on_settings(self, msg: SpectrumSettings):
-        self.STATE.cur_settings = msg
         self.construct_generator()
 
     def construct_generator(self):
@@ -187,3 +191,15 @@ class Spectrum(GenAxisArray):
             transform=self.STATE.cur_settings.transform,
             output=self.STATE.cur_settings.output
         )
+
+    @ez.subscriber(INPUT_SETTINGS)
+    async def on_settings(self, msg: SpectrumSettings):
+        self.STATE.cur_settings = msg
+        self.construct_generator()
+
+    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    async def on_message(self, message: AxisArray) -> AsyncGenerator:
+        ret = self.STATE.gen.send(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret
