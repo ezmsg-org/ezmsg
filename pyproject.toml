@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ezmsg"
-version = "3.3.4"
+version = "3.4.0"
 description = "A simple DAG-based computation model"
 authors = [
   "Milsap, Griffin <griffin.milsap@gmail.com>",
