@@ -28,3 +28,4 @@ Contents
    utils
    other
    extensions
+   developer
