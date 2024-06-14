@@ -41,10 +41,17 @@ logger = logging.getLogger("ezmsg")
 
 
 class Complete(Exception):
+    """
+    A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully.
+    If all functions in all :obj:`Units` raise ``Complete``, the entire pipeline will terminate execution.
+    """
     pass
 
 
 class NormalTermination(Exception):
+    """
+    A type of ``Exception`` which signals to ``ezmsg`` that the pipeline can be shut down gracefully.
+    """
     pass
 
 
@@ -294,32 +301,28 @@ class DefaultBackendProcess(BackendProcess):
             )
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
+        
+        call_fn = lambda _: task(unit)
+        signature = inspect.signature(task)
+        if len(signature.parameters) == 1:
+            call_fn = lambda _: task(unit)
+        elif len(signature.parameters) == 2:
+            call_fn = lambda msg: task(unit, msg)
+        else:
+            logger.error(f'Incompatible call signature on task: {task.__name__}')
 
         @wraps(task)
         async def wrapped_task(msg: Any = None) -> None:
             try:
-                # If we don't sub or pub anything, we are a simple task
-                if not hasattr(task, SUBSCRIBES_ATTR) and not hasattr(
-                    task, PUBLISHES_ATTR
-                ):
-                    await task(unit)
-
-                # No subscriptions; only publications...
-                elif not hasattr(task, SUBSCRIBES_ATTR):
-                    async for stream, obj in task(unit):
+                result = call_fn(msg)
+                if inspect.isasyncgen(result):
+                    async for stream, obj in result:
+                        if obj and getattr(task, ZERO_COPY_ATTR, False) and obj is msg:
+                            obj = deepcopy(obj)
                         await pub_fn(stream, obj)
 
-                # Subscribers need to be called with a message
-                else:
-                    if not getattr(task, ZERO_COPY_ATTR):
-                        msg = deepcopy(msg)
-                    if hasattr(task, PUBLISHES_ATTR):
-                        async for stream, obj in task(unit, msg):
-                            if getattr(task, ZERO_COPY_ATTR) and obj is msg:
-                                obj = deepcopy(obj)
-                            await pub_fn(stream, obj)
-                    else:
-                        await task(unit, msg)
+                elif asyncio.iscoroutine(result):
+                    await result
 
             except Complete:
                 logger.info(f"{task_address} Complete")

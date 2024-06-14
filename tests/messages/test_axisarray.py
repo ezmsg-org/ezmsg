@@ -3,7 +3,7 @@ import numpy as np
 
 from dataclasses import dataclass, field
 
-from ezmsg.util.messages.axisarray import AxisArray, shape2d
+from ezmsg.util.messages.axisarray import AxisArray, shape2d, slice_along_axis, sliding_win_oneaxis
 
 from typing import Generator, List
 
@@ -125,3 +125,66 @@ def test_sel():
     aa_idx = aa.isel(dim0=-1) # index slice of last index
     assert aa_idx.data == data[-1]
     
+
+@pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
+@pytest.mark.parametrize("sl", [
+    3,
+    slice(None, None, 2),
+    slice(2, 4, None),
+    slice(-3, -1, None),
+    slice(3, 10, None)
+])
+def test_slice_along_axis(axis: int, sl):
+    dims = [4, 5, 6]
+    data = np.arange(np.prod(dims)).reshape(dims)
+
+    if axis >= len(dims) or axis < -len(dims):
+        with pytest.raises(ValueError):
+            res = slice_along_axis(data, sl=sl, axis=axis)
+        return
+
+    res = slice_along_axis(data, sl=sl, axis=axis)
+    if isinstance(sl, int):
+        assert res.ndim == len(dims) - 1
+    else:
+        assert res.ndim == len(dims)
+
+    if axis in [0, -len(dims)]:
+        expected = data[sl]
+    elif axis in [1, 1 - len(dims)]:
+        expected = data[:, sl]
+    elif axis in [2, 2 - len(dims)]:
+        expected = data[:, :, sl]
+    assert np.array_equal(res, expected)
+    assert np.shares_memory(res, expected)
+
+
+@pytest.mark.parametrize("nwin", [0, 3, 8])
+@pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
+def test_sliding_win_oneaxis(nwin: int, axis: int):
+    import numpy.lib.stride_tricks as nps
+
+    dims = [4, 5, 6]
+    data = np.arange(np.prod(dims)).reshape(dims)
+
+    if axis < -len(dims) or axis >= len(dims):
+        with pytest.raises(IndexError):
+            sliding_win_oneaxis(data, nwin, axis)
+        return
+
+    if nwin > dims[axis]:
+        with pytest.raises(ValueError):
+            sliding_win_oneaxis(data, nwin, axis)
+        return
+
+    res = sliding_win_oneaxis(data, nwin, axis)
+
+    if nwin == 0:
+        assert res.size == 0
+        return
+
+    expected = nps.sliding_window_view(data, nwin, axis)
+    dest_ax = axis if axis >= 0 else len(dims) + axis
+    expected = np.moveaxis(expected, -1, dest_ax + 1)
+    assert np.array_equal(res, expected)
+    assert np.shares_memory(res, expected)
