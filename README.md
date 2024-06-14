@@ -33,7 +33,7 @@ $ source env/bin/activate
 (env) $ python -m pytest tests # Optionally, Perform tests
 ```
 
-Note that it is generally recommended to install poetry into it's own standalone venv via the `pipx` cli tool.
+Note that it is generally recommended to install poetry into its own standalone venv via the `pipx` cli tool.
 
 ## Documentation
 
@@ -50,7 +50,7 @@ pip install "ezmsg[all_ext]"
 ```
 
 This will install all the available public extension packages for `ezmsg` that are listed in `pyproject.toml`.
-If you prefer to install the extension packages individually, you can use the following command:
+If you prefer to install a subset of extension packages, you can use the following command:
 
 ```bash
 pip install "ezmsg[zmq,sigproc,...]"
@@ -58,17 +58,14 @@ pip install "ezmsg[zmq,sigproc,...]"
 
 Please note that the `ezmsg` package itself can still be installed without any additional extensions using `pip install ezmsg`.
 
-See the extension directory for more details
+Extensions can be managed manually as well. Here are some of the extensions we manage or are aware of:
 
-- `ezmsg-sigproc` -- Timeseries signal processing modules
-- `ezmsg-websocket` -- Websocket server and client nodes for `ezmsg` graphs
-- `ezmsg-zmq` -- ZeroMQ pub and sub nodes for `ezmsg` graphs
-- ... More to come!
-
-Additionally, the following extensions are contained in external repositories:
-
+- [ezmsg-sigproc](https://github.com/ezmsg-org/ezmsg-sigproc) -- Timeseries signal processing modules
+- [ezmsg-websocket](https://github.com/ezmsg-org/ezmsg-websocket) -- Websocket server and client nodes for `ezmsg` graphs
+- [ezmsg-zmq](https://github.com/ezmsg-org/ezmsg-zmq) -- ZeroMQ pub and sub nodes for `ezmsg` graphs
 - [ezmsg-panel](https://github.com/griffinmilsap/ezmsg-panel) -- Plotting tools for `ezmsg` that use [panel](https://github.com/holoviz/panel)
 - [ezmsg-blackrock](https://github.com/griffinmilsap/ezmsg-blackrock) -- Interface for Blackrock Cerebus ecosystem (incl. Neuroport) using `pycbsdk`
+- [ezmsg-lsl](https://github.com/ezmsg-org/ezmsg-lsl) -- Source unit for LSL Inlet and sink unit for LSL Outlet
 - [ezmsg-unicorn](https://github.com/griffinmilsap/ezmsg-unicorn) -- g.tec Unicorn Hybrid Black integration for `ezmsg`
 - [ezmsg-gadget](https://github.com/griffinmilsap/ezmsg-gadget) -- USB-gadget with HID control integration for Raspberry Pi (Zero/W/2W, 4, CM4)
 - [ezmsg-openbci](https://github.com/griffinmilsap/ezmsg-openbci) -- OpenBCI Cyton serial interface for `ezmsg`

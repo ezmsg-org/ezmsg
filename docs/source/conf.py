@@ -1,13 +1,3 @@
-import os
-import sys
-import importlib
-import inspect
-
-sys.path.insert(0, os.path.abspath('../../src'))
-sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-sigproc/src'))
-# sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-websocket/src'))
-# sys.path.insert(0, os.path.abspath('../../extensions/ezmsg-zmq/src'))
-
 # Configuration file for the Sphinx documentation builder.
 
 # -- Project information
@@ -50,8 +40,9 @@ epub_show_urls = "footnote"
 
 add_module_names = False
 
-
-code_url = f"https://github.com/iscoe/ezmsg/blob/dev/"
+branch = "dev"
+code_url = f"https://github.com/iscoe/ezmsg/blob/{branch}/"
+sigproc_code_url = f"https://github.com/ezmsg-org/ezmsg-sigproc/blob/{branch}/"
 
 
 def linkcode_resolve(domain, info):
@@ -61,7 +52,7 @@ def linkcode_resolve(domain, info):
         return None
     filename = info['module'].replace('.', '/')
     if "sigproc" in filename:
-        return f"{code_url}extensions/ezmsg-sigproc/src/{filename}.py"
+        return f"{sigproc_code_url}src/{filename}.py"
     elif "core" in filename:
         return f"{code_url}src/ezmsg/core/__init__.py"
     else:

@@ -37,7 +37,7 @@ jobs:
 
       - name: Install dependencies with Poetry
         run: |
-          poetry install -E zmq -E websocket -E sigproc --with test
+          poetry install --with test
 
       - name: Lint with flake8
         run: |
@@ -49,7 +49,3 @@ jobs:
       - name: Test ezmsg
         run: |
           poetry run python -m pytest -v tests
-
-      - name: Test ezmsg-sigproc
-        run: |
-          poetry run python -m pytest -v extensions/ezmsg-sigproc/tests
