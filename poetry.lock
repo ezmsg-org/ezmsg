@@ -309,7 +309,7 @@ test = ["pytest (>=6)"]
 name = "ezmsg-sigproc"
 version = "1.2.2"
 description = "Timeseries signal processing implementations in ezmsg"
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "ezmsg-sigproc-1.2.2.tar.gz", hash = "sha256:0ce5f8bdcfbc32be8085f2edec7e464afc754aaa7b0b2dae25ac28e18a623bd1"},
@@ -1088,7 +1088,7 @@ use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 name = "scipy"
 version = "1.9.3"
 description = "Fundamental algorithms for scientific computing in Python"
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "scipy-1.9.3-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:1884b66a54887e21addf9c16fb588720a8309a57b2e258ae1c7986d4444d3bc0"},
@@ -1491,4 +1491,4 @@ zmq = ["ezmsg-zmq"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.8"
-content-hash = "51f008444828360cbfd09aebdc9500510eeb56c2bee2140e9cdd42ce5ea985d3"
+content-hash = "ba3e62a6e7a812d508784cb7cd9cb627d05db306fda4a5ee44be0a1f56848e7d"
