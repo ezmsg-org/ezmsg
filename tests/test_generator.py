@@ -250,4 +250,4 @@ def test_gen_to_unit_axarr():
     assert len(results) == num_msgs
 
 
-# TODO: test compose, GenState, Gen, GenAxisArray
+# TODO: test compose, GenState, Gen
