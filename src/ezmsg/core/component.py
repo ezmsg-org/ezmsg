@@ -46,7 +46,7 @@ class ComponentMeta(ABCMeta):
                     + f"but is trying to be set to {getattr(base, '__state_type__')}"
                 )
             if (
-                hasattr(base, "__state_type")
+                hasattr(base, "__state_type__")
                 and getattr(base, "__state_type__") is not State
             ):
                 cls.__state_type__ = getattr(base, "__state_type__")
