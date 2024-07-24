@@ -66,7 +66,7 @@ class Gen(ez.Unit):
     INPUT = ez.InputStream(Any)
     OUTPUT = ez.OutputStream(Any)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.construct_generator()
 
     # Method to be implemented by subclasses to construct the specific generator

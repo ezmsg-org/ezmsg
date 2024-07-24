@@ -83,7 +83,7 @@ class TerminateOnTotal(ez.Unit):
     If this number has already been reached, termination will occur immediately.
     """
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.STATE.total = self.SETTINGS.total
 
     @ez.subscriber(INPUT_TOTAL)

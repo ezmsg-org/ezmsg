@@ -28,7 +28,7 @@ class LFO(ez.Unit):
 
     OUTPUT = ez.OutputStream(float)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.start_time = time.time()
 
     @ez.publisher(OUTPUT)
@@ -93,7 +93,7 @@ class MessageModifier(ez.Unit):
     JOINED = ez.OutputStream(str)
     REPUB = ez.OutputStream(CombinedMessage)
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.number = 0.0
 
     @ez.subscriber(NUMBER)

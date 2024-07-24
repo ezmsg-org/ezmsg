@@ -52,7 +52,7 @@ class MessageGate(ez.Unit):
     OUTPUT = ez.OutputStream(typing.Any)
     """Publishes messages which flow through."""
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.STATE.gate_open = self.SETTINGS.start_open
 
     def set_gate(self, set_open: bool) -> None:

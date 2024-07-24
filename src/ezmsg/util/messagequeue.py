@@ -37,7 +37,7 @@ class MessageQueue(ez.Unit):
     OUTPUT = ez.OutputStream(Any)
     """Subscribe to pull messages out of the queue."""
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.leaky = self.SETTINGS.leaky
         if self.SETTINGS.leaky is True and self.SETTINGS.maxsize <= 0:
             ez.logger.warning(

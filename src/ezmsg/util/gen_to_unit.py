@@ -68,12 +68,12 @@ def gen_to_unit(
     # Create State
     state = args_to_state(func.__name__, _type_hints, publish_type, subscribe_type)
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.gen = func(**asdict(self.SETTINGS))
         for field in fields(self.SETTINGS):
             setattr(self.STATE, field.name, getattr(self.SETTINGS, field.name))
 
-    def shutdown(self):
+    async def shutdown(self):
         self.STATE.gen.close()
 
     def check_fields(self, msg):

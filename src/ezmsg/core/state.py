@@ -46,7 +46,7 @@ class State(ABC, metaclass=StateMeta):
 
           STATE = YourState
 
-          def initialize(self):
+          async def initialize(self):
              this.STATE.state1 = 0
              this.STATE.state2 = 0.0
 
