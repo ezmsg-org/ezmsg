@@ -126,7 +126,11 @@ def test_sel():
         data, dims=["dim0"], axes=dict(dim0=AxisArray.Axis(gain=gain, offset=offset))
     )
 
-    aa.sel(dim0=slice(None, -10.75, 1.5))  # slice based on axis info
+    aa_sl = aa.sel(dim0=slice(-10.75, 1.5))  # slice based on axis info
+    assert np.allclose(
+        aa_sl.data,
+        data[np.argmin(np.abs(data - -10.75)) : np.argmin(np.abs(data - 1.5))],
+    )
     aa_idx = aa.isel(dim0=-1)  # index slice of last index
     assert aa_idx.data == data[-1]
 
