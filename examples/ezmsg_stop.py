@@ -23,7 +23,7 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(SimpleMessage)
 
@@ -47,8 +47,8 @@ class MessageReceiverState(ez.State):
 
 
 class MessageReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
 
     INPUT = ez.InputStream(SimpleMessage)
 
@@ -71,7 +71,7 @@ class ToySystemSettings(ez.Settings):
 
 
 class ToySystem(ez.Collection):
-    SETTINGS: ToySystemSettings
+    SETTINGS = ToySystemSettings
 
     # Publishers
     SIMPLE_PUB = MessageGenerator()

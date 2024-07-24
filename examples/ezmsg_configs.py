@@ -14,7 +14,7 @@ class TerminatorSettings(ez.Settings):
 
 
 class Terminator(ez.Unit):
-    SETTINGS: TerminatorSettings
+    SETTINGS = TerminatorSettings
 
     @ez.task
     async def terminate(self) -> None:
@@ -31,7 +31,7 @@ class GeneratorSettings(ez.Settings):
 
 
 class Generator(ez.Unit):
-    SETTINGS: GeneratorSettings
+    SETTINGS = GeneratorSettings
 
     OUTPUT = ez.OutputStream(int)
 
@@ -51,7 +51,7 @@ class ModulusSettings(ez.Settings):
 
 
 class Modulus(ez.Unit):
-    SETTINGS: ModulusSettings
+    SETTINGS = ModulusSettings
 
     INPUT = ez.InputStream(int)
     OUTPUT = ez.OutputStream(int)
@@ -70,7 +70,7 @@ class ListenerState(ez.State):
 
 
 class Listener(ez.Unit):
-    STATE: ListenerState
+    STATE = ListenerState
 
     INPUT = ez.InputStream(int)
 

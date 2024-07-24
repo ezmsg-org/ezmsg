@@ -9,6 +9,10 @@ from .stream import Stream
 
 from typing import List, Optional, Dict, Tuple, Any, Callable
 
+import logging
+
+logger = logging.getLogger("ezmsg")
+
 
 class ComponentMeta(ABCMeta):
     def __init__(
@@ -16,68 +20,86 @@ class ComponentMeta(ABCMeta):
     ) -> None:
         super(ComponentMeta, cls).__init__(name, bases, fields)
 
-        cls.__settings_type__ = Settings
-        cls.__state_type__ = State
-
-        for base in bases:
-            if (
-                cls.__settings_type__ is not Settings
-                and hasattr(base, "__settings_type__")
-                and getattr(base, "__settings_type__") is not Settings
-            ):
-                # This means class settings has already been set by a base class.
-                raise Exception(
-                    f"Class {name} already has settings of type {cls.__settings_type__}, "
-                    + f"but is trying to be set to {getattr(base, '__settings_type__')}"
-                )
-            if (
-                hasattr(base, "__settings_type__")
-                and getattr(base, "__settings_type__") is not Settings
-            ):
-                cls.__settings_type__ = getattr(base, "__settings_type__")
-            if (
-                cls.__state_type__ is not State
-                and hasattr(base, "__state_type__")
-                and getattr(base, "__state_type__") is not State
-            ):
-                # This means class state has already been set by a base class.
-                raise Exception(
-                    f"Class {name} already has state of type {cls.__state_type__}, "
-                    + f"but is trying to be set to {getattr(base, '__state_type__')}"
-                )
-            if (
-                hasattr(base, "__state_type__")
-                and getattr(base, "__state_type__") is not State
-            ):
-                cls.__state_type__ = getattr(base, "__state_type__")
-
-        if "SETTINGS" in cls.__annotations__:
-            cls.__settings_type__ = cls.__annotations__["SETTINGS"]
-
-        if "STATE" in cls.__annotations__:
-            cls.__state_type__ = cls.__annotations__["STATE"]
-
         cls.__streams__ = {}
 
+        if "SETTINGS" in cls.__annotations__:
+            settings_cls = cls.__annotations__["SETTINGS"].__name__
+            logger.warning(
+                f"{cls.__name__} SETTINGS should be assigned rather than annotated: `SETTINGS = {settings_cls}` -> `SETTINGS = {settings_cls}`"
+            )
+            fields["SETTINGS"] = cls.__annotations__["SETTINGS"]
+        if "STATE" in cls.__annotations__:
+            state_cls = cls.__annotations__["STATE"].__name__
+            logger.warning(
+                f"{cls.__name__} STATE should be assigned rather than annotated: `STATE = {state_cls}` -> `STATE = {state_cls}`"
+            )
+            fields["STATE"] = cls.__annotations__["STATE"]
+
+        base_settings_types = []
+        base_state_types = []
         for base in bases:
             if hasattr(base, "__streams__"):
                 streams = getattr(base, "__streams__")
                 for stream_name, stream in streams.items():
                     cls.__streams__[stream_name] = stream
+            if hasattr(base, "__settings_type__"):
+                base_settings_types.append(base.__settings_type__)
+            if hasattr(base, "__state_type__"):
+                base_state_types.append(base.__state_type__)
 
         for field_name, field_value in fields.items():
             if isinstance(field_value, Stream):
                 field_value._set_name(field_name)
                 cls.__streams__[field_name] = field_value
+                continue
+
+            if field_name == "SETTINGS":
+                if not issubclass(field_value, Settings):
+                    logger.error(
+                        f"{cls.__name__} Settings must be a subclass of `ez.Settings`!"
+                    )
+
+                for settings_type in base_settings_types:
+                    if not issubclass(field_value, settings_type):
+                        logger.error(
+                            f"{cls.__name__} Settings of type {field_value.__name__} must be a subclass of {settings_type.__name__}"
+                        )
+                cls.__settings_type__ = field_value
+
+            if field_name == "STATE":
+                if not issubclass(field_value, State):
+                    logger.error(
+                        f"{cls.__name__} State must be a subclass of `ez.State`!"
+                    )
+
+                for state_type in base_state_types:
+                    if not issubclass(field_value, state_type):
+                        logger.error(
+                            f"{cls.__name__} State of type {field_value.__name__} must be a subclass of {state_type.__name__}"
+                        )
+                cls.__state_type__ = field_value
+
+        if not hasattr(cls, "__state_type__"):
+            if len(base_state_types) == 1:
+                cls.__state_type__ = base_state_types[0]
+            elif len(base_state_types) > 1:
+                logger.error("More than one state base class inherited!")
+            else:
+                cls.__state_type__ = State
+
+        if not hasattr(cls, "__settings_type__"):
+            if len(base_settings_types) == 1:
+                cls.__settings_type__ = base_settings_types[0]
+            elif len(base_settings_types) > 1:
+                logger.error("More than one settings base class inherited!")
+            else:
+                cls.__settings_type__ = Settings
 
 
 class Component(Addressable, metaclass=ComponentMeta):
     """
     Metaclass which :obj:`Unit` and :obj:`Collection` inherit from.
     """
-
-    SETTINGS: Settings
-    STATE: State
 
     _tasks: Dict[str, Callable]  # Only Units will have tasks
     _streams: Dict[str, Stream]  # All Components can have streams
@@ -88,8 +110,8 @@ class Component(Addressable, metaclass=ComponentMeta):
     def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
         super(Component, self).__init__()
 
-        self.SETTINGS = None  # type: ignore
-        self.STATE = None  # type: ignore
+        self.SETTINGS = None
+        self.STATE = None
         self._settings_applied = False
         self._components = {}
         self._tasks = {}
@@ -102,7 +124,7 @@ class Component(Addressable, metaclass=ComponentMeta):
 
         if settings is None:
             # settings not supplied as a kwarg. Try to build it.
-            if len(args) > 0 and type(args[0]) == self.__class__.__settings_type__:
+            if len(args) > 0 and isinstance(args[0], self.__class__.__settings_type__):
                 settings = args[0]
             elif len(args) > 0 or len(kwargs) > 0:
                 settings = self.__class__.__settings_type__(*args, **kwargs)

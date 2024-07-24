@@ -20,7 +20,7 @@ class CountSettings(ez.Settings):
 
 
 class Count(ez.Unit):
-    SETTINGS: CountSettings
+    SETTINGS = CountSettings
 
     OUTPUT = ez.OutputStream(int)
 

@@ -24,8 +24,8 @@ class ToySettings(ez.Settings):
 
 
 class ToyUnit(ez.Unit):
-    STATE: ToyState
-    SETTINGS: ToySettings
+    STATE = ToyState
+    SETTINGS = ToySettings
 
     def initialize(self) -> None:
         if self.SETTINGS.override_integer is not None:

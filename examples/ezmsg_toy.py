@@ -24,7 +24,7 @@ class LFOSettings(ez.Settings):
 
 
 class LFO(ez.Unit):
-    SETTINGS: LFOSettings
+    SETTINGS = LFOSettings
 
     OUTPUT = ez.OutputStream(float)
 
@@ -45,7 +45,7 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(str)
 
@@ -68,7 +68,7 @@ class DebugOutputSettings(ez.Settings):
 
 
 class DebugOutput(ez.Unit):
-    SETTINGS: DebugOutputSettings
+    SETTINGS = DebugOutputSettings
 
     INPUT = ez.InputStream(str)
 
@@ -85,7 +85,7 @@ class MessageModifierState(ez.State):
 class MessageModifier(ez.Unit):
     """Store number input, and append it to message"""
 
-    STATE: MessageModifierState
+    STATE = MessageModifierState
 
     MESSAGE = ez.InputStream(str)
     NUMBER = ez.InputStream(float)
@@ -149,7 +149,7 @@ class TestSystemSettings(ez.Settings):
 
 
 class TestSystem(ez.Collection):
-    SETTINGS: TestSystemSettings
+    SETTINGS = TestSystemSettings
 
     # Publishers
     PING = MessageGenerator()

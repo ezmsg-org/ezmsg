@@ -38,8 +38,8 @@ class MessageLogger(ez.Unit):
     :py:class:`pathlib.Path` to ``INPUT_START``.
     """
 
-    SETTINGS: MessageLoggerSettings
-    STATE: MessageLoggerState
+    SETTINGS = MessageLoggerSettings
+    STATE = MessageLoggerState
 
     INPUT_START = ez.InputStream(Path)
     """

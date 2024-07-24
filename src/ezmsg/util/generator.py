@@ -61,7 +61,7 @@ class GenState(ez.State):
 
 # Abstract Unit class that uses a generator for processing messages
 class Gen(ez.Unit):
-    STATE: GenState
+    STATE = GenState
 
     INPUT = ez.InputStream(Any)
     OUTPUT = ez.OutputStream(Any)

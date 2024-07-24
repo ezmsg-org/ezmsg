@@ -139,8 +139,8 @@ def test_gen_funcs():
 
 
 class MessageAnyReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
 
     INPUT = ez.InputStream(typing.List[typing.Any])
 
@@ -191,7 +191,7 @@ def test_gen_to_unit_any():
 
 
 class AxarrGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.publisher(OUTPUT_SIGNAL)
@@ -202,8 +202,8 @@ class AxarrGenerator(ez.Unit):
 
 
 class AxarrReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
     INPUT_SIGNAL = ez.InputStream(AxisArray)
 
     @ez.subscriber(INPUT_SIGNAL)

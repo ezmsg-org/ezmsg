@@ -29,8 +29,8 @@ class TerminateOnTimeout(ez.Unit):
     End a pipeline execution when a certain amount of time has passed without receiving a message.
     """
 
-    SETTINGS: TerminateOnTimeoutSettings
-    STATE: TerminateOnTimeoutState
+    SETTINGS = TerminateOnTimeoutSettings
+    STATE = TerminateOnTimeoutState
 
     INPUT = ez.InputStream(Any)
     """Send messages here."""
@@ -71,8 +71,8 @@ class TerminateOnTotal(ez.Unit):
     End a pipeline execution once a certain number of messages have been received.
     """
 
-    SETTINGS: TerminateOnTotalSettings
-    STATE: TerminateOnTotalState
+    SETTINGS = TerminateOnTotalSettings
+    STATE = TerminateOnTotalState
 
     INPUT_MESSAGE = ez.InputStream(Any)
     """Send messages here."""
