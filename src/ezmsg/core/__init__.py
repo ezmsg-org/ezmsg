@@ -10,6 +10,7 @@ __all__ = [
     "main",
     "timeit",
     "process",
+    "thread",
     "Component",
     "Settings",
     "Collection",
@@ -35,12 +36,11 @@ from .component import Component
 from .state import State
 from .settings import Settings
 from .collection import Collection, NetworkDefinition
-from .unit import Unit, task, publisher, subscriber, main, timeit, process
+from .unit import Unit, task, publisher, subscriber, main, timeit, process, thread
 from .stream import InputStream, OutputStream
 from .backend import run
 from .backendprocess import Complete, NormalTermination
-from .graphserver import GraphServer, GraphService
-from .shmserver import SHMService
+from .graphserver import GraphServer
 from .graphcontext import GraphContext
 from .command import run_command
 

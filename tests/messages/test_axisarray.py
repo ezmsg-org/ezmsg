@@ -3,7 +3,12 @@ import numpy as np
 
 from dataclasses import dataclass, field
 
-from ezmsg.util.messages.axisarray import AxisArray, shape2d, slice_along_axis, sliding_win_oneaxis
+from ezmsg.util.messages.axisarray import (
+    AxisArray,
+    shape2d,
+    slice_along_axis,
+    sliding_win_oneaxis,
+)
 
 from typing import Generator, List
 
@@ -121,19 +126,22 @@ def test_sel():
         data, dims=["dim0"], axes=dict(dim0=AxisArray.Axis(gain=gain, offset=offset))
     )
 
-    aa_sl = aa.sel(dim0=slice(None, -10.75, 1.5))  # slice based on axis info
-    aa_idx = aa.isel(dim0=-1) # index slice of last index
+    aa.sel(dim0=slice(None, -10.75, 1.5))  # slice based on axis info
+    aa_idx = aa.isel(dim0=-1)  # index slice of last index
     assert aa_idx.data == data[-1]
-    
+
 
 @pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
-@pytest.mark.parametrize("sl", [
-    3,
-    slice(None, None, 2),
-    slice(2, 4, None),
-    slice(-3, -1, None),
-    slice(3, 10, None)
-])
+@pytest.mark.parametrize(
+    "sl",
+    [
+        3,
+        slice(None, None, 2),
+        slice(2, 4, None),
+        slice(-3, -1, None),
+        slice(3, 10, None),
+    ],
+)
 def test_slice_along_axis(axis: int, sl):
     dims = [4, 5, 6]
     data = np.arange(np.prod(dims)).reshape(dims)

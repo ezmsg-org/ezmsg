@@ -104,12 +104,12 @@ class ToySystem(ez.Collection):
 def main():
     test_filename = "./test.txt"
     num_messages = 5
-    with open(test_filename, "w") as f:
+    with open(test_filename, "w") as _:
         ...
     system = ToySystem(
         ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
-    ez.run(SYSTEM = system)
+    ez.run(SYSTEM=system)
 
     results = []
     with open(test_filename, "r") as file:

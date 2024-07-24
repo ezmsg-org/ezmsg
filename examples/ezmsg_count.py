@@ -1,4 +1,5 @@
 import asyncio
+import time
 import array
 from dataclasses import dataclass
 import ezmsg.core as ez
@@ -29,13 +30,22 @@ class Count(ez.Unit):
         count = 0
         while True:
             await asyncio.sleep(0.1)
-            yield self.OUTPUT, CountMessage(
-                value=count, arr=array.array("b", [0x00] * (2**count))
+            yield (
+                self.OUTPUT,
+                CountMessage(value=count, arr=array.array("b", [0x00] * (2**count))),
             )
             count = count + 1
 
             if count >= self.SETTINGS.num_msgs:
                 raise ez.Complete
+
+    @ez.thread
+    def hello_world(self):
+        i = 0
+        while True:
+            print(f"Hello world {i}")
+            i += 1
+            time.sleep(1)
 
 
 class CountSystem(ez.Collection):
@@ -61,4 +71,4 @@ if __name__ == "__main__":
     # multiprocessing.set_start_method('spawn', force=True)
 
     system = CountSystem()
-    ez.run(SYSTEM = system)
+    ez.run(SYSTEM=system)
