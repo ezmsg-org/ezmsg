@@ -25,13 +25,13 @@ class ComponentMeta(ABCMeta):
         if "SETTINGS" in cls.__annotations__:
             settings_cls = cls.__annotations__["SETTINGS"].__name__
             logger.warning(
-                f"{cls.__name__} SETTINGS should be assigned rather than annotated: `SETTINGS = {settings_cls}` -> `SETTINGS = {settings_cls}`"
+                f"{name} SETTINGS should be assigned rather than annotated: `SETTINGS = {settings_cls}` -> `SETTINGS = {settings_cls}`"
             )
             fields["SETTINGS"] = cls.__annotations__["SETTINGS"]
         if "STATE" in cls.__annotations__:
             state_cls = cls.__annotations__["STATE"].__name__
             logger.warning(
-                f"{cls.__name__} STATE should be assigned rather than annotated: `STATE = {state_cls}` -> `STATE = {state_cls}`"
+                f"{name} STATE should be assigned rather than annotated: `STATE = {state_cls}` -> `STATE = {state_cls}`"
             )
             fields["STATE"] = cls.__annotations__["STATE"]
 
@@ -56,26 +56,24 @@ class ComponentMeta(ABCMeta):
             if field_name == "SETTINGS":
                 if not issubclass(field_value, Settings):
                     logger.error(
-                        f"{cls.__name__} Settings must be a subclass of `ez.Settings`!"
+                        f"{name} Settings must be a subclass of `ez.Settings`!"
                     )
 
                 for settings_type in base_settings_types:
                     if not issubclass(field_value, settings_type):
                         logger.error(
-                            f"{cls.__name__} Settings of type {field_value.__name__} must be a subclass of {settings_type.__name__}"
+                            f"{name} Settings of type {field_value.__name__} must be a subclass of {settings_type.__name__}"
                         )
                 cls.__settings_type__ = field_value
 
             if field_name == "STATE":
                 if not issubclass(field_value, State):
-                    logger.error(
-                        f"{cls.__name__} State must be a subclass of `ez.State`!"
-                    )
+                    logger.error(f"{name} State must be a subclass of `ez.State`!")
 
                 for state_type in base_state_types:
                     if not issubclass(field_value, state_type):
                         logger.error(
-                            f"{cls.__name__} State of type {field_value.__name__} must be a subclass of {state_type.__name__}"
+                            f"{name} State of type {field_value.__name__} must be a subclass of {state_type.__name__}"
                         )
                 cls.__state_type__ = field_value
 
