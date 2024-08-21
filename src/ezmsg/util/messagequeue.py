@@ -12,6 +12,7 @@ class MessageQueueSettings(ez.Settings):
         maxsize: The maximum number of items which the queue will hold.
         leaky: Whether the queue will drop new messages when it reaches its maxsize, or whether it will wait for space to open for them.
     """
+
     maxsize: int = 0
     leaky: bool = False
     log_above_n: Optional[int] = None
@@ -80,4 +81,3 @@ class MessageQueue(ez.Unit):
             yield self.OUTPUT, msg
             if rate is not None:
                 await rate.sleep()
-

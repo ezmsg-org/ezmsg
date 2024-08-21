@@ -7,6 +7,7 @@ import ezmsg.core as ez
 @dataclass
 class GateMessage:
     """Send this message to ``INPUT_GATE`` to open or close the gate."""
+
     open: bool
 
 
@@ -21,6 +22,7 @@ class MessageGateSettings(ez.Settings):
             ``True`` will allow messages to flow through, ``False`` will discard messages.
         default_after: sets the number of messages after which the `default_open` state will be applied.
     """
+
     start_open: bool = False
     default_open: bool = False
     default_after: typing.Optional[int] = None

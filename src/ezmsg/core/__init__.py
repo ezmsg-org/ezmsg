@@ -65,4 +65,4 @@ logger.addHandler(handler)
 
 LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "INFO").upper()
 logger.setLevel(LOGLEVEL)
-logger.debug(f'Log level set to {LOGLEVEL}')
+logger.debug(f"Log level set to {LOGLEVEL}")

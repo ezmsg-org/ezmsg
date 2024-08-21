@@ -22,6 +22,7 @@ class ReplayStatusMessage:
         total: Number of messages in the file.
         done: Whether the file has finished replaying.
     """
+
     filename: Path
     idx: int
     total: int
@@ -39,6 +40,7 @@ class FileReplayMessage:
             0 = realtime (if timestamps in file)
             If not specified, messages will publish as fast as possible.
     """
+
     filename: typing.Optional[Path] = None
     rate: typing.Optional[float] = None  # Hz
 
@@ -50,6 +52,7 @@ class MessageReplaySettings(ez.Settings, FileReplayMessage):
     Args:
         progress: will use tqdm to indicate progress through the file. tqdm must be installed.
     """
+
     progress: bool = False
 
 

@@ -18,8 +18,10 @@ except ImportError:
 
 T = typing.TypeVar("T")
 
+
 def is_dict_like(value: typing.Any) -> TypeGuard[typing.Mapping]:
     return hasattr(value, "keys") and hasattr(value, "__getitem__")
+
 
 def either_dict_or_kwargs(
     pos_kwargs: typing.Optional[typing.Mapping[str, T]],

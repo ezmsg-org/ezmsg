@@ -18,6 +18,7 @@ class CombinedMessage:
 
 # LFO: Low Frequency Oscillator
 
+
 class LFOSettings(ez.Settings):
     freq: float = 0.2  # Hz, sinus frequency
     update_rate: float = 2.0  # Hz, update rate
@@ -190,7 +191,7 @@ if __name__ == "__main__":
     system = TestSystem(TestSystemSettings(name="A"))
 
     ez.run(
-        SYSTEM = system,
+        SYSTEM=system,
         # connections = [
         #     ( system.PING.OUTPUT, 'PING_OUTPUT' ),
         #     ( 'FOO_SUB', system.FOOSUB.INPUT )

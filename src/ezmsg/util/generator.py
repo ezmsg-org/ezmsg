@@ -11,7 +11,7 @@ S = TypeVar("S")
 
 
 def consumer(
-    func: Callable[P, Generator[Y, S, None]]
+    func: Callable[P, Generator[Y, S, None]],
 ) -> Callable[P, Generator[Y, S, None]]:
     """
     A decorator that primes a generator by advancing it to the first yield statement.

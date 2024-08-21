@@ -86,11 +86,9 @@ class ThreadedAsyncServer(Thread):
             with suppress(asyncio.CancelledError):
                 await monitor_task
 
-    async def setup(self) -> None:
-        ...
+    async def setup(self) -> None: ...
 
-    async def shutdown(self) -> None:
-        ...
+    async def shutdown(self) -> None: ...
 
     async def api(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

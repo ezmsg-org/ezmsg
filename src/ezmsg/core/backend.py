@@ -203,7 +203,6 @@ def run(
         raise ValueError("Must supply at least one component to run")
 
     with new_threaded_event_loop() as loop:
-
         execution_context = ExecutionContext.setup(
             components,
             graph_service,
@@ -286,7 +285,6 @@ def collect_processes(
     collection: typing.Union[Collection, typing.Iterable[Component]],
     process_components: typing.Optional[typing.Collection[Component]] = None,
 ) -> typing.List[typing.List[Unit]]:
-
     if isinstance(collection, Collection):
         process_units, units = _collect_processes(
             collection._components.values(), collection.process_components()
@@ -311,7 +309,6 @@ def _collect_processes(
     units: typing.List[Unit] = []
 
     for comp in comps:
-
         if isinstance(comp, Collection):
             r_process_units, r_units = _collect_processes(
                 comp.components.values(), comp.process_components()

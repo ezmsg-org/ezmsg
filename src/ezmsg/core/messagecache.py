@@ -11,8 +11,7 @@ from typing import Dict, Any, Optional, List, Generator
 logger = logging.getLogger("ezmsg")
 
 
-class CacheMiss(Exception):
-    ...
+class CacheMiss(Exception): ...
 
 
 class Cache:
