@@ -13,6 +13,16 @@ from ezmsg.util.generator import consumer, GenState
 def modify_axis(
     name_map: typing.Optional[typing.Dict[str, str]] = None,
 ) -> typing.Generator[AxisArray, AxisArray, None]:
+    """
+    Modify an AxisArray's axes and dims according to a name_map.
+
+    Args:
+        name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
+          Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
+
+    Returns:
+        A primed generator object ready to yield an AxisArray with modified axes for each .send(axis_array)
+    """
     # State variables
     axis_arr_in = AxisArray(np.array([]), dims=[""])
     axis_arr_out = AxisArray(np.array([]), dims=[""])
@@ -25,7 +35,21 @@ def modify_axis(
             new_axes = {
                 name_map.get(old_k, old_k): v for old_k, v in axis_arr_in.axes.items()
             }
-            axis_arr_out = replace(axis_arr_in, dims=new_dims, axes=new_axes)
+            drop_ax_ix = [ix for ix, old_dim in enumerate(axis_arr_in.dims) if new_dims[ix] is None]
+            if len(drop_ax_ix) > 0:
+                # Rewrite new_dims and new_axes without the dropped axes
+                new_dims = [_ for _ in new_dims if _ is not None]
+                new_axes.pop(None, None)
+                # Reshape data
+                # np.squeeze will raise ValueError if not len==1
+                axis_arr_out = replace(
+                    axis_arr_in,
+                    data=np.squeeze(axis_arr_in.data, axis=tuple(drop_ax_ix)),
+                    dims=new_dims,
+                    axes=new_axes
+                )
+            else:
+                axis_arr_out = replace(axis_arr_in, dims=new_dims, axes=new_axes)
         else:
             axis_arr_out = axis_arr_in
 
