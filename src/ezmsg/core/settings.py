@@ -43,7 +43,7 @@ class Settings(ABC, metaclass=SettingsMeta):
 
        class YourUnit(Unit):
 
-          SETTINGS: YourSettings
+          SETTINGS = YourSettings
 
     A ``Unit`` can accept a ``Settings`` object as a parameter on instantiation.
 

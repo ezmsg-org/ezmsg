@@ -28,8 +28,8 @@ class MessageQueue(ez.Unit):
     Place between two other ``Units`` to induce backpressure.
     """
 
-    SETTINGS: MessageQueueSettings
-    STATE: MessageQueueState
+    SETTINGS = MessageQueueSettings
+    STATE = MessageQueueState
 
     INPUT = ez.InputStream(Any)
     """Send messages to queue here."""

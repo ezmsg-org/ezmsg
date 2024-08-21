@@ -19,7 +19,7 @@ class ToySystemSettings(ez.Settings):
 
 
 class ToySystem(ez.Collection):
-    SETTINGS: ToySystemSettings
+    SETTINGS = ToySystemSettings
 
     # Publishers
     SIMPLE_PUB = MessageGenerator()

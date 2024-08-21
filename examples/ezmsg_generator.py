@@ -46,7 +46,7 @@ class PowSettings(ez.Settings):
 
 
 class Pow(Gen):
-    SETTINGS: PowSettings
+    SETTINGS = PowSettings
 
     def construct_generator(self):
         self.STATE.gen = pow(self.SETTINGS.n)
@@ -66,7 +66,7 @@ class AddSettings(ez.Settings):
 
 
 class Add(Gen):
-    SETTINGS: AddSettings
+    SETTINGS = AddSettings
 
     def construct_generator(self):
         self.STATE.gen = add(self.SETTINGS.n)

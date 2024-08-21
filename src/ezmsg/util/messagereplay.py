@@ -65,8 +65,8 @@ class MessageReplay(ez.Unit):
     Stores a queue of files to stream and streams from them in order.
     """
 
-    SETTINGS: MessageReplaySettings
-    STATE: MessageReplayState
+    SETTINGS = MessageReplaySettings
+    STATE = MessageReplayState
 
     INPUT_FILE = ez.InputStream(FileReplayMessage)
     """Add a new file to the queue."""
@@ -213,7 +213,7 @@ class MessageCollector(ez.Unit):
     Collects ``Messages`` into a local list.
     """
 
-    STATE: MessageCollectorState
+    STATE = MessageCollectorState
 
     INPUT_MESSAGE = ez.InputStream(typing.Any)
     """Send messages here to be collected."""

@@ -44,7 +44,7 @@ class State(ABC, metaclass=StateMeta):
 
        class YourUnit(Unit):
 
-          STATE: YourState
+          STATE = YourState
 
           def initialize(self):
              this.STATE.state1 = 0

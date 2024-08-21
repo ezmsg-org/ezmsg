@@ -61,7 +61,7 @@ class Count(ez.Unit):
     # We do this because this unit may receive settings objects
     # from parent collections.  Also, SETTINGS is a special/reserved
     # class attribute for Components (ez.Unit, and ez.Collection)
-    SETTINGS: CountSettings
+    SETTINGS = CountSettings
 
     OUTPUT_COUNT = ez.OutputStream(CountMessage)
 
@@ -115,7 +115,7 @@ class PrintState(ez.State):
 
 
 class PrintValue(ez.Unit):
-    SETTINGS: PrintSettings
+    SETTINGS = PrintSettings
 
     # As with settings, only provide a state type, do not instantiate.
     # We do this because this unit may end up living in a different
@@ -123,7 +123,7 @@ class PrintValue(ez.Unit):
     # pickled/sent to subprocesses (e.g. open file-handles, asyncio
     # and threading primitives, etc.) STATE is a special/reserved
     # class attribute for Units
-    STATE: PrintState
+    STATE = PrintState
 
     INPUT = ez.InputStream(CountMessage)
 
@@ -148,7 +148,7 @@ class CountSystemSettings(ez.Settings):
 
 
 class CountSystem(ez.Collection):
-    SETTINGS: CountSystemSettings
+    SETTINGS = CountSystemSettings
 
     # Define member units
     COUNT = Count()

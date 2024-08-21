@@ -17,8 +17,8 @@ class TransmitReceiveState(ez.State):
 
 
 class TransmitReceive(ez.Unit):
-    SETTINGS: TransmitReceiveSettings
-    STATE: TransmitReceiveState
+    SETTINGS = TransmitReceiveSettings
+    STATE = TransmitReceiveState
 
     OUTPUT = ez.OutputStream(str)
     INPUT = ez.InputStream(str)

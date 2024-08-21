@@ -22,7 +22,7 @@ class DebugLog(ez.Unit):
     Logs messages that pass through.
     """
 
-    SETTINGS: DebugLogSettings
+    SETTINGS = DebugLogSettings
 
     INPUT = ez.InputStream(Any)
     """Send messages to log here."""

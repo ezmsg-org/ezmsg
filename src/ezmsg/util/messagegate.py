@@ -37,8 +37,8 @@ class MessageGate(ez.Unit):
     Can be set as open, closed, open after n messages, or closed after n messages.
     """
 
-    SETTINGS: MessageGateSettings
-    STATE: MessageGateState
+    SETTINGS = MessageGateSettings
+    STATE = MessageGateState
 
     INPUT_GATE = ez.InputStream(GateMessage)
     """

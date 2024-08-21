@@ -33,8 +33,8 @@ class ModifyAxisSettings(ez.Settings):
 
 
 class ModifyAxis(ez.Unit):
-    STATE: GenState
-    SETTINGS: ModifyAxisSettings
+    STATE = GenState
+    SETTINGS = ModifyAxisSettings
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)

@@ -49,7 +49,7 @@ class LoadTestSample:
 
 class LoadTestPublisher(ez.Unit):
     OUTPUT = ez.OutputStream(LoadTestSample)
-    SETTINGS: LoadTestSettings
+    SETTINGS = LoadTestSettings
 
     def initialize(self) -> None:
         self.running = True
@@ -91,8 +91,8 @@ class LoadTestSubscriberState(ez.State):
 
 class LoadTestSubscriber(ez.Unit):
     INPUT = ez.InputStream(LoadTestSample)
-    SETTINGS: LoadTestSettings
-    STATE: LoadTestSubscriberState
+    SETTINGS = LoadTestSettings
+    STATE = LoadTestSubscriberState
 
     @ez.subscriber(INPUT, zero_copy=True)
     async def receive(self, sample: LoadTestSample) -> None:
@@ -111,7 +111,7 @@ class LoadTestSubscriber(ez.Unit):
 
         # Wait for the duration of the load test
         await asyncio.sleep(self.SETTINGS.duration)
-        # logger.info(f"STATE: {self.STATE.received_data}")
+        # logger.info(f"STATE = {self.STATE.received_data}")
 
         # Log some useful summary statistics
         min_timestamp = min(timestamp for timestamp, _, _ in self.STATE.received_data)
@@ -148,7 +148,7 @@ class LoadTestSubscriber(ez.Unit):
 
 
 class LoadTest(ez.Collection):
-    SETTINGS: LoadTestSettings
+    SETTINGS = LoadTestSettings
 
     PUBLISHER = LoadTestPublisher()
     SUBSCRIBER = LoadTestSubscriber()
