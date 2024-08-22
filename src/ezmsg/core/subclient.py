@@ -14,7 +14,6 @@ from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
     Address,
-    AddressType,
     UINT64_SIZE,
     uint64_to_bytes,
     bytes_to_uint,

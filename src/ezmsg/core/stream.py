@@ -1,17 +1,15 @@
-from typing import Type, Optional
+from typing import Any, Optional
 
 from .netprotocol import DEFAULT_SHM_SIZE
 from .addressable import Addressable
 
 
 class Stream(Addressable):
-    """
+    """ """
 
-    """
+    msg_type: Any
 
-    msg_type: Type
-
-    def __init__(self, msg_type: Type):
+    def __init__(self, msg_type: Any):
         super().__init__()
         self.msg_type = msg_type
 
@@ -24,6 +22,7 @@ class InputStream(Stream):
     """
     Can be added to any ``Component`` as a member variable. Methods may subscribe to it.
     """
+
     def __repr__(self) -> str:
         return f"Input{super().__repr__()}()"
 
@@ -32,6 +31,7 @@ class OutputStream(Stream):
     """
     Can be added to any ``Component`` as a member variable. Methods may publish to it.
     """
+
     host: Optional[str]
     port: Optional[int]
     num_buffers: int
@@ -40,7 +40,7 @@ class OutputStream(Stream):
 
     def __init__(
         self,
-        msg_type: Type,
+        msg_type: Any,
         host: Optional[str] = None,
         port: Optional[int] = None,
         num_buffers: int = 32,

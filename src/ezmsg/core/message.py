@@ -21,7 +21,7 @@ class MessageMeta(ABCMeta):
         name: str,
         bases: Tuple[type, ...],
         classdict: Dict[str, Any],
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Type["Message"]:
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(unsafe_hash=True, frozen=True)(new_cls)  # type: ignore
@@ -39,6 +39,7 @@ class Message(ABC, metaclass=MessageMeta):
 @dataclass
 class Flag:
     """Message with no contents"""
+
     ...
 
 

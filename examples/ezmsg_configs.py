@@ -93,8 +93,7 @@ class PassthroughCollection(ez.Collection):
 # CORNER CASES
 
 
-class EmptySystem(ez.Collection):
-    ...
+class EmptySystem(ez.Collection): ...
 
 
 class EmptyTerminateSystem(ez.Collection):

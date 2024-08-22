@@ -123,10 +123,7 @@ if __name__ == "__main__":
                 (self.POW_0_5.OUTPUT, self.LOG_OUT.INPUT),
             )
 
-    ez.run(
-        SYSTEM=GenOneExample()
-    )
-
+    ez.run(SYSTEM=GenOneExample())
 
     # This example will show the type-hint based introspection to construct ezmsg Units
     # at runtime, which simplifies the integration of generators into Units, reducing
@@ -158,6 +155,4 @@ if __name__ == "__main__":
                 (self.POW_0_5.OUTPUT, self.LOG_OUT.INPUT),
             )
 
-    ez.run(
-        SYSTEM=GenTwoExample()
-    )
+    ez.run(SYSTEM=GenTwoExample())

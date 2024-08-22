@@ -105,13 +105,12 @@ class AttachEchoProcess(AttachTestProcess):
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="canonical port isn't always available")
 async def test_attach():
-    event_loop = asyncio.get_running_loop()
     graph_service = ez.GraphService(address=ez.GraphService.default_address())
     shm_service = ez.SHMService(address=ez.SHMService.default_address())
     graph_server = graph_service.create_server()
     shm_server = shm_service.create_server()
 
-    async with ez.GraphContext(graph_service, shm_service) as context:
+    async with ez.GraphContext(graph_service, shm_service):
         settings = TransmitReceiveSettings()
 
         txrx_process = TransmitReceiveProcess(settings)

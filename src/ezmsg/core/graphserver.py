@@ -92,8 +92,9 @@ class GraphServer(ThreadedAsyncServer):
                         info = SubscriberInfo(id, writer, pid, topic)
                         self.clients[id] = info
                         self._client_tasks[id] = asyncio.create_task(
-                            self._handle_client(id, reader, writer))
-                        iface = writer.transport.get_extra_info('sockname')[0]
+                            self._handle_client(id, reader, writer)
+                        )
+                        iface = writer.transport.get_extra_info("sockname")[0]
                         await self._notify_subscriber(info, iface)
 
                     elif req == Command.PUBLISH.value:
@@ -101,8 +102,9 @@ class GraphServer(ThreadedAsyncServer):
                         info = PublisherInfo(id, writer, pid, topic, address)
                         self.clients[id] = info
                         self._client_tasks[id] = asyncio.create_task(
-                            self._handle_client(id, reader, writer))
-                        iface = writer.transport.get_extra_info('peername')[0]
+                            self._handle_client(id, reader, writer)
+                        )
+                        iface = writer.transport.get_extra_info("peername")[0]
                         for sub in self._downstream_subs(info.topic):
                             await self._notify_subscriber(sub, iface)
 
@@ -187,19 +189,23 @@ class GraphServer(ThreadedAsyncServer):
             del self.clients[id]
             await close_stream_writer(writer)
 
-    async def _notify_subscriber(self, sub: SubscriberInfo, iface: typing.Optional[str] = None) -> None:
+    async def _notify_subscriber(
+        self, sub: SubscriberInfo, iface: typing.Optional[str] = None
+    ) -> None:
         try:
             notification = []
             for pub in self._upstream_pubs(sub.topic):
                 address = pub.address
-                if address != None:
+                if address is not None:
                     if iface is not None:
                         notification.append(f"{str(pub.id)}@{iface}:{address.port}")
                     else:
-                        notification.append(f"{str(pub.id)}@{address.host}:{address.port}")
+                        notification.append(
+                            f"{str(pub.id)}@{address.host}:{address.port}"
+                        )
 
             async with sub.sync_writer() as writer:
-                notify_str = ','.join(notification)
+                notify_str = ",".join(notification)
                 writer.write(Command.UPDATE.value)
                 writer.write(encode_str(notify_str))
 

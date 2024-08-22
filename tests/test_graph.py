@@ -22,14 +22,14 @@ simple_graph_2 = [("w", "x"), ("w", "y"), ("x", "z"), ("y", "z")]
 @pytest.mark.asyncio
 async def test_graph():
     async with GraphContext() as context:
-        a_pub = await context.publisher("a")
-        e_sub = await context.subscriber("e")
+        await context.publisher("a")
+        await context.subscriber("e")
 
         for edge in simple_graph_1:
             await context.connect(*edge)
 
-        c_sub = await context.subscriber("c")
-        b_pub = await context.publisher("b")
+        await context.subscriber("c")
+        await context.publisher("b")
 
         for edge in simple_graph_2:
             await context.connect(*edge)
@@ -99,7 +99,7 @@ async def test_comms():
 async def test_order():
     async with GraphContext() as context:
         b_pub = await context.publisher("b")
-        c_sub = await context.subscriber("c")
+        await context.subscriber("c")
         e_sub = await context.subscriber("e")
 
         for edge in simple_graph_1:

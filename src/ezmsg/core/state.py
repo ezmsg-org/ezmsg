@@ -15,7 +15,7 @@ class StateMeta(ABCMeta):
         name: str,
         bases: Tuple[type, ...],
         classdict: Dict[str, Any],
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Type["State"]:
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(unsafe_hash=True, frozen=False, init=False)(new_cls)  # type: ignore
@@ -46,11 +46,12 @@ class State(ABC, metaclass=StateMeta):
 
           STATE = YourState
 
-          def initialize(self):
+          async def initialize(self):
              this.STATE.state1 = 0
              this.STATE.state2 = 0.0
 
     .. note::
        ``State`` uses type hints to define member variables, but does not enforce type checking.
     """
+
     ...

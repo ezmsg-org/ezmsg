@@ -32,8 +32,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("ezmsg")
 
-BACKPRESSURE_WARNING = not ("EZMSG_DISABLE_BACKPRESSURE_WARNING" in os.environ)
-BACKPRESSURE_REFRACTORY = 5.0 # sec
+BACKPRESSURE_WARNING = "EZMSG_DISABLE_BACKPRESSURE_WARNING" not in os.environ
+BACKPRESSURE_REFRACTORY = 5.0  # sec
 
 
 class Publisher:

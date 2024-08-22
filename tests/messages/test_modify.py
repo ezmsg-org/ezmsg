@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.util.messages.modify import modify_axis, ModifyAxis, ModifyAxisSettings
+from ezmsg.util.messages.modify import modify_axis
 
 
 @pytest.mark.parametrize("name_map", [None, {"step": "time"}])

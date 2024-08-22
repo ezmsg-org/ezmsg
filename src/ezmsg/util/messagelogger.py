@@ -24,6 +24,7 @@ class MessageLoggerSettings(ez.Settings):
         output: :py:class:`pathlib.Path` for a file where the messages will be logged.
             If the file path already exists, the existing file will be truncated to 0 length.
     """
+
     output: Optional[Path] = None
 
 

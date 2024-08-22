@@ -1,0 +1,4 @@
+# chore: format files with ruff. Add pre-commit-config.
+5b4c220154d33cac15a75d3d7d978a75e67f2b8a
+# Ran `black` formatter on entire codebase and fixed non-standard line-endings with `dos2unix`.
+4e4f20be40a73f2162a565732bae76ea0c812739

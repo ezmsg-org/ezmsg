@@ -11,7 +11,7 @@ S = TypeVar("S")
 
 
 def consumer(
-    func: Callable[P, Generator[Y, S, None]]
+    func: Callable[P, Generator[Y, S, None]],
 ) -> Callable[P, Generator[Y, S, None]]:
     """
     A decorator that primes a generator by advancing it to the first yield statement.
@@ -66,7 +66,7 @@ class Gen(ez.Unit):
     INPUT = ez.InputStream(Any)
     OUTPUT = ez.OutputStream(Any)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.construct_generator()
 
     # Method to be implemented by subclasses to construct the specific generator

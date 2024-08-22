@@ -16,7 +16,7 @@ from contextlib import suppress, contextmanager
 from concurrent.futures import TimeoutError
 
 from .stream import Stream, InputStream, OutputStream
-from .unit import Unit, TIMEIT_ATTR, PUBLISHES_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
+from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
 from .graphserver import GraphService
@@ -24,6 +24,7 @@ from .shmserver import SHMService
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .messagecache import MessageCache
+from abc import abstractmethod
 
 from typing import (
     List,
@@ -31,6 +32,7 @@ from typing import (
     Callable,
     Any,
     Optional,
+    Sequence,
     Set,
     Coroutine,
     DefaultDict,
@@ -45,6 +47,7 @@ class Complete(Exception):
     A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully.
     If all functions in all :obj:`Units` raise ``Complete``, the entire pipeline will terminate execution.
     """
+
     pass
 
 
@@ -52,6 +55,7 @@ class NormalTermination(Exception):
     """
     A type of ``Exception`` which signals to ``ezmsg`` that the pipeline can be shut down gracefully.
     """
+
     pass
 
 
@@ -89,6 +93,7 @@ class BackendProcess(Process):
             except KeyboardInterrupt:
                 logger.debug("Process Interrupted.")
 
+    @abstractmethod
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         raise NotImplementedError
 
@@ -121,7 +126,7 @@ class DefaultBackendProcess(BackendProcess):
                         for unit, main_fn in main_funcs
                     ]
                 )
-                suggestion = f"Use a Collection and define process_components to separate these units."
+                suggestion = "Use a Collection and define process_components to separate these units."
                 raise Exception(
                     "Process has more than one main-thread functions\n"
                     + details
@@ -172,7 +177,7 @@ class DefaultBackendProcess(BackendProcess):
                             ),
                             loop=loop,
                         ).result()
-        except:
+        except Exception:
             self.start_barrier.abort()
             logger.error(f"{traceback.format_exc()}")
 
@@ -195,12 +200,10 @@ class DefaultBackendProcess(BackendProcess):
 
             complete_tasks = [
                 asyncio.run_coroutine_threadsafe(coro_wrapper(coro()), loop)
-                for name, coro in coro_callables.items()
+                for coro in coro_callables.values()
             ]
 
-            monitor = loop.run_in_executor(
-                None, self.monitor_termination, complete_tasks, loop
-            )
+            loop.run_in_executor(None, self.monitor_termination, complete_tasks, loop)
 
             if main_func is not None:
                 unit, fn = main_func
@@ -229,7 +232,7 @@ class DefaultBackendProcess(BackendProcess):
             # This stop barrier prevents publishers/subscribers
             # from getting destroyed before all other processes have
             # drained communication channels
-            logger.debug(f"Waiting at stop barrier")
+            logger.debug("Waiting at stop barrier")
             while True:
                 try:
                     self.stop_barrier.wait()
@@ -248,14 +251,14 @@ class DefaultBackendProcess(BackendProcess):
             # for thread in threads:
             #     thread.result()
 
-            logger.debug(f"Shutting down Units")
+            logger.debug("Shutting down Units")
 
             async def shutdown_units() -> None:
                 for unit in self.units:
                     if inspect.iscoroutinefunction(unit.shutdown):
                         await unit.shutdown()
                     else:
-                        unit.shutdown() # type: ignore
+                        unit.shutdown()  # type: ignore
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
 
@@ -275,10 +278,12 @@ class DefaultBackendProcess(BackendProcess):
         # )
 
     def monitor_termination(
-        self, tasks: List[asyncio.Task], loop: asyncio.AbstractEventLoop
+        self,
+        tasks: Sequence[concurrent.futures.Future[None]],
+        loop: asyncio.AbstractEventLoop,
     ):
         self.term_ev.wait()
-        logger.debug(f"Detected term_ev")
+        logger.debug("Detected term_ev")
         for task in tasks:
             loop.call_soon_threadsafe(task.cancel)
 
@@ -301,15 +306,18 @@ class DefaultBackendProcess(BackendProcess):
             )
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
-        
-        call_fn = lambda _: task(unit)
+
         signature = inspect.signature(task)
         if len(signature.parameters) == 1:
-            call_fn = lambda _: task(unit)
+
+            def call_fn(_):  # type: ignore
+                return task(unit)
         elif len(signature.parameters) == 2:
-            call_fn = lambda msg: task(unit, msg)
+
+            def call_fn(msg):
+                return task(unit, msg)
         else:
-            logger.error(f'Incompatible call signature on task: {task.__name__}')
+            logger.error(f"Incompatible call signature on task: {task.__name__}")
 
         @wraps(task)
         async def wrapped_task(msg: Any = None) -> None:

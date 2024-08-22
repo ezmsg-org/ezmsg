@@ -18,6 +18,7 @@ class CombinedMessage:
 
 # LFO: Low Frequency Oscillator
 
+
 class LFOSettings(ez.Settings):
     freq: float = 0.2  # Hz, sinus frequency
     update_rate: float = 2.0  # Hz, update rate
@@ -28,7 +29,7 @@ class LFO(ez.Unit):
 
     OUTPUT = ez.OutputStream(float)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.start_time = time.time()
 
     @ez.publisher(OUTPUT)
@@ -93,7 +94,7 @@ class MessageModifier(ez.Unit):
     JOINED = ez.OutputStream(str)
     REPUB = ez.OutputStream(CombinedMessage)
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.number = 0.0
 
     @ez.subscriber(NUMBER)
@@ -190,7 +191,7 @@ if __name__ == "__main__":
     system = TestSystem(TestSystemSettings(name="A"))
 
     ez.run(
-        SYSTEM = system,
+        SYSTEM=system,
         # connections = [
         #     ( system.PING.OUTPUT, 'PING_OUTPUT' ),
         #     ( 'FOO_SUB', system.FOOSUB.INPUT )
