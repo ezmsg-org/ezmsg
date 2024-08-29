@@ -35,3 +35,22 @@ def test_modify_axis(name_map: typing.Optional[typing.Dict[str, str]]):
             assert k not in res.axes
             assert v in res.axes
             assert input_ax_arr.axes[k] is res.axes[v]
+
+
+@pytest.mark.parametrize("targ_dim_len", [1, 3])
+def test_drop_axis(targ_dim_len: int):
+    input_ax_arr = AxisArray(
+        data=np.arange(targ_dim_len * 5 * 4).reshape(targ_dim_len, 5, 4),
+        dims=["step", "freq", "ch"],
+        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)},
+    )
+    gen = modify_axis({"step": None})
+    if targ_dim_len != 1:
+        with pytest.raises(ValueError):
+            res = gen.send(input_ax_arr)
+    else:
+        res = gen.send(input_ax_arr)
+        assert "step" not in res.dims
+        assert "step" not in res.axes
+        assert res.data.shape == (5, 4)
+
