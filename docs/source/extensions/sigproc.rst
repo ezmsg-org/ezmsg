@@ -1,6 +1,13 @@
 ezmsg-sigproc
 =============
 
+ezmsg.sigproc.activation
+-----------------------------
+
+.. automodule:: ezmsg.sigproc.activation
+    :members:
+
+
 ezmsg.sigproc.affinetransform
 -----------------------------
 
