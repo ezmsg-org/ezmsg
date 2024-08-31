@@ -75,7 +75,19 @@ ezmsg.sigproc.ewmfilter
 ezmsg.sigproc.math
 -----------------------
 
-.. automodule:: ezmsg.sigproc.math
+.. automodule:: ezmsg.sigproc.math.clip
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.difference
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.invert
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.log
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.scale
     :members:
 
 
