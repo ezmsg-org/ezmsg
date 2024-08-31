@@ -64,6 +64,13 @@ ezmsg.sigproc.ewmfilter
     :members:
 
 
+ezmsg.sigproc.math
+-----------------------
+
+.. automodule:: ezmsg.sigproc.math
+    :members:
+
+
 ezmsg.sigproc.sampler
 ---------------------
 
