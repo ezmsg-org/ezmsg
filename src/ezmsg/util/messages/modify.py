@@ -5,8 +5,8 @@ import typing
 import numpy as np
 
 import ezmsg.core as ez
-from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.util.generator import consumer, GenState
+from .axisarray import AxisArray
+from ..generator import consumer, GenState
 
 
 @consumer
@@ -64,7 +64,7 @@ class ModifyAxis(ez.Unit):
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
-    INPUT_SETTINGS = ez.InputStream(ez.Settings)
+    INPUT_SETTINGS = ez.InputStream(ModifyAxisSettings)
 
     async def initialize(self) -> None:
         self.construct_generator()
@@ -85,6 +85,6 @@ class ModifyAxis(ez.Unit):
             if ret is not None:
                 yield self.OUTPUT_SIGNAL, ret
         except (StopIteration, GeneratorExit):
-            ez.logger.debug(f"Generator closed in {self.address}")
+            ez.logger.debug(f"ModifyAxis closed in {self.address}")
         except Exception:
             ez.logger.info(traceback.format_exc())
