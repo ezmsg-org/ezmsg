@@ -68,8 +68,8 @@ class ArrayChunker(ez.Unit):
     SETTINGS = ArrayChunkerSettings
     STATE = GenState
 
-    OUTPUT_SIGNAL = ez.OutputStream(typing.Any)
     INPUT_SETTINGS = ez.InputStream(ArrayChunkerSettings)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     async def initialize(self) -> None:
         self.construct_generator()
@@ -91,9 +91,10 @@ class ArrayChunker(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def send_chunk(self) -> typing.AsyncGenerator:
         try:
-            yield self.OUTPUT_SIGNAL, next(self.STATE.gen)
-            await asyncio.sleep(0)
+            while True:
+                yield self.OUTPUT_SIGNAL, next(self.STATE.gen)
+                await asyncio.sleep(0)
         except (StopIteration, GeneratorExit):
-            ez.logger.debug(f"MessageSender closed in {self.address}")
+            ez.logger.debug(f"ArrayChunker closed in {self.address}")
         except Exception:
             ez.logger.info(traceback.format_exc())
