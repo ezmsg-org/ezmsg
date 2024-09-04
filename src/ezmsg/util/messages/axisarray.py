@@ -23,6 +23,7 @@ class AxisArray:
     data: npt.NDArray
     dims: typing.List[str]
     axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory=dict)
+    key: str = ""
 
     T = typing.TypeVar("T", bound="AxisArray")
 
@@ -184,7 +185,15 @@ class AxisArray:
         return shape2d(self.data, self.axis_idx(dim))
 
     @staticmethod
-    def concatenate(*aas: T, dim: str, axis: typing.Optional[Axis] = None) -> T:
+    def concatenate(
+        *aas: T,
+        dim: str,
+        axis: typing.Optional[Axis] = None,
+        filter_key: typing.Optional[str] = None
+    ) -> T:
+        if filter_key is not None:
+            aas = [aa for aa in aas if aa.key == filter_key]
+
         aa_0 = aas[0]
         for aa in aas[1:]:
             if aa.dims != aa_0.dims:
@@ -192,6 +201,7 @@ class AxisArray:
 
         new_dims = [d for d in aa_0.dims]
         new_axes = {ax_name: ax for ax_name, ax in aa_0.axes.items()}
+        new_key = aa_0.key if all(aa.key == aa_0.key for aa in aas) else ""
 
         if axis is not None:
             new_axes[dim] = axis
@@ -201,12 +211,12 @@ class AxisArray:
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes)
+            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
 
         else:
             new_data = np.array(all_data)
             new_dims = [dim] + new_dims
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes)
+            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
 
     @staticmethod
     def transpose(
