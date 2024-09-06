@@ -228,7 +228,7 @@ wheels = [
 
 [[package]]
 name = "ezmsg"
-version = "3.4.0"
+version = "3.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "typing-extensions" },
@@ -250,7 +250,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ezmsg-sigproc", marker = "extra == 'docs'" },
+    { name = "ezmsg-sigproc", marker = "extra == 'docs'", specifier = ">=1.2.3" },
     { name = "flake8", marker = "extra == 'test'", specifier = ">=5.0.4" },
     { name = "numpy", marker = "extra == 'test'", specifier = ">=1.24.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
