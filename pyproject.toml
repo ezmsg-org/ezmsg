@@ -39,9 +39,6 @@ testpaths = "tests"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = []
-
 [tool.hatch.metadata]
 allow-direct-references = true
 
