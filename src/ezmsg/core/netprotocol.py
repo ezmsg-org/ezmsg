@@ -2,7 +2,6 @@ import asyncio
 import socket
 import typing
 import enum
-import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
@@ -91,8 +90,7 @@ class PublisherInfo(ClientInfo):
 
 
 @dataclass
-class SubscriberInfo(ClientInfo):
-    ...
+class SubscriberInfo(ClientInfo): ...
 
 
 def uint64_to_bytes(i: int) -> bytes:

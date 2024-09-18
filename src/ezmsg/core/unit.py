@@ -1,7 +1,7 @@
 import time
 import inspect
 import functools
-from .stream import Stream, InputStream, OutputStream
+from .stream import InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
@@ -84,7 +84,7 @@ class Unit(Component, metaclass=UnitMeta):
         if inspect.iscoroutinefunction(self.initialize):
             await self.initialize()
         else:
-            self.initialize() # type: ignore
+            self.initialize()  # type: ignore
 
         self._check_state()
 

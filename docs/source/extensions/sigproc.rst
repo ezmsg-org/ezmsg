@@ -1,6 +1,21 @@
 ezmsg-sigproc
 =============
 
+Timeseries signal processing implementations in ezmsg, leveraging numpy and scipy.
+Most of the methods and classes in this extension are intended to be used in building signal processing pipelines.
+They use :class:`ezmsg.util.messages.axisarray.AxisArray` as the primary data structure for passing signals between components.
+The message's data are expected to be a numpy array.
+
+Note for offline processing: some generators might yield valid :class:`AxisArray` messages with ``.data`` size of 0.
+This may occur when the generator receives inadequate data to produce a valid output, such as when windowing or buffering.
+
+ezmsg.sigproc.activation
+-----------------------------
+
+.. automodule:: ezmsg.sigproc.activation
+    :members:
+
+
 ezmsg.sigproc.affinetransform
 -----------------------------
 
@@ -54,6 +69,25 @@ ezmsg.sigproc.ewmfilter
 -----------------------
 
 .. automodule:: ezmsg.sigproc.ewmfilter
+    :members:
+
+
+ezmsg.sigproc.math
+-----------------------
+
+.. automodule:: ezmsg.sigproc.math.clip
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.difference
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.invert
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.log
+    :members:
+
+.. automodule:: ezmsg.sigproc.math.scale
     :members:
 
 

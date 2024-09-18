@@ -21,7 +21,7 @@ class SettingsMeta(ABCMeta):
         name: str,
         bases: typing.Tuple[type, ...],
         classdict: typing.Dict[str, typing.Any],
-        **kwargs: typing.Any
+        **kwargs: typing.Any,
     ) -> typing.Type["Settings"]:
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(frozen=True)(new_cls)  # type: ignore
@@ -43,7 +43,7 @@ class Settings(ABC, metaclass=SettingsMeta):
 
        class YourUnit(Unit):
 
-          SETTINGS: YourSettings
+          SETTINGS = YourSettings
 
     A ``Unit`` can accept a ``Settings`` object as a parameter on instantiation.
 
@@ -62,4 +62,5 @@ class Settings(ABC, metaclass=SettingsMeta):
        ``Settings`` uses type hints to define member variables, but does not enforce type checking.
 
     """
+
     ...

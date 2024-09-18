@@ -41,4 +41,4 @@ class SplitSystem(ez.Collection):
 
 
 if __name__ == "__main__":
-    ez.run(SYSTEM = SplitSystem())
+    ez.run(SYSTEM=SplitSystem())

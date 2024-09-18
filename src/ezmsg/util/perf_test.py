@@ -4,7 +4,6 @@ import datetime
 import os
 import platform
 import time
-import pytest
 
 from typing import List, Tuple, AsyncGenerator
 
@@ -49,9 +48,9 @@ class LoadTestSample:
 
 class LoadTestPublisher(ez.Unit):
     OUTPUT = ez.OutputStream(LoadTestSample)
-    SETTINGS: LoadTestSettings
+    SETTINGS = LoadTestSettings
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.running = True
         self.counter = 0
         self.OUTPUT.num_buffers = self.SETTINGS.buffers
@@ -65,18 +64,21 @@ class LoadTestPublisher(ez.Unit):
             if current_time - start_time >= self.SETTINGS.duration:
                 break
 
-            yield self.OUTPUT, LoadTestSample(
-                _timestamp=time.time(),
-                counter=self.counter,
-                dynamic_data=np.zeros(
-                    int(self.SETTINGS.dynamic_size // 8), dtype=np.float32
+            yield (
+                self.OUTPUT,
+                LoadTestSample(
+                    _timestamp=time.time(),
+                    counter=self.counter,
+                    dynamic_data=np.zeros(
+                        int(self.SETTINGS.dynamic_size // 8), dtype=np.float32
+                    ),
                 ),
             )
             self.counter += 1
         ez.logger.info("Exiting publish")
         raise ez.Complete
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         self.running = False
         ez.logger.info(f"Samples sent: {self.counter}")
 
@@ -91,8 +93,8 @@ class LoadTestSubscriberState(ez.State):
 
 class LoadTestSubscriber(ez.Unit):
     INPUT = ez.InputStream(LoadTestSample)
-    SETTINGS: LoadTestSettings
-    STATE: LoadTestSubscriberState
+    SETTINGS = LoadTestSettings
+    STATE = LoadTestSubscriberState
 
     @ez.subscriber(INPUT, zero_copy=True)
     async def receive(self, sample: LoadTestSample) -> None:
@@ -111,7 +113,7 @@ class LoadTestSubscriber(ez.Unit):
 
         # Wait for the duration of the load test
         await asyncio.sleep(self.SETTINGS.duration)
-        # logger.info(f"STATE: {self.STATE.received_data}")
+        # logger.info(f"STATE = {self.STATE.received_data}")
 
         # Log some useful summary statistics
         min_timestamp = min(timestamp for timestamp, _, _ in self.STATE.received_data)
@@ -148,7 +150,7 @@ class LoadTestSubscriber(ez.Unit):
 
 
 class LoadTest(ez.Collection):
-    SETTINGS: LoadTestSettings
+    SETTINGS = LoadTestSettings
 
     PUBLISHER = LoadTestPublisher()
     SUBSCRIBER = LoadTestSubscriber()
@@ -173,19 +175,12 @@ def get_time() -> float:
     return time.time() if PLATFORM == "win" else time.perf_counter()
 
 
-@pytest.mark.parametrize("duration", [2])
-@pytest.mark.parametrize("buffers", [2, 32])
-@pytest.mark.parametrize("size", [2**i for i in range(5, 22, 4)])
 def test_performance(duration, size, buffers) -> None:
     ez.logger.info(f"Running load test for dynamic size: {size} bytes")
     system = LoadTest(
-        LoadTestSettings(
-            dynamic_size=int(size),
-            duration=duration,
-            buffers=buffers
-        )
+        LoadTestSettings(dynamic_size=int(size), duration=duration, buffers=buffers)
     )
-    ez.run(SYSTEM = system)
+    ez.run(SYSTEM=system)
 
 
 def run_many_dynamic_sizes(duration, buffers) -> None:

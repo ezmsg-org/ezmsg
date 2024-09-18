@@ -13,6 +13,7 @@ class DebugLogSettings(ez.Settings):
         max_length: Sets a maximum number of chars which will be printed from the message.
             If the message is longer, the log message will be truncated.
     """
+
     name: str = "DEBUG"
     max_length: Optional[int] = 400
 
@@ -22,7 +23,7 @@ class DebugLog(ez.Unit):
     Logs messages that pass through.
     """
 
-    SETTINGS: DebugLogSettings
+    SETTINGS = DebugLogSettings
 
     INPUT = ez.InputStream(Any)
     """Send messages to log here."""

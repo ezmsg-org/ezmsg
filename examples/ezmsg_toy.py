@@ -18,17 +18,18 @@ class CombinedMessage:
 
 # LFO: Low Frequency Oscillator
 
+
 class LFOSettings(ez.Settings):
     freq: float = 0.2  # Hz, sinus frequency
     update_rate: float = 2.0  # Hz, update rate
 
 
 class LFO(ez.Unit):
-    SETTINGS: LFOSettings
+    SETTINGS = LFOSettings
 
     OUTPUT = ez.OutputStream(float)
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.start_time = time.time()
 
     @ez.publisher(OUTPUT)
@@ -45,7 +46,7 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(str)
 
@@ -68,7 +69,7 @@ class DebugOutputSettings(ez.Settings):
 
 
 class DebugOutput(ez.Unit):
-    SETTINGS: DebugOutputSettings
+    SETTINGS = DebugOutputSettings
 
     INPUT = ez.InputStream(str)
 
@@ -85,7 +86,7 @@ class MessageModifierState(ez.State):
 class MessageModifier(ez.Unit):
     """Store number input, and append it to message"""
 
-    STATE: MessageModifierState
+    STATE = MessageModifierState
 
     MESSAGE = ez.InputStream(str)
     NUMBER = ez.InputStream(float)
@@ -93,7 +94,7 @@ class MessageModifier(ez.Unit):
     JOINED = ez.OutputStream(str)
     REPUB = ez.OutputStream(CombinedMessage)
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.number = 0.0
 
     @ez.subscriber(NUMBER)
@@ -149,7 +150,7 @@ class TestSystemSettings(ez.Settings):
 
 
 class TestSystem(ez.Collection):
-    SETTINGS: TestSystemSettings
+    SETTINGS = TestSystemSettings
 
     # Publishers
     PING = MessageGenerator()
@@ -190,7 +191,7 @@ if __name__ == "__main__":
     system = TestSystem(TestSystemSettings(name="A"))
 
     ez.run(
-        SYSTEM = system,
+        SYSTEM=system,
         # connections = [
         #     ( system.PING.OUTPUT, 'PING_OUTPUT' ),
         #     ( 'FOO_SUB', system.FOOSUB.INPUT )

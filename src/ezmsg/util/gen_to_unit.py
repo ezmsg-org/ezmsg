@@ -5,6 +5,7 @@ Please note that the `gen_to_unit` function in the current Python file is provid
     However, please be aware that any changes made to the `ezmsg` core may potentially
     impact the functionality of `gen_to_unit`.
 """
+
 import ezmsg.core as ez
 import asyncio
 import sys
@@ -62,18 +63,20 @@ def gen_to_unit(
     for param in sig.parameters.values():
         if param.default is not inspect.Parameter.empty:
             _defaults[param.name] = param.default
-        _type_hints[param.name] = param.annotation  # OK if empty, needed for untyped params
+        _type_hints[param.name] = (
+            param.annotation
+        )  # OK if empty, needed for untyped params
     settings = args_to_settings(func.__name__, _type_hints, _defaults)
 
     # Create State
     state = args_to_state(func.__name__, _type_hints, publish_type, subscribe_type)
 
-    def initialize(self):
+    async def initialize(self):
         self.STATE.gen = func(**asdict(self.SETTINGS))
         for field in fields(self.SETTINGS):
             setattr(self.STATE, field.name, getattr(self.SETTINGS, field.name))
 
-    def shutdown(self):
+    async def shutdown(self):
         self.STATE.gen.close()
 
     def check_fields(self, msg):
@@ -91,7 +94,9 @@ def gen_to_unit(
                 setattr(self.STATE, state_field_name, getattr(msg, msg_field_name))
                 self.STATE.gen = func(**asdict(self.STATE))
 
-    stream_suffix = {AxisArray: "_SIGNAL"}  # Add more message types if accessible in core.
+    stream_suffix = {
+        AxisArray: "_SIGNAL"
+    }  # Add more message types if accessible in core.
     streams = {}
     ez_task: Callable
     if subscribe_type is type(None) and publish_type is type(None):
@@ -106,12 +111,12 @@ def gen_to_unit(
 
     elif subscribe_type is type(None) and publish_type is not type(None):
         _output = ez.OutputStream(publish_type, **output_stream_kwargs)
-        streams["OUTPUT" + stream_suffix.get(publish_type,  "")] = _output
+        streams["OUTPUT" + stream_suffix.get(publish_type, "")] = _output
 
         @ez.publisher(_output)
         async def publish(self):
             while True:
-                OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type,  "")]
+                OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type, "")]
                 yield OUTPUT, next(self.STATE.gen)
                 await asyncio.sleep(sleep_time)
 
@@ -119,7 +124,7 @@ def gen_to_unit(
 
     elif subscribe_type is not type(None) and publish_type is type(None):
         _input = ez.InputStream(subscribe_type)
-        streams["INPUT"+ stream_suffix.get(subscribe_type,  "")] = _input
+        streams["INPUT" + stream_suffix.get(subscribe_type, "")] = _input
 
         @ez.subscriber(_input)
         async def subscribe(self, msg) -> None:
@@ -131,15 +136,15 @@ def gen_to_unit(
     else:
         _input = ez.InputStream(subscribe_type)
         _output = ez.OutputStream(publish_type, **output_stream_kwargs)
-        streams["INPUT" + stream_suffix.get(subscribe_type,  "")] = _input
-        streams["OUTPUT" + stream_suffix.get(publish_type,  "")] = _output
+        streams["INPUT" + stream_suffix.get(subscribe_type, "")] = _input
+        streams["OUTPUT" + stream_suffix.get(publish_type, "")] = _output
 
         @ez.subscriber(_input)
         @ez.publisher(_output)
         async def subscribe_publish(self, msg):
             self.check_fields(msg)
             res = self.STATE.gen.send(msg)
-            OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type,  "")]
+            OUTPUT = self.streams["OUTPUT" + stream_suffix.get(publish_type, "")]
             yield OUTPUT, res
 
         ez_task = subscribe_publish

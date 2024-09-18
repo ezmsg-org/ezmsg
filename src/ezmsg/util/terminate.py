@@ -1,8 +1,6 @@
 import asyncio
 import time
 
-from dataclasses import dataclass
-
 import ezmsg.core as ez
 
 from typing import Optional, Any
@@ -16,6 +14,7 @@ class TerminateOnTimeoutSettings(ez.Settings):
         time: Terminate if no message has been received in this time (sec)
         poll_rate: Hz.
     """
+
     time: float = 2.0
     poll_rate: float = 4.0
 
@@ -29,8 +28,8 @@ class TerminateOnTimeout(ez.Unit):
     End a pipeline execution when a certain amount of time has passed without receiving a message.
     """
 
-    SETTINGS: TerminateOnTimeoutSettings
-    STATE: TerminateOnTimeoutState
+    SETTINGS = TerminateOnTimeoutSettings
+    STATE = TerminateOnTimeoutState
 
     INPUT = ez.InputStream(Any)
     """Send messages here."""
@@ -58,6 +57,7 @@ class TerminateOnTotalSettings(ez.Settings):
     Args:
         total: The total number of messages to terminate after.
     """
+
     total: Optional[int] = None
 
 
@@ -71,8 +71,8 @@ class TerminateOnTotal(ez.Unit):
     End a pipeline execution once a certain number of messages have been received.
     """
 
-    SETTINGS: TerminateOnTotalSettings
-    STATE: TerminateOnTotalState
+    SETTINGS = TerminateOnTotalSettings
+    STATE = TerminateOnTotalState
 
     INPUT_MESSAGE = ez.InputStream(Any)
     """Send messages here."""
@@ -83,7 +83,7 @@ class TerminateOnTotal(ez.Unit):
     If this number has already been reached, termination will occur immediately.
     """
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.STATE.total = self.SETTINGS.total
 
     @ez.subscriber(INPUT_TOTAL)

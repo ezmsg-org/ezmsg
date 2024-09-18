@@ -103,9 +103,9 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
 
         while True:
             try:
-                reader, writer = await graph_service.open_connection()
+                _, writer = await graph_service.open_connection()
                 await close_stream_writer(writer)
-                reader, writer = await shm_service.open_connection()
+                _, writer = await shm_service.open_connection()
                 await close_stream_writer(writer)
                 break
             except ConnectionRefusedError:
@@ -188,12 +188,12 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         def recurse_graph(g: defaultdict):
             out = ""
             for leaf in g:
-                if type(g[leaf]) == defaultdict:
+                if isinstance(g[leaf], defaultdict):
                     out += indent(
                         "\n".join(
                             [
                                 f"subgraph {leaf.lower()} {{",
-                                indent(f"cluster = true;", IND),
+                                indent("cluster = true;", IND),
                                 indent(f'label = "{leaf}";', IND),
                                 f"{recurse_graph(g[leaf])}}};",
                                 "",
@@ -281,7 +281,7 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         def recurse_graph(g: defaultdict):
             out = ""
             for leaf in g:
-                if type(g[leaf]) == defaultdict:
+                if isinstance(g[leaf], defaultdict):
                     out += indent(
                         "\n".join(
                             [

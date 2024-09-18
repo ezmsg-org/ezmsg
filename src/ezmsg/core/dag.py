@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Set, DefaultDict
 
 
-class CyclicException(Exception):
-    ...
+class CyclicException(Exception): ...
 
 
 GraphType = DefaultDict[str, Set[str]]

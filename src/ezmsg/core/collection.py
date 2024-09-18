@@ -6,16 +6,18 @@ from .component import ComponentMeta, Component
 from .settings import Settings
 
 
-NetworkDefinition = typing.Iterable[typing.Tuple[typing.Union[Stream, str], typing.Union[Stream, str]]]
+NetworkDefinition = typing.Iterable[
+    typing.Tuple[typing.Union[Stream, str], typing.Union[Stream, str]]
+]
 
 
 class CollectionMeta(ComponentMeta):
     def __init__(
-        cls, 
-        name: str, 
-        bases: typing.Tuple[type, ...], 
-        fields: typing.Dict[str, typing.Any], 
-        **kwargs: typing.Any
+        cls,
+        name: str,
+        bases: typing.Tuple[type, ...],
+        fields: typing.Dict[str, typing.Any],
+        **kwargs: typing.Any,
     ) -> None:
         super(CollectionMeta, cls).__init__(name, bases, fields)
 

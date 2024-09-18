@@ -17,8 +17,7 @@ class UndersizedMemory(Exception):
         self.req_size = req_size
 
 
-class UninitializedMemory(Exception):
-    ...
+class UninitializedMemory(Exception): ...
 
 
 class Marshal:

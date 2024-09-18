@@ -3,7 +3,12 @@ import numpy as np
 
 from dataclasses import dataclass, field
 
-from ezmsg.util.messages.axisarray import AxisArray, shape2d, slice_along_axis, sliding_win_oneaxis
+from ezmsg.util.messages.axisarray import (
+    AxisArray,
+    shape2d,
+    slice_along_axis,
+    sliding_win_oneaxis,
+)
 
 from typing import Generator, List
 
@@ -28,6 +33,7 @@ def test_axes() -> None:
             "x": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
             "y": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
         },
+        key="spatial_sensor_array",
         ch_names=["a", "b"],
     )
 
@@ -45,6 +51,7 @@ def msg_gen(
                 x=AxisArray.Axis(unit="mm"),
                 y=AxisArray.Axis(unit="mm"),
             ),
+            key="spatial_sensor_array",
             ch_names=["a", "b"],
         )
 
@@ -78,6 +85,23 @@ def test_concat() -> None:
     assert batch_cat.shape[0] == num_batches
 
     assert isinstance(batch_cat, MultiChannelData)
+
+    # Test filtering based on key
+    gen = msg_gen(fs, x_size, y_size)
+    single_batch = [next(gen) for _ in range(batch_size)]
+    # All messages pass
+    single_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    assert single_batch_cat.key == "spatial_sensor_array"
+    assert single_batch_cat.shape[single_batch_cat.get_axis_idx("time")] == batch_size
+    # Exclude one message based on filter_key
+    single_batch[0].key = "wrong key"
+    filter_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    assert filter_batch_cat.key == "spatial_sensor_array"
+    assert filter_batch_cat.shape[filter_batch_cat.get_axis_idx("time")] == (batch_size - 1)
+    # No filtering, but key is reset because it is not consistent
+    nofilter_batch_cat = AxisArray.concatenate(*single_batch, dim="time")
+    assert nofilter_batch_cat.key == ""
+    assert nofilter_batch_cat.shape[nofilter_batch_cat.get_axis_idx("time")] == batch_size
 
 
 @pytest.mark.parametrize(
@@ -121,19 +145,26 @@ def test_sel():
         data, dims=["dim0"], axes=dict(dim0=AxisArray.Axis(gain=gain, offset=offset))
     )
 
-    aa_sl = aa.sel(dim0=slice(None, -10.75, 1.5))  # slice based on axis info
-    aa_idx = aa.isel(dim0=-1) # index slice of last index
+    aa_sl = aa.sel(dim0=slice(-10.75, 1.5))  # slice based on axis info
+    assert np.allclose(
+        aa_sl.data,
+        data[np.argmin(np.abs(data - -10.75)) : np.argmin(np.abs(data - 1.5))],
+    )
+    aa_idx = aa.isel(dim0=-1)  # index slice of last index
     assert aa_idx.data == data[-1]
-    
+
 
 @pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
-@pytest.mark.parametrize("sl", [
-    3,
-    slice(None, None, 2),
-    slice(2, 4, None),
-    slice(-3, -1, None),
-    slice(3, 10, None)
-])
+@pytest.mark.parametrize(
+    "sl",
+    [
+        3,
+        slice(None, None, 2),
+        slice(2, 4, None),
+        slice(-3, -1, None),
+        slice(3, 10, None),
+    ],
+)
 def test_slice_along_axis(axis: int, sl):
     dims = [4, 5, 6]
     data = np.arange(np.prod(dims)).reshape(dims)

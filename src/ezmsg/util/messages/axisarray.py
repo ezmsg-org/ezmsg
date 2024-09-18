@@ -1,5 +1,4 @@
 import math
-import time
 import typing
 
 from contextlib import contextmanager
@@ -11,7 +10,7 @@ import numpy.lib.stride_tricks as nps
 
 from ezmsg.core.util import either_dict_or_kwargs
 
-# TODO: Typehinting is all wrong in this and 
+# TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
 
 
@@ -20,9 +19,13 @@ class AxisArray:
     """
     A lightweight message class comprising a numpy ndarray and its metadata.
     """
+
     data: npt.NDArray
     dims: typing.List[str]
     axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory=dict)
+    key: str = ""
+
+    T = typing.TypeVar("T", bound="AxisArray")
 
     @dataclass
     class Axis:
@@ -69,19 +72,18 @@ class AxisArray:
             raise ValueError("dims contains repeated dim names")
 
     def isel(
-        self,
+        self: T,
         indexers: typing.Optional[typing.Any] = None,
-        **indexers_kwargs: typing.Any
-    ) -> "AxisArray":
-        
-        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, 'isel')
+        **indexers_kwargs: typing.Any,
+    ) -> T:
+        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, "isel")
 
         out_axes = {an: a for an, a in self.axes.items()}
         out_data = self.data
 
         for axis_name, ix in indexers.items():
             if not isinstance(ix, (np.ndarray, int, slice)):
-                raise ValueError('isel only accepts arrays, ints, or slices')
+                raise ValueError("isel only accepts arrays, ints, or slices")
             ax = self.ax(axis_name)
             indices = np.arange(len(ax))
 
@@ -99,12 +101,11 @@ class AxisArray:
         return replace(self, data=out_data, axes=out_axes)
 
     def sel(
-        self, 
+        self: T,
         indexers: typing.Optional[typing.Any] = None,
-        **indexers_kwargs: typing.Any
-    ) -> "AxisArray":
-        
-        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, 'sel')
+        **indexers_kwargs: typing.Any,
+    ) -> T:
+        indexers = either_dict_or_kwargs(indexers, indexers_kwargs, "sel")
 
         out_indexers = dict()
         for axis_name, ix in indexers.items():
@@ -115,7 +116,7 @@ class AxisArray:
             stop = int(axis.index(ix.stop)) if ix.stop is not None else None
             step = int(ix.step / axis.gain) if ix.step is not None else None
             out_indexers[axis_name] = slice(start, stop, step)
-            
+
         return self.isel(**out_indexers)
 
     @property
@@ -156,6 +157,23 @@ class AxisArray:
     def as2d(self, dim: typing.Union[str, int]) -> npt.NDArray:
         return as2d(self.data, self.axis_idx(dim))
 
+    def iter_over_axis(
+        self: T, axis: typing.Union[str, int]
+    ) -> typing.Generator[T, None, None]:
+        axis_idx = self.axis_idx(axis)
+        dim_name = self.dims[axis_idx]
+        new_dims = [d for i, d in enumerate(self.dims) if i != axis_idx]
+        new_axes = {d: a for d, a in self.axes.items() if d != dim_name}
+
+        for it_data in np.moveaxis(self.data, axis_idx, 0):
+            it_aa = replace(
+                self,
+                data=it_data,
+                dims=new_dims,
+                axes=new_axes,
+            )
+            yield it_aa
+
     @contextmanager
     def view2d(
         self, dim: typing.Union[str, int]
@@ -168,8 +186,14 @@ class AxisArray:
 
     @staticmethod
     def concatenate(
-        *aas: "AxisArray", dim: str, axis: typing.Optional[Axis] = None
-    ) -> "AxisArray":
+        *aas: T,
+        dim: str,
+        axis: typing.Optional[Axis] = None,
+        filter_key: typing.Optional[str] = None
+    ) -> T:
+        if filter_key is not None:
+            aas = [aa for aa in aas if aa.key == filter_key]
+
         aa_0 = aas[0]
         for aa in aas[1:]:
             if aa.dims != aa_0.dims:
@@ -177,6 +201,7 @@ class AxisArray:
 
         new_dims = [d for d in aa_0.dims]
         new_axes = {ax_name: ax for ax_name, ax in aa_0.axes.items()}
+        new_key = aa_0.key if all(aa.key == aa_0.key for aa in aas) else ""
 
         if axis is not None:
             new_axes[dim] = axis
@@ -186,20 +211,20 @@ class AxisArray:
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes)
+            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
 
         else:
             new_data = np.array(all_data)
             new_dims = [dim] + new_dims
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes)
+            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
 
     @staticmethod
     def transpose(
-        aa: "AxisArray",
+        aa: T,
         dims: typing.Optional[
             typing.Union[typing.Iterable[str], typing.Iterable[int]]
         ] = None,
-    ) -> "AxisArray":
+    ) -> T:
         dims = reversed(range(aa.data.ndim)) if dims is None else dims
         dim_indices = [aa.axis_idx(d) for d in dims]
         new_dims = [aa.dims[d] for d in dim_indices]
@@ -207,7 +232,9 @@ class AxisArray:
         return replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
 
 
-def slice_along_axis(in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: int) -> npt.NDArray:
+def slice_along_axis(
+    in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: int
+) -> npt.NDArray:
     """
     Slice the input array along a specified axis using the given slice object or integer index.
      Integer arguments to `sl` will cause the sliced dimension to be dropped.
@@ -225,10 +252,14 @@ def slice_along_axis(in_arr: npt.NDArray, sl: typing.Union[slice, int], axis: in
         ValueError: If the axis value is invalid for the input array.
     """
     if axis < -in_arr.ndim or axis >= in_arr.ndim:
-        raise ValueError(f"Invalid axis value {axis} for input array with {in_arr.ndim} dimensions.")
+        raise ValueError(
+            f"Invalid axis value {axis} for input array with {in_arr.ndim} dimensions."
+        )
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
-    all_slice = (slice(None),) * axis + (sl,) + (slice(None),) * (in_arr.ndim - axis - 1)
+    all_slice = (
+        (slice(None),) * axis + (sl,) + (slice(None),) * (in_arr.ndim - axis - 1)
+    )
     return in_arr[all_slice]
 
 
@@ -260,14 +291,21 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
     """
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
-    out_strides = in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis+1:]
-    out_shape = in_arr.shape[:axis] + (in_arr.shape[axis]-(nwin-1),) + (nwin,) + in_arr.shape[axis+1:]
+    out_strides = (
+        in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
+    )
+    out_shape = (
+        in_arr.shape[:axis]
+        + (in_arr.shape[axis] - (nwin - 1),)
+        + (nwin,)
+        + in_arr.shape[axis + 1 :]
+    )
     return nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
 
 
 def _as2d(
     in_arr: npt.NDArray, axis: int = 0
-) -> typing.Tuple[npt.NDArray, typing.Tuple[int]]:
+) -> typing.Tuple[npt.NDArray, typing.Tuple[int, ...]]:
     arr = in_arr
     if arr.ndim == 0:
         arr = arr.reshape(1, 1)

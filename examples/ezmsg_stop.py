@@ -23,7 +23,7 @@ class MessageGeneratorSettings(ez.Settings):
 
 
 class MessageGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
 
     OUTPUT = ez.OutputStream(SimpleMessage)
 
@@ -47,8 +47,8 @@ class MessageReceiverState(ez.State):
 
 
 class MessageReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
 
     INPUT = ez.InputStream(SimpleMessage)
 
@@ -71,7 +71,7 @@ class ToySystemSettings(ez.Settings):
 
 
 class ToySystem(ez.Collection):
-    SETTINGS: ToySystemSettings
+    SETTINGS = ToySystemSettings
 
     # Publishers
     SIMPLE_PUB = MessageGenerator()
@@ -98,12 +98,12 @@ class ToySystem(ez.Collection):
 def main():
     test_filename = "./test.txt"
     num_messages = 5
-    with open(test_filename, "w") as f:
+    with open(test_filename, "w") as _:
         ...
     system = ToySystem(
         ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
-    ez.run(SYSTEM = system)
+    ez.run(SYSTEM=system)
 
     results = []
     with open(test_filename, "r") as file:

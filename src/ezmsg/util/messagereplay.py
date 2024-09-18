@@ -22,6 +22,7 @@ class ReplayStatusMessage:
         total: Number of messages in the file.
         done: Whether the file has finished replaying.
     """
+
     filename: Path
     idx: int
     total: int
@@ -39,6 +40,7 @@ class FileReplayMessage:
             0 = realtime (if timestamps in file)
             If not specified, messages will publish as fast as possible.
     """
+
     filename: typing.Optional[Path] = None
     rate: typing.Optional[float] = None  # Hz
 
@@ -50,6 +52,7 @@ class MessageReplaySettings(ez.Settings, FileReplayMessage):
     Args:
         progress: will use tqdm to indicate progress through the file. tqdm must be installed.
     """
+
     progress: bool = False
 
 
@@ -65,8 +68,8 @@ class MessageReplay(ez.Unit):
     Stores a queue of files to stream and streams from them in order.
     """
 
-    SETTINGS: MessageReplaySettings
-    STATE: MessageReplayState
+    SETTINGS = MessageReplaySettings
+    STATE = MessageReplayState
 
     INPUT_FILE = ez.InputStream(FileReplayMessage)
     """Add a new file to the queue."""
@@ -213,7 +216,7 @@ class MessageCollector(ez.Unit):
     Collects ``Messages`` into a local list.
     """
 
-    STATE: MessageCollectorState
+    STATE = MessageCollectorState
 
     INPUT_MESSAGE = ez.InputStream(typing.Any)
     """Send messages here to be collected."""

@@ -18,7 +18,7 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.intersphinx",
     "sphinx.ext.linkcode",
-    "sphinx.ext.napoleon"
+    "sphinx.ext.napoleon",
 ]
 
 intersphinx_mapping = {
@@ -46,15 +46,14 @@ sigproc_code_url = f"https://github.com/ezmsg-org/ezmsg-sigproc/blob/{branch}/"
 
 
 def linkcode_resolve(domain, info):
-    if domain != 'py':
+    if domain != "py":
         return None
-    if not info['module']:
+    if not info["module"]:
         return None
-    filename = info['module'].replace('.', '/')
+    filename = info["module"].replace(".", "/")
     if "sigproc" in filename:
         return f"{sigproc_code_url}src/{filename}.py"
     elif "core" in filename:
         return f"{code_url}src/ezmsg/core/__init__.py"
     else:
         return f"{code_url}src/{filename}.py"
-

@@ -1,5 +1,4 @@
 import json
-import time
 import pickle
 import base64
 import typing
@@ -26,8 +25,7 @@ NDARRAY_DATA = "data"
 
 
 @dataclass
-class LogStart:
-    ...
+class LogStart: ...
 
 
 def type_str(obj: typing.Any) -> str:
@@ -124,8 +122,8 @@ def message_log(
     fname: Path, return_object: bool = True
 ) -> typing.Generator[typing.Any, None, None]:
     with open(fname, "r") as f:
-        for l in f:
-            obj = json.loads(l, cls=MessageDecoder)
+        for line in f:
+            obj = json.loads(line, cls=MessageDecoder)
             if isinstance(obj["obj"], LogStart):
                 continue
             if return_object is True:

@@ -13,16 +13,15 @@ from ezmsg.util.gen_to_unit import gen_to_unit
 
 from ez_test_utils import (
     get_test_fn,
-    MessageGenerator, MessageGeneratorSettings,
-    MessageReceiverSettings, MessageReceiverState
+    MessageGenerator,
+    MessageGeneratorSettings,
+    MessageReceiverSettings,
+    MessageReceiverState,
 )
 
 
 def undecorated_generator(
-    arg_untyped,
-    arg_typed: int,
-    kwarg_untyped=None,
-    kwarg_typed: bool = True
+    arg_untyped, arg_typed: int, kwarg_untyped=None, kwarg_typed: bool = True
 ) -> typing.Generator[typing.Any, typing.Any, None]:
     """
     Do-nothing generator to test func inspection.
@@ -37,14 +36,11 @@ def undecorated_generator(
 
 @consumer
 def decorated_generator(
-    arg_untyped,
-    arg_typed: int,
-    kwarg_untyped=None,
-    kwarg_typed: bool = True
+    arg_untyped, arg_typed: int, kwarg_untyped=None, kwarg_typed: bool = True
 ) -> typing.Generator[typing.Any, typing.Any, None]:
     """
-        Do-nothing generator to test func inspection.
-        """
+    Do-nothing generator to test func inspection.
+    """
     msg_in = None
     msg_out = None
 
@@ -60,7 +56,7 @@ def test_gen_to_unit_settings():
         assert isinstance(MyUnit, ez.unit.UnitMeta)  # Why not ez.Unit?
         with pytest.raises(TypeError):
             # Fails on missing positional arguments
-            def_settings = MySettings()
+            MySettings()
 
         settings = MySettings(None, 0)
         assert settings.arg_untyped is None
@@ -77,7 +73,7 @@ def test_gen_to_unit_settings():
 
 @consumer
 def my_gen_func(
-        append_right: bool = True,
+    append_right: bool = True,
 ) -> typing.Generator[typing.List[typing.Any], typing.Any, None]:
     """
     Basic generator function used for testing. It returns the accumulated inputs.
@@ -100,7 +96,7 @@ def my_gen_func(
 
 @consumer
 def my_gen_func_axarr(
-        axis: str = "time",
+    axis: str = "time",
 ) -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Basic generator function used for testing. It returns the accumulated inputs
@@ -139,8 +135,8 @@ def test_gen_funcs():
 
 
 class MessageAnyReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
 
     INPUT = ez.InputStream(typing.List[typing.Any])
 
@@ -170,14 +166,14 @@ def test_gen_to_unit_any():
     comps = {
         "SIMPLE_PUB": MessageGenerator(num_msgs=num_msgs),
         "MYUNIT": MyUnit(),
-        "SIMPLE_SUB": MessageAnyReceiver(num_msgs=num_msgs, output_fn=test_filename)
+        "SIMPLE_SUB": MessageAnyReceiver(num_msgs=num_msgs, output_fn=test_filename),
     }
     ez.run(
         components=comps,
         connections=(
             (comps["SIMPLE_PUB"].OUTPUT, comps["MYUNIT"].INPUT),
-            (comps["MYUNIT"].OUTPUT, comps["SIMPLE_SUB"].INPUT)
-        )
+            (comps["MYUNIT"].OUTPUT, comps["SIMPLE_SUB"].INPUT),
+        ),
     )
     results = []
     with open(test_filename, "r") as file:
@@ -191,7 +187,7 @@ def test_gen_to_unit_any():
 
 
 class AxarrGenerator(ez.Unit):
-    SETTINGS: MessageGeneratorSettings
+    SETTINGS = MessageGeneratorSettings
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.publisher(OUTPUT_SIGNAL)
@@ -202,8 +198,8 @@ class AxarrGenerator(ez.Unit):
 
 
 class AxarrReceiver(ez.Unit):
-    STATE: MessageReceiverState
-    SETTINGS: MessageReceiverSettings
+    STATE = MessageReceiverState
+    SETTINGS = MessageReceiverSettings
     INPUT_SIGNAL = ez.InputStream(AxisArray)
 
     @ez.subscriber(INPUT_SIGNAL)
@@ -231,14 +227,14 @@ def test_gen_to_unit_axarr():
     comps = {
         "SIMPLE_PUB": AxarrGenerator(num_msgs=num_msgs),
         "MYUNIT": MyUnit(),
-        "SIMPLE_SUB": AxarrReceiver(num_msgs=num_msgs, output_fn=test_filename)
+        "SIMPLE_SUB": AxarrReceiver(num_msgs=num_msgs, output_fn=test_filename),
     }
     ez.run(
         components=comps,
         connections=(
             (comps["SIMPLE_PUB"].OUTPUT_SIGNAL, comps["MYUNIT"].INPUT_SIGNAL),
-            (comps["MYUNIT"].OUTPUT_SIGNAL, comps["SIMPLE_SUB"].INPUT_SIGNAL)
-        )
+            (comps["MYUNIT"].OUTPUT_SIGNAL, comps["SIMPLE_SUB"].INPUT_SIGNAL),
+        ),
     )
     results = []
     with open(test_filename, "r") as file:
@@ -246,8 +242,10 @@ def test_gen_to_unit_axarr():
         for line in lines:
             results.append(json.loads(line))
     os.remove(test_filename)
-    assert np.array_equal(results[-1][f"{num_msgs}"], np.hstack([np.arange(_) for _ in range(num_msgs)]))
+    assert np.array_equal(
+        results[-1][f"{num_msgs}"], np.hstack([np.arange(_) for _ in range(num_msgs)])
+    )
     assert len(results) == num_msgs
 
 
-# TODO: test compose, GenState, Gen, GenAxisArray
+# TODO: test compose, GenState, Gen
