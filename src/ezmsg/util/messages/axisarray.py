@@ -170,7 +170,7 @@ class AxisArray:
         for dim, fs in axes_kwargs.items():
             if dim not in self.axes.keys():
                 raise KeyError(f"{dim=} not a valid axis to resample.")
-            self.axes[dim] = AxisArray.Axis.TimeAxis(fs)
+            self.axes[dim] = AxisArray.Axis.TimeAxis(fs, offset=self.axes[dim].offset)
         return self
 
     def as2d(self, dim: typing.Union[str, int]) -> npt.NDArray:

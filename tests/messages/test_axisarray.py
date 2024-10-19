@@ -236,7 +236,7 @@ def test_resample_axes():
         data=np.arange(5000).reshape((1000, 5)),
         dims=["Time", "Channels"],
         axes={
-            "Time": AxisArray.Axis.TimeAxis(fs=1000),
+            "Time": AxisArray.Axis.TimeAxis(fs=1000, offset=100),
             "Channels": AxisArray.Axis()
         },
         new_field = 5
@@ -245,4 +245,4 @@ def test_resample_axes():
     result = modify(msg)
     assert type(result) == CostumAxisArray
     assert result.new_field == 5
-    assert result.axes["Time"] == AxisArray.Axis.TimeAxis(fs=500)
+    assert result.axes["Time"] == AxisArray.Axis.TimeAxis(fs=500, offset=100)
