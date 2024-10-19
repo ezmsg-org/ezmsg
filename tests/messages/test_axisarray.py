@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ezmsg.util.messages.axisarray import (
     AxisArray,
@@ -219,3 +219,30 @@ def test_sliding_win_oneaxis(nwin: int, axis: int):
     expected = np.moveaxis(expected, -1, dest_ax + 1)
     assert np.array_equal(res, expected)
     assert np.shares_memory(res, expected)
+
+
+def test_resample_axes():
+    @dataclass
+    class CostumAxisArray(AxisArray):
+        """ Dummy class extending AxisArray """
+        new_field: int = 0
+
+    def modify(msg: AxisArray) -> AxisArray:
+        """ Do some modifications on the AxisArray that changes the sampling frequency """
+        data = msg.data[::2]
+        return replace(msg, data=data).resample_axes(Time=500)
+
+    msg = CostumAxisArray(
+        data=np.arange(5000).reshape((1000, 5)),
+        dims=["Time", "Channels"],
+        axes={
+            "Time": AxisArray.Axis.TimeAxis(fs=1000),
+            "Channels": AxisArray.Axis()
+        },
+        new_field = 5
+    )
+
+    result = modify(msg)
+    assert type(result) == CostumAxisArray
+    assert result.new_field == 5
+    assert result.axes["Time"] == AxisArray.Axis.TimeAxis(fs=500)

@@ -154,6 +154,25 @@ class AxisArray:
         """Deprecated; use axis_idx instead"""
         return self.axis_idx(dim)
 
+    def resample_axes(self, **axes_kwargs: typing.Any) -> "AxisArray":
+        """
+        Resample specified axes to a new sampling frequency.
+
+        Args:
+            **axes_kwargs: Key-value pairs of existing axes and their new sampling rates.
+
+        Returns:
+            The modified instance of the AxisArray.
+
+        Raises:
+            KeyError: If the axis dimension does not exist.
+        """
+        for dim, fs in axes_kwargs.items():
+            if dim not in self.axes.keys():
+                raise KeyError(f"{dim=} not a valid axis to resample.")
+            self.axes[dim] = AxisArray.Axis.TimeAxis(fs)
+        return self
+
     def as2d(self, dim: typing.Union[str, int]) -> npt.NDArray:
         return as2d(self.data, self.axis_idx(dim))
 
