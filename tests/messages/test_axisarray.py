@@ -192,7 +192,8 @@ def test_slice_along_axis(axis: int, sl):
 
 @pytest.mark.parametrize("nwin", [0, 3, 8])
 @pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
-def test_sliding_win_oneaxis(nwin: int, axis: int):
+@pytest.mark.parametrize("step", [1, 2])
+def test_sliding_win_oneaxis(nwin: int, axis: int, step: int):
     import numpy.lib.stride_tricks as nps
 
     dims = [4, 5, 6]
@@ -200,22 +201,25 @@ def test_sliding_win_oneaxis(nwin: int, axis: int):
 
     if axis < -len(dims) or axis >= len(dims):
         with pytest.raises(IndexError):
-            sliding_win_oneaxis(data, nwin, axis)
+            sliding_win_oneaxis(data, nwin, axis, step)
         return
 
     if nwin > dims[axis]:
         with pytest.raises(ValueError):
-            sliding_win_oneaxis(data, nwin, axis)
+            sliding_win_oneaxis(data, nwin, axis, step)
         return
 
-    res = sliding_win_oneaxis(data, nwin, axis)
+    res = sliding_win_oneaxis(data, nwin, axis, step)
 
     if nwin == 0:
         assert res.size == 0
         return
 
     expected = nps.sliding_window_view(data, nwin, axis)
+    # Note: sliding window inserted at end, and trimmed axis left in place.
     dest_ax = axis if axis >= 0 else len(dims) + axis
     expected = np.moveaxis(expected, -1, dest_ax + 1)
+    if step > 1:
+        expected = slice_along_axis(expected, slice(None, None, step), dest_ax)
     assert np.array_equal(res, expected)
     assert np.shares_memory(res, expected)

@@ -263,7 +263,7 @@ def slice_along_axis(
     return in_arr[all_slice]
 
 
-def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArray:
+def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int, step: int = 1) -> npt.NDArray:
     """
     Generates a view of an array using a sliding window of specified length along a specified axis of the input array.
     This is a slightly optimized version of nps.sliding_window_view with a few important differences:
@@ -279,6 +279,7 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
         in_arr: The input array.
         nwin: The size of the sliding window.
         axis: The axis along which the sliding window will be applied.
+        step: The size of the step between windows. If > 1, the strided window will be sliced with `slice_along_axis`
 
     Returns:
         A view to the input array with the sliding window applied.
@@ -291,16 +292,19 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
     """
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
+    out_shape = (
+            in_arr.shape[:axis]
+            + (in_arr.shape[axis] - (nwin - 1),)
+            + (nwin,)
+            + in_arr.shape[axis + 1:]
+    )
     out_strides = (
         in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
     )
-    out_shape = (
-        in_arr.shape[:axis]
-        + (in_arr.shape[axis] - (nwin - 1),)
-        + (nwin,)
-        + in_arr.shape[axis + 1 :]
-    )
-    return nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
+    result = nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
+    if step > 1:
+        result = slice_along_axis(result, slice(None, None, step), axis)
+    return result
 
 
 def _as2d(
