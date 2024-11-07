@@ -23,6 +23,8 @@ class AxisArray:
     data: npt.NDArray
     dims: typing.List[str]
     axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory=dict)
+    coords: typing.Dict[str, "AxisArray"] = field(default_factory=dict)
+    attrs: typing.Dict[str, typing.Any] = field(default_factory=dict)
     key: str = ""
 
     T = typing.TypeVar("T", bound="AxisArray")
