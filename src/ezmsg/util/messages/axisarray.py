@@ -46,10 +46,10 @@ class LinearAxis(AxisBase):
     def index(self, v):
         return np.round((v - self.offset) / self.gain)
 
-    
-def TimeAxis(fs: float, offset: float = 0.0) -> LinearAxis:
-    """Convenience method to construct a LinearAxis for time"""
-    return LinearAxis(unit="s", gain=1.0 / fs, offset=offset)
+    @classmethod
+    def create_time_axis(cls, fs: float, offset: float = 0.0) -> "LinearAxis":
+        """Convenience method to construct a LinearAxis for time"""
+        return cls(unit="s", gain=1.0 / fs, offset=offset)
 
 
 @dataclass
@@ -107,7 +107,7 @@ class AxisArray(ArrayWithNamedDims):
         def index(self, val):
             return np.round((val - self.offset) / self.gain) 
 
-    TimeAxis = TimeAxis
+    TimeAxis = LinearAxis.create_time_axis
     LinearAxis = LinearAxis
     CoordinateAxis = CoordinateAxis
 
