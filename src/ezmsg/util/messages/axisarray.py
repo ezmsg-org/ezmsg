@@ -1,6 +1,8 @@
 import math
 import typing
+import warnings
 
+from abc import abstractmethod, ABC
 from contextlib import contextmanager
 from dataclasses import field, dataclass, replace
 
@@ -13,65 +15,130 @@ from ezmsg.core.util import either_dict_or_kwargs
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
 
+@dataclass
+class AxisBase(ABC):
+    unit: str = ""
+
+    @typing.overload
+    def value(self, x: int) -> typing.Any: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray: ...
+    @abstractmethod
+    def value(self, x):
+        raise NotImplementedError
 
 @dataclass
-class AxisArray:
-    """
-    A lightweight message class comprising a numpy ndarray and its metadata.
-    """
+class LinearAxis(AxisBase):
+    gain: float = 1.0
+    offset: float = 0.0
 
+    @typing.overload
+    def value(self, x: int) -> float: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray[np.float_]: ...
+    def value(self, x):
+        return (x * self.gain) + self.offset
+
+    @typing.overload
+    def index(self, v: float) -> int: ...
+    @typing.overload
+    def index(self, v: npt.NDArray[np.float_]) -> npt.NDArray[np.int_]: ...
+    def index(self, v):
+        return np.round((v - self.offset) / self.gain)
+
+    
+def TimeAxis(fs: float, offset: float = 0.0) -> LinearAxis:
+    """Convenience method to construct a LinearAxis for time"""
+    return LinearAxis(unit="s", gain=1.0 / fs, offset=offset)
+
+
+@dataclass
+class ArrayWithNamedDims:
     data: npt.NDArray
     dims: typing.List[str]
-    axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory=dict)
-    coords: typing.Dict[str, "AxisArray"] = field(default_factory=dict)
-    attrs: typing.Dict[str, typing.Any] = field(default_factory=dict)
-    key: str = ""
-
-    T = typing.TypeVar("T", bound="AxisArray")
-
-    @dataclass
-    class Axis:
-        unit: str = ""
-        gain: float = 1.0
-        offset: float = 0.0
-
-        @classmethod
-        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
-            """
-            Creates a time axis with dimension of seconds.
-            Specify fs in units of Hz (1.0/sec)
-            NOTE: offset corresponds to idx[0] on this dimension!
-            """
-            return cls(unit="s", gain=1.0 / fs, offset=offset)
-
-        def units(self, idx):
-            return (idx * self.gain) + self.offset
-
-        def index(self, val):
-            return np.round((val - self.offset) / self.gain)
-
-    @dataclass(frozen=True)
-    class AxisInfo:
-        axis: "AxisArray.Axis"
-        idx: int
-        size: int
-
-        def __len__(self) -> int:
-            return self.size
-
-        @property
-        def indices(self) -> npt.NDArray[np.int_]:
-            return np.arange(self.size)
-
-        @property
-        def values(self) -> npt.NDArray:
-            return self.axis.units(self.indices)
 
     def __post_init__(self):
         if len(self.dims) != self.data.ndim:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
+
+
+@dataclass
+class CoordinateAxis(AxisBase, ArrayWithNamedDims):
+    
+    @typing.overload
+    def value(self, x: int) -> typing.Any: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray: ...
+    def value(self, x):
+        return self.data[x]
+
+
+@dataclass
+class AxisArray(ArrayWithNamedDims):
+    """
+    A lightweight message class comprising a numpy ndarray and its metadata.
+    """
+    axes: typing.Dict[str, AxisBase] = field(default_factory=dict)
+    attrs: typing.Dict[str, typing.Any] = field(default_factory=dict)
+    key: str = ""
+
+    T = typing.TypeVar("T", bound="AxisArray")
+
+    @dataclass
+    class Axis(LinearAxis):
+        # deprecated backward compatibility
+        def __post_init__(self) -> None:
+            warnings.warn(
+                "AxisArray.Axis is a deprecated alias for LinearAxis",
+                DeprecationWarning,
+                stacklevel = 2 
+            )
+
+        @classmethod
+        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
+            return cls(unit="s", gain=1.0 / fs, offset=offset)
+        
+        def units(self, idx):
+            # NOTE: This is poorly named anyway, it should have been `value`
+            return (idx * self.gain) + self.offset
+
+        def index(self, val):
+            return np.round((val - self.offset) / self.gain) 
+
+    TimeAxis = TimeAxis
+    LinearAxis = LinearAxis
+    CoordinateAxis = CoordinateAxis
+
+    @dataclass(frozen=True)
+    class AxisInfo:
+        axis: AxisBase
+        idx: int
+        size: typing.Optional[int] = None
+
+        def __post_init__(self) -> None:
+            if not isinstance(self.axis, CoordinateAxis) and self.size is None:
+                raise ValueError("must define size if not using CoordinateAxis")
+            elif isinstance(self.axis, CoordinateAxis) and self.size is not None:
+                raise ValueError("must not define size if using CoordinateAxis")
+
+        def __len__(self) -> int:
+            if self.size is None:
+                if isinstance(self.axis, CoordinateAxis):
+                    return self.axis.data.size
+                else:
+                    raise ValueError
+            else: 
+                return self.size
+
+        @property
+        def indices(self) -> npt.NDArray[np.int_]:
+            return np.arange(len(self))
+
+        @property
+        def values(self) -> npt.NDArray:
+            return self.axis.value(self.indices)
 
     def isel(
         self: T,
@@ -97,7 +164,7 @@ class AxisArray:
                 indices = np.take(indices, ix, 0)
 
             if axis_name in out_axes:
-                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
+                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.value(indices[0]))
             out_data = np.take(out_data, indices, ax.idx)
 
         return replace(self, data=out_data, axes=out_axes)
@@ -114,6 +181,8 @@ class AxisArray:
             axis = self.get_axis(axis_name)
             if not isinstance(ix, slice):
                 raise ValueError("sel only supports slices for now")
+            if not isinstance(axis, LinearAxis):
+                raise ValueError("sel only supports LinearAxis for now")
             start = int(axis.index(ix.start)) if ix.start is not None else None
             stop = int(axis.index(ix.stop)) if ix.stop is not None else None
             step = int(ix.step / axis.gain) if ix.step is not None else None
@@ -133,13 +202,13 @@ class AxisArray:
             axis=self.get_axis(axis_name), idx=axis_idx, size=self.shape[axis_idx]
         )
 
-    def get_axis(self, dim: typing.Union[str, int]) -> Axis:
+    def get_axis(self, dim: typing.Union[str, int]) -> AxisBase:
         if isinstance(dim, int):
             dim = self.get_axis_name(dim)
         if dim not in self.dims:
             raise ValueError(f"{dim=} not present in object")
-        return self.axes.get(dim, AxisArray.Axis())
-
+        return self.axes.get(dim, LinearAxis()) # backward compat
+            
     def get_axis_name(self, dim: int) -> str:
         return self.dims[dim]
 
@@ -194,7 +263,7 @@ class AxisArray:
         filter_key: typing.Optional[str] = None
     ) -> T:
         if filter_key is not None:
-            aas = [aa for aa in aas if aa.key == filter_key]
+            aas = tuple([aa for aa in aas if aa.key == filter_key])
 
         aa_0 = aas[0]
         for aa in aas[1:]:
