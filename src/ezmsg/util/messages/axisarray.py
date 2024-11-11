@@ -26,6 +26,19 @@ class AxisBase(ABC):
     @abstractmethod
     def value(self, x):
         raise NotImplementedError
+    
+    def __eq__(self, other):
+        try:
+            for k, v in self.__dict__.items():
+                if isinstance(v, np.ndarray):
+                    if not (v == getattr(other, k)).all():
+                        return False
+                elif v != getattr(other, k):
+                    return False
+        except AttributeError:
+            return False
+
+        return True
 
 @dataclass
 class LinearAxis(AxisBase):
@@ -44,7 +57,7 @@ class LinearAxis(AxisBase):
     @typing.overload
     def index(self, v: npt.NDArray[np.float_]) -> npt.NDArray[np.int_]: ...
     def index(self, v):
-        return np.round((v - self.offset) / self.gain)
+        return np.round((v - self.offset) / self.gain).astype(int)
 
     @classmethod
     def create_time_axis(cls, fs: float, offset: float = 0.0) -> "LinearAxis":
