@@ -56,7 +56,7 @@ def compose(*funcs):
 
 # State class to hold the generator instance
 class GenState(ez.State):
-    gen: Generator
+    gen: Generator[Any, Any, None]
 
 
 # Abstract Unit class that uses a generator for processing messages
