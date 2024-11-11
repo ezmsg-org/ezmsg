@@ -11,7 +11,7 @@ from ..generator import consumer, GenState
 
 @consumer
 def modify_axis(
-    name_map: typing.Optional[typing.Dict[str, str]] = None,
+    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None,
 ) -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Modify an AxisArray's axes and dims according to a name_map.
@@ -55,7 +55,7 @@ def modify_axis(
 
 
 class ModifyAxisSettings(ez.Settings):
-    name_map: typing.Optional[typing.Dict[str, str]] = None
+    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None
 
 
 class ModifyAxis(ez.Unit):

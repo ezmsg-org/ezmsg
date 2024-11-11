@@ -20,7 +20,7 @@ def test_set_key():
     input_ax_arr = AxisArray(
         data=np.arange(60).reshape(3, 5, 4),
         dims=["step", "freq", "ch"],
-        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)},
+        axes={"step": AxisArray.TimeAxis(fs=10.0, offset=0.0)},
         key="old key"
     )
     backup = copy.deepcopy(input_ax_arr)
