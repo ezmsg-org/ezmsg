@@ -27,18 +27,6 @@ class AxisBase(ABC):
     def value(self, x):
         raise NotImplementedError
     
-    def __eq__(self, other):
-        try:
-            for k, v in self.__dict__.items():
-                if isinstance(v, np.ndarray):
-                    if not (v == getattr(other, k)).all():
-                        return False
-                elif v != getattr(other, k):
-                    return False
-        except AttributeError:
-            return False
-
-        return True
 
 @dataclass
 class LinearAxis(AxisBase):
@@ -75,9 +63,17 @@ class ArrayWithNamedDims:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
+        
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if other.__class__ is self.__class__:
+            if self.dims == other.dims and np.array_equal(self.data, other.data):
+                return True
+        return NotImplemented
 
 
-@dataclass
+@dataclass(eq = False)
 class CoordinateAxis(AxisBase, ArrayWithNamedDims):
     
     @typing.overload
@@ -88,7 +84,7 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         return self.data[x]
 
 
-@dataclass
+@dataclass(eq = False)
 class AxisArray(ArrayWithNamedDims):
     """
     A lightweight message class comprising a numpy ndarray and its metadata.
@@ -98,6 +94,21 @@ class AxisArray(ArrayWithNamedDims):
     key: str = ""
 
     T = typing.TypeVar("T", bound="AxisArray")
+
+    def __eq__(self, other):
+        # NOTE: ArrayWithNamedDims __eq__ checks for __class__ equivalence
+        # returns NotImplemented if classes aren't equal.  Unintuitively,
+        # NotImplemented seems to evaluate as 'True' in an if statement.
+        equal = super().__eq__(other)
+        if equal != True:
+            return equal
+        
+        # checks for AxisArray fields
+        if self.key == other.key and self.attrs == other.attrs and self.axes == other.axes:
+            return True
+        
+        return False
+
 
     @dataclass
     class Axis(LinearAxis):
