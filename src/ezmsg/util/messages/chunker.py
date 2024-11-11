@@ -43,15 +43,17 @@ def array_chunker(
     template = AxisArray(
         slice_along_axis(data, slice(None, 0), axis),
         dims=out_dims,
-        axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[0])}
+        axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[0])},
     )
 
     for chunk_ix in range(n_chunks):
-        view = slice_along_axis(data, slice(chunk_ix*chunk_len, (chunk_ix+1)*chunk_len), axis)
+        view = slice_along_axis(
+            data, slice(chunk_ix * chunk_len, (chunk_ix + 1) * chunk_len), axis
+        )
         axis_arr_out = replace(
             template,
             data=view,
-            axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[chunk_ix])}
+            axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[chunk_ix])},
         )
         yield axis_arr_out
 
@@ -80,7 +82,7 @@ class ArrayChunker(ez.Unit):
             chunk_len=self.SETTINGS.chunk_len,
             axis=self.SETTINGS.axis,
             fs=self.SETTINGS.fs,
-            tzero=self.SETTINGS.tzero
+            tzero=self.SETTINGS.tzero,
         )
 
     @ez.subscriber(INPUT_SETTINGS)
