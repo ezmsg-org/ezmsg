@@ -43,7 +43,7 @@ def array_chunker(
     template = AxisArray(
         slice_along_axis(data, slice(None, 0), axis),
         dims=out_dims,
-        axes={"time": AxisArray.Axis.TimeAxis(fs=fs, offset=tvec[0])}
+        axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[0])}
     )
 
     for chunk_ix in range(n_chunks):
@@ -51,7 +51,7 @@ def array_chunker(
         axis_arr_out = replace(
             template,
             data=view,
-            axes={"time": AxisArray.Axis.TimeAxis(fs=fs, offset=tvec[chunk_ix])}
+            axes={"time": AxisArray.TimeAxis(fs=fs, offset=tvec[chunk_ix])}
         )
         yield axis_arr_out
 

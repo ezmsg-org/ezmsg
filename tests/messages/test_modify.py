@@ -14,7 +14,7 @@ def test_modify_axis(name_map: typing.Optional[typing.Dict[str, str]]):
         data=np.arange(60).reshape(3, 5, 4),
         dims=["step", "freq", "ch"],
         axes={
-            "step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0),
+            "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
             "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
             "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"])
         },
@@ -48,7 +48,7 @@ def test_drop_axis(targ_dim_len: int):
         data=np.arange(targ_dim_len * 5 * 4).reshape(targ_dim_len, 5, 4),
         dims=["step", "freq", "ch"],
         axes={
-            "step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0),
+            "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
             "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
             "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"])
         },

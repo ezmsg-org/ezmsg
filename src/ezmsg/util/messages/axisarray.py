@@ -39,13 +39,13 @@ class LinearAxis(AxisBase):
     def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray[np.float64]: ...
     def value(self, x):
         return (x * self.gain) + self.offset
-
+    
     @typing.overload
-    def index(self, v: float) -> int: ...
+    def index(self, v: float, fn: typing.Callable = np.rint) -> int: ...
     @typing.overload
-    def index(self, v: npt.NDArray[np.float64]) -> npt.NDArray[np.int_]: ...
-    def index(self, v):
-        return np.round((v - self.offset) / self.gain).astype(int)
+    def index(self, v: npt.NDArray[np.float64], fn: typing.Callable = np.rint) -> npt.NDArray[np.int_]: ...
+    def index(self, v, fn = np.rint):
+        return fn((v - self.offset) / self.gain).astype(int)
 
     @classmethod
     def create_time_axis(cls, fs: float, offset: float = 0.0) -> "LinearAxis":
@@ -283,7 +283,7 @@ class AxisArray(ArrayWithNamedDims):
     def concatenate(
         *aas: T,
         dim: str,
-        axis: typing.Optional[Axis] = None,
+        axis: typing.Optional[AxisBase] = None,
         filter_key: typing.Optional[str] = None
     ) -> T:
         if filter_key is not None:

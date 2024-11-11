@@ -29,9 +29,9 @@ def test_axes() -> None:
         DATA,
         dims=["ch", "time", "x", "y"],
         axes={
-            "time": AxisArray.Axis.TimeAxis(fs=5.0),
-            "x": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
-            "y": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
+            "time": AxisArray.TimeAxis(fs=5.0),
+            "x": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
+            "y": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
         },
         key="spatial_sensor_array",
         ch_names=["a", "b"],
@@ -47,9 +47,9 @@ def msg_gen(
             np.ones((2, 1, x_size, y_size)) * sidx,
             dims=["ch", "time", "x", "y"],
             axes=dict(
-                time=AxisArray.Axis.TimeAxis(fs=fs, offset=sidx / fs),
-                x=AxisArray.Axis(unit="mm"),
-                y=AxisArray.Axis(unit="mm"),
+                time=AxisArray.TimeAxis(fs=fs, offset=sidx / fs),
+                x=AxisArray.LinearAxis(unit="mm"),
+                y=AxisArray.LinearAxis(unit="mm"),
             ),
             key="spatial_sensor_array",
             ch_names=["a", "b"],
@@ -79,7 +79,7 @@ def test_concat() -> None:
     assert x_cat.shape[x_cat.get_axis_idx("x")] == (x_size * num_batches)
 
     batch_cat = AxisArray.concatenate(
-        *batches, dim="batch", axis=AxisArray.Axis.TimeAxis(fs / batch_size)
+        *batches, dim="batch", axis=AxisArray.TimeAxis(fs / batch_size)
     )
     assert batch_cat.dims[0] == "batch"
     assert batch_cat.shape[0] == num_batches
@@ -123,7 +123,7 @@ def test_view2d(data: np.ndarray):
             data.copy(),
             dims=_dims,
             axes=dict(
-                time=AxisArray.Axis.TimeAxis(fs=5.0),
+                time=AxisArray.TimeAxis(fs=5.0),
             ),
         )
 
@@ -142,7 +142,7 @@ def test_sel():
     offset = -50
     data = (np.arange(400) * gain) + offset
     aa = AxisArray(
-        data, dims=["dim0"], axes=dict(dim0=AxisArray.Axis(gain=gain, offset=offset))
+        data, dims=["dim0"], axes=dict(dim0=AxisArray.LinearAxis(gain=gain, offset=offset))
     )
 
     aa_sl = aa.sel(dim0=slice(-10.75, 1.5))  # slice based on axis info
