@@ -16,7 +16,7 @@ def test_modify_axis(name_map: typing.Optional[typing.Dict[str, typing.Optional[
         axes={
             "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
             "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
-            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"])
+            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"]),
         },
         key="test_modify_axis",
     )
@@ -50,7 +50,7 @@ def test_drop_axis(targ_dim_len: int):
         axes={
             "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
             "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
-            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"])
+            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"]),
         },
         key="test_drop_axis",
     )
@@ -67,4 +67,3 @@ def test_drop_axis(targ_dim_len: int):
         assert "ch" in res.dims
         assert "ch" in res.axes
         assert res.data.shape == (5, 4)
-

@@ -15,6 +15,7 @@ from ezmsg.core.util import either_dict_or_kwargs
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
 
+
 @dataclass
 class AxisBase(ABC):
     unit: str = ""
@@ -26,7 +27,7 @@ class AxisBase(ABC):
     @abstractmethod
     def value(self, x):
         raise NotImplementedError
-    
+
 
 @dataclass
 class LinearAxis(AxisBase):
@@ -39,12 +40,14 @@ class LinearAxis(AxisBase):
     def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray[np.float64]: ...
     def value(self, x):
         return (x * self.gain) + self.offset
-    
+
     @typing.overload
     def index(self, v: float, fn: typing.Callable = np.rint) -> int: ...
     @typing.overload
-    def index(self, v: npt.NDArray[np.float64], fn: typing.Callable = np.rint) -> npt.NDArray[np.int_]: ...
-    def index(self, v, fn = np.rint):
+    def index(
+        self, v: npt.NDArray[np.float64], fn: typing.Callable = np.rint
+    ) -> npt.NDArray[np.int_]: ...
+    def index(self, v, fn=np.rint):
         return fn((v - self.offset) / self.gain).astype(int)
 
     @classmethod
@@ -63,7 +66,7 @@ class ArrayWithNamedDims:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
-        
+
     def __eq__(self, other):
         if self is other:
             return True
@@ -73,9 +76,8 @@ class ArrayWithNamedDims:
         return NotImplemented
 
 
-@dataclass(eq = False)
+@dataclass(eq=False)
 class CoordinateAxis(AxisBase, ArrayWithNamedDims):
-    
     @typing.overload
     def value(self, x: int) -> typing.Any: ...
     @typing.overload
@@ -84,11 +86,12 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         return self.data[x]
 
 
-@dataclass(eq = False)
+@dataclass(eq=False)
 class AxisArray(ArrayWithNamedDims):
     """
     A lightweight message class comprising a numpy ndarray and its metadata.
     """
+
     axes: typing.Dict[str, AxisBase] = field(default_factory=dict)
     attrs: typing.Dict[str, typing.Any] = field(default_factory=dict)
     key: str = ""
@@ -102,13 +105,16 @@ class AxisArray(ArrayWithNamedDims):
         equal = super().__eq__(other)
         if equal != True:
             return equal
-        
-        # checks for AxisArray fields
-        if self.key == other.key and self.attrs == other.attrs and self.axes == other.axes:
-            return True
-        
-        return False
 
+        # checks for AxisArray fields
+        if (
+            self.key == other.key
+            and self.attrs == other.attrs
+            and self.axes == other.axes
+        ):
+            return True
+
+        return False
 
     @dataclass
     class Axis(LinearAxis):
@@ -117,19 +123,19 @@ class AxisArray(ArrayWithNamedDims):
             warnings.warn(
                 "AxisArray.Axis is a deprecated alias for LinearAxis",
                 DeprecationWarning,
-                stacklevel = 2 
+                stacklevel=2,
             )
 
         @classmethod
         def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
             return cls(unit="s", gain=1.0 / fs, offset=offset)
-        
+
         def units(self, idx):
             # NOTE: This is poorly named anyway, it should have been `value`
             return (idx * self.gain) + self.offset
 
         def index(self, val):
-            return np.round((val - self.offset) / self.gain) 
+            return np.round((val - self.offset) / self.gain)
 
     TimeAxis = LinearAxis.create_time_axis
     LinearAxis = LinearAxis
@@ -153,7 +159,7 @@ class AxisArray(ArrayWithNamedDims):
                     return self.axis.data.size
                 else:
                     raise ValueError
-            else: 
+            else:
                 return self.size
 
         @property
@@ -231,8 +237,8 @@ class AxisArray(ArrayWithNamedDims):
             dim = self.get_axis_name(dim)
         if dim not in self.dims:
             raise ValueError(f"{dim=} not present in object")
-        return self.axes.get(dim, LinearAxis()) # backward compat
-            
+        return self.axes.get(dim, LinearAxis())  # backward compat
+
     def get_axis_name(self, dim: int) -> str:
         return self.dims[dim]
 
@@ -284,7 +290,7 @@ class AxisArray(ArrayWithNamedDims):
         *aas: T,
         dim: str,
         axis: typing.Optional[AxisBase] = None,
-        filter_key: typing.Optional[str] = None
+        filter_key: typing.Optional[str] = None,
     ) -> T:
         if filter_key is not None:
             aas = tuple([aa for aa in aas if aa.key == filter_key])
@@ -306,12 +312,16 @@ class AxisArray(ArrayWithNamedDims):
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
         else:
             new_data = np.array(all_data)
             new_dims = [dim] + new_dims
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
     @staticmethod
     def transpose(
@@ -358,7 +368,9 @@ def slice_along_axis(
     return in_arr[all_slice]
 
 
-def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int, step: int = 1) -> npt.NDArray:
+def sliding_win_oneaxis(
+    in_arr: npt.NDArray, nwin: int, axis: int, step: int = 1
+) -> npt.NDArray:
     """
     Generates a view of an array using a sliding window of specified length along a specified axis of the input array.
     This is a slightly optimized version of nps.sliding_window_view with a few important differences:
@@ -388,15 +400,17 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int, step: int = 1
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
     out_shape = (
-            in_arr.shape[:axis]
-            + (in_arr.shape[axis] - (nwin - 1),)
-            + (nwin,)
-            + in_arr.shape[axis + 1:]
+        in_arr.shape[:axis]
+        + (in_arr.shape[axis] - (nwin - 1),)
+        + (nwin,)
+        + in_arr.shape[axis + 1 :]
     )
     out_strides = (
         in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
     )
-    result = nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
+    result = nps.as_strided(
+        in_arr, strides=out_strides, shape=out_shape, writeable=False
+    )
     if step > 1:
         result = slice_along_axis(result, slice(None, None, step), axis)
     return result

@@ -21,7 +21,7 @@ def test_set_key():
         data=np.arange(60).reshape(3, 5, 4),
         dims=["step", "freq", "ch"],
         axes={"step": AxisArray.TimeAxis(fs=10.0, offset=0.0)},
-        key="old key"
+        key="old key",
     )
     backup = copy.deepcopy(input_ax_arr)
 
@@ -48,7 +48,12 @@ class KeyedAxarrGenerator(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def spawn(self) -> typing.AsyncGenerator:
         for i in range(self.SETTINGS.num_msgs):
-            yield self.OUTPUT_SIGNAL, AxisArray(data=np.arange(i), dims=["time"], key="odd" if i % 2 else "even")
+            yield (
+                self.OUTPUT_SIGNAL,
+                AxisArray(
+                    data=np.arange(i), dims=["time"], key="odd" if i % 2 else "even"
+                ),
+            )
         raise ez.Complete
 
 
@@ -70,7 +75,9 @@ class AxarrReceiver(ez.Unit):
 def test_set_key_unit():
     num_msgs = 20
     test_fn_raw = get_test_fn()
-    test_fn_keyed = test_fn_raw.parent / (test_fn_raw.stem + "_keyed" + test_fn_raw.suffix)
+    test_fn_keyed = test_fn_raw.parent / (
+        test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
+    )
 
     comps = {
         "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
@@ -83,16 +90,18 @@ def test_set_key_unit():
         (comps["SRC"].OUTPUT_SIGNAL, comps["KEYSETTER"].INPUT_SIGNAL),
         (comps["KEYSETTER"].OUTPUT_SIGNAL, comps["SINK_KEYED"].INPUT_SIGNAL),
     ]
-    ez.run(
-        components=comps,
-        connections=conns
-    )
+    ez.run(components=comps, connections=conns)
 
     with open(test_fn_raw, "r") as file:
         raw_results = [json.loads(_) for _ in file.readlines()]
     os.remove(test_fn_raw)
     assert len(raw_results) == num_msgs
-    assert all([_[str(ix + 1)] == ("odd" if ix % 2 else "even") for ix, _ in enumerate(raw_results)])
+    assert all(
+        [
+            _[str(ix + 1)] == ("odd" if ix % 2 else "even")
+            for ix, _ in enumerate(raw_results)
+        ]
+    )
 
     with open(test_fn_keyed, "r") as file:
         keyed_results = [json.loads(_) for _ in file.readlines()]
@@ -104,23 +113,24 @@ def test_set_key_unit():
 def test_filter_key():
     num_msgs = 20
     test_fn_raw = get_test_fn()
-    test_fn_filtered = test_fn_raw.parent / (test_fn_raw.stem + "_keyed" + test_fn_raw.suffix)
+    test_fn_filtered = test_fn_raw.parent / (
+        test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
+    )
 
     comps = {
         "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
         "FILTER": FilterOnKey(key="odd"),
         "SINK_RAW": AxarrReceiver(num_msgs=1e9, output_fn=test_fn_raw),
-        "SINK_FILTERED": AxarrReceiver(num_msgs=num_msgs // 2, output_fn=test_fn_filtered),
+        "SINK_FILTERED": AxarrReceiver(
+            num_msgs=num_msgs // 2, output_fn=test_fn_filtered
+        ),
     }
     conns = [
         (comps["SRC"].OUTPUT_SIGNAL, comps["SINK_RAW"].INPUT_SIGNAL),
         (comps["SRC"].OUTPUT_SIGNAL, comps["FILTER"].INPUT_SIGNAL),
         (comps["FILTER"].OUTPUT_SIGNAL, comps["SINK_FILTERED"].INPUT_SIGNAL),
     ]
-    ez.run(
-        components=comps,
-        connections=conns
-    )
+    ez.run(components=comps, connections=conns)
 
     with open(test_fn_raw, "r") as file:
         raw_results = [json.loads(_) for _ in file.readlines()]

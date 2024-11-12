@@ -90,18 +90,26 @@ def test_concat() -> None:
     gen = msg_gen(fs, x_size, y_size)
     single_batch = [next(gen) for _ in range(batch_size)]
     # All messages pass
-    single_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    single_batch_cat = AxisArray.concatenate(
+        *single_batch, dim="time", filter_key="spatial_sensor_array"
+    )
     assert single_batch_cat.key == "spatial_sensor_array"
     assert single_batch_cat.shape[single_batch_cat.get_axis_idx("time")] == batch_size
     # Exclude one message based on filter_key
     single_batch[0].key = "wrong key"
-    filter_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    filter_batch_cat = AxisArray.concatenate(
+        *single_batch, dim="time", filter_key="spatial_sensor_array"
+    )
     assert filter_batch_cat.key == "spatial_sensor_array"
-    assert filter_batch_cat.shape[filter_batch_cat.get_axis_idx("time")] == (batch_size - 1)
+    assert filter_batch_cat.shape[filter_batch_cat.get_axis_idx("time")] == (
+        batch_size - 1
+    )
     # No filtering, but key is reset because it is not consistent
     nofilter_batch_cat = AxisArray.concatenate(*single_batch, dim="time")
     assert nofilter_batch_cat.key == ""
-    assert nofilter_batch_cat.shape[nofilter_batch_cat.get_axis_idx("time")] == batch_size
+    assert (
+        nofilter_batch_cat.shape[nofilter_batch_cat.get_axis_idx("time")] == batch_size
+    )
 
 
 @pytest.mark.parametrize(
@@ -142,7 +150,9 @@ def test_sel():
     offset = -50
     data = (np.arange(400) * gain) + offset
     aa = AxisArray(
-        data, dims=["dim0"], axes=dict(dim0=AxisArray.LinearAxis(gain=gain, offset=offset))
+        data,
+        dims=["dim0"],
+        axes=dict(dim0=AxisArray.LinearAxis(gain=gain, offset=offset)),
     )
 
     aa_sl = aa.sel(dim0=slice(-10.75, 1.5))  # slice based on axis info

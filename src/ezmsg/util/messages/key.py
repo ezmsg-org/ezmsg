@@ -10,9 +10,7 @@ from ..generator import consumer, GenState
 
 
 @consumer
-def set_key(
-    key: str = ""
-) -> typing.Generator[AxisArray, AxisArray, None]:
+def set_key(key: str = "") -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Set the key of an AxisArray.
 
@@ -76,6 +74,7 @@ class FilterOnKey(ez.Unit):
      on key is desired but the ezmsg framework is not used, use normal Python functional programming.
      See https://github.com/ezmsg-org/ezmsg/issues/142#issuecomment-2323110318
     """
+
     SETTINGS = KeySettings
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
@@ -85,5 +84,7 @@ class FilterOnKey(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
         if message.key == self.SETTINGS.key:
-            out = replace(message, key=message.key)  # Minimal 'touch' to prevent deepcopy by framework
+            out = replace(
+                message, key=message.key
+            )  # Minimal 'touch' to prevent deepcopy by framework
             yield self.OUTPUT_SIGNAL, out
