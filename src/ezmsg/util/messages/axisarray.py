@@ -195,9 +195,7 @@ class AxisArray(ArrayWithNamedDims):
                 indices = np.take(indices, ix, 0)
 
             if axis_name in out_axes:
-                out_axes[axis_name] = replace(
-                    ax.axis, offset=ax.axis.value(indices[0])
-                )
+                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.value(indices[0]))
             out_data = np.take(out_data, indices, ax.idx)
 
         return replace(self, data=out_data, axes=out_axes)
