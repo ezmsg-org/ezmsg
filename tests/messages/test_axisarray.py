@@ -233,3 +233,36 @@ def test_sliding_win_oneaxis(nwin: int, axis: int, step: int):
         expected = slice_along_axis(expected, slice(None, None, step), dest_ax)
     assert np.array_equal(res, expected)
     assert np.shares_memory(res, expected)
+
+def xarray_available():
+    try:
+        import xarray
+        return True 
+    except ImportError:
+        return False
+
+@pytest.mark.skipif(not xarray_available(), reason = "Optional dependency 'xarray' not installed")
+def test_to_xr_dataarray():
+    
+    quality = ((np.arange(np.prod(DATA.shape[-2:])) % 3).reshape(DATA.shape[-2:]) + 1) / 3
+    aa = MultiChannelData(
+        DATA,
+        dims=["ch", "time", "x", "y"],
+        axes={
+            "time": AxisArray.TimeAxis(fs=5.0),
+            "x": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
+            "y": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
+            "quality": AxisArray.CoordinateAxis(unit = '%', data = quality, dims = ['x', 'y'])
+        },
+        key="spatial_sensor_array_with_sensor_quality_metric",
+        ch_names=["a", "b"],
+    )
+        
+    da = aa.to_xr_dataarray()
+    assert da.shape == aa.shape
+    assert da.dims == ('ch', 'time', 'x', 'y')
+    assert np.allclose(da.time.data, np.array([0.0, 0.2, 0.4, 0.6, 0.8]))
+
+    quality_data = da.where(da.quality == 1.0).stack(pixel = ['x', 'y']).dropna('pixel')
+    assert np.allclose(quality_data.x.data, np.array([-13.0, -12.8, -12.6, -12.6, -12.4]))
+    assert np.allclose(quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6]))

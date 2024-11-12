@@ -13,9 +13,14 @@ import numpy.lib.stride_tricks as nps
 from ezmsg.core.util import either_dict_or_kwargs
 from .util import replace
 
+if typing.TYPE_CHECKING:
+    try:
+        from xarray import DataArray
+    except ImportError:
+        pass
+
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
-
 
 @dataclass
 class AxisBase(ABC):
@@ -225,6 +230,18 @@ class AxisArray(ArrayWithNamedDims):
     def shape(self) -> typing.Tuple[int, ...]:
         """Shape of data"""
         return self.data.shape
+
+    def to_xr_dataarray(self) -> "DataArray":
+        from xarray import DataArray
+
+        coords = {}
+        for name, axis in self.axes.items():
+            if name in self.dims:
+                coords[name] = (name, self.ax(name).values)
+            elif isinstance(axis, CoordinateAxis):
+                coords[name] = (axis.dims, axis.data)
+
+        return DataArray(self.data, coords=coords, dims=self.dims, attrs=self.attrs)
 
     def ax(self, dim: typing.Union[str, int]) -> AxisInfo:
         axis_idx = dim if isinstance(dim, int) else self.get_axis_idx(dim)
