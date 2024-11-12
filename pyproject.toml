@@ -23,6 +23,7 @@ test = [
   "pytest-asyncio>=0.23.8",
   "pytest-cov>=5.0.0",
   "flake8>=5.0.4",
+  "xarray>=2023.1.0",
 ]
 docs = ["sphinx<=7.2", "sphinx-rtd-theme==2.0.0", "ezmsg-sigproc>=1.2.3"]
 

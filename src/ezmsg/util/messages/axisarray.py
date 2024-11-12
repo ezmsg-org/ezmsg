@@ -12,7 +12,11 @@ import numpy.lib.stride_tricks as nps
 
 from ezmsg.core.util import either_dict_or_kwargs
 
-
+if typing.TYPE_CHECKING:
+    try:
+        from xarray import DataArray
+    except ImportError:
+        pass
 
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
@@ -226,17 +230,17 @@ class AxisArray(ArrayWithNamedDims):
         """Shape of data"""
         return self.data.shape
 
-    def to_xarr_dataarray(self):
-        # try to import xarray, indicate if not installed
-        try:
-            import xarray as xr
-            coords = []
-            for dim in self.dims:
-                coords.append(self.ax(dim).values)
+    def to_xr_dataarray(self) -> "DataArray":
+        from xarray import DataArray
 
-            return xr.DataArray(self.data, coords=coords, dims=self.dims, attrs=self.attrs)
-        except ImportError:
-            raise ImportError("XArray package not found; please ensure it is installed in your environment and try again")
+        coords = {}
+        for name, axis in self.axes.items():
+            if name in self.dims:
+                coords[name] = (name, self.ax(name).values)
+            elif isinstance(axis, CoordinateAxis):
+                coords[name] = (axis.dims, axis.data)
+
+        return DataArray(self.data, coords=coords, dims=self.dims, attrs=self.attrs)
 
     def ax(self, dim: typing.Union[str, int]) -> AxisInfo:
         axis_idx = dim if isinstance(dim, int) else self.get_axis_idx(dim)
