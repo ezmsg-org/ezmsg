@@ -17,7 +17,6 @@ from ezmsg.core.util import either_dict_or_kwargs
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
 
-#attrs and xarray check if installed 
 @dataclass
 class AxisBase(ABC):
     unit: str = ""
