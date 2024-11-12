@@ -25,7 +25,7 @@ import asyncio
 import ezmsg.core as ez
 import numpy as np
 from typing import Any, Generator
-from ezmsg.util.messages.axisarray import AxisArray, fast_replace as replace
+from ezmsg.util.messages.axisarray import AxisArray, replace
 from ezmsg.util.debuglog import DebugLog
 from ezmsg.util.gen_to_unit import gen_to_unit
 from ezmsg.util.generator import consumer, compose, Gen

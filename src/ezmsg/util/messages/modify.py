@@ -4,7 +4,7 @@ import typing
 import numpy as np
 
 import ezmsg.core as ez
-from .axisarray import AxisArray, fast_replace as replace
+from .axisarray import AxisArray, replace
 from ..generator import consumer, GenState
 
 

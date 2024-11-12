@@ -7,7 +7,7 @@ from dataclasses import field, dataclass
 from pathlib import Path
 
 import ezmsg.core as ez
-from ezmsg.util.messages.axisarray import fast_replace as replace
+from ezmsg.util.messages.axisarray import replace
 
 from .messagecodec import MessageDecoder, LogStart
 

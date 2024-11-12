@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 
 import ezmsg.core as ez
-from .axisarray import AxisArray, slice_along_axis, fast_replace as replace
+from .axisarray import AxisArray, slice_along_axis, replace
 from ..generator import GenState
 
 
