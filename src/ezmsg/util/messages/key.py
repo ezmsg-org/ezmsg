@@ -1,11 +1,10 @@
-from dataclasses import replace
 import traceback
 import typing
 
 import numpy as np
 
 import ezmsg.core as ez
-from .axisarray import AxisArray
+from .axisarray import AxisArray, fast_replace as replace
 from ..generator import consumer, GenState
 
 
@@ -85,5 +84,6 @@ class FilterOnKey(ez.Unit):
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
         if message.key == self.SETTINGS.key:
-            out = replace(message, key=message.key)  # Minimal 'touch' to prevent deepcopy by framework
+            # Minimal 'touch' to prevent deepcopy by framework
+            out = replace(message, key=message.key)
             yield self.OUTPUT_SIGNAL, out

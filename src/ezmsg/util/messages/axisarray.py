@@ -2,7 +2,7 @@ import math
 import typing
 
 from contextlib import contextmanager
-from dataclasses import field, dataclass, replace
+from dataclasses import field, dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -12,6 +12,15 @@ from ezmsg.core.util import either_dict_or_kwargs
 
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
+
+
+T = typing.TypeVar("T")
+
+
+def fast_replace(arr: typing.Generic[T], **kwargs) -> T:
+    out_kwargs = arr.__dict__.copy()  # Shallow copy
+    out_kwargs.update(**kwargs)
+    return arr.__class__(**out_kwargs)
 
 
 @dataclass
@@ -95,10 +104,12 @@ class AxisArray:
                 indices = np.take(indices, ix, 0)
 
             if axis_name in out_axes:
-                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
+                out_axes[axis_name] = fast_replace(
+                    ax.axis, offset=ax.axis.units(indices[0])
+                )
             out_data = np.take(out_data, indices, ax.idx)
 
-        return replace(self, data=out_data, axes=out_axes)
+        return fast_replace(self, data=out_data, axes=out_axes)
 
     def sel(
         self: T,
@@ -166,7 +177,7 @@ class AxisArray:
         new_axes = {d: a for d, a in self.axes.items() if d != dim_name}
 
         for it_data in np.moveaxis(self.data, axis_idx, 0):
-            it_aa = replace(
+            it_aa = fast_replace(
                 self,
                 data=it_data,
                 dims=new_dims,
@@ -211,12 +222,16 @@ class AxisArray:
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return fast_replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
         else:
             new_data = np.array(all_data)
             new_dims = [dim] + new_dims
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return fast_replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
     @staticmethod
     def transpose(
@@ -229,7 +244,7 @@ class AxisArray:
         dim_indices = [aa.axis_idx(d) for d in dims]
         new_dims = [aa.dims[d] for d in dim_indices]
         new_data = np.transpose(aa.data, dim_indices)
-        return replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
+        return fast_replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
 
 
 def slice_along_axis(

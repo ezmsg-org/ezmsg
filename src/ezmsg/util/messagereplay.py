@@ -3,10 +3,11 @@ import json
 import typing
 import time
 
-from dataclasses import field, dataclass, replace
+from dataclasses import field, dataclass
 from pathlib import Path
 
 import ezmsg.core as ez
+from ezmsg.util.messages.axisarray import fast_replace as replace
 
 from .messagecodec import MessageDecoder, LogStart
 
