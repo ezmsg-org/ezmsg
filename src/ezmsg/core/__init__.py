@@ -1,4 +1,6 @@
-__version__ = "3.5.0"
+import importlib.metadata
+
+__version__ = importlib.metadata.version("ezmsg")
 
 __all__ = [
     "task",
