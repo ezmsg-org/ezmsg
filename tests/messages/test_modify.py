@@ -9,11 +9,16 @@ from ezmsg.util.messages.modify import modify_axis
 
 
 @pytest.mark.parametrize("name_map", [None, {"step": "time"}])
-def test_modify_axis(name_map: typing.Optional[typing.Dict[str, str]]):
+def test_modify_axis(name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]]):
     input_ax_arr = AxisArray(
         data=np.arange(60).reshape(3, 5, 4),
         dims=["step", "freq", "ch"],
-        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)},
+        axes={
+            "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
+            "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
+            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"]),
+        },
+        key="test_modify_axis",
     )
     backup = copy.deepcopy(input_ax_arr)
 
@@ -42,7 +47,12 @@ def test_drop_axis(targ_dim_len: int):
     input_ax_arr = AxisArray(
         data=np.arange(targ_dim_len * 5 * 4).reshape(targ_dim_len, 5, 4),
         dims=["step", "freq", "ch"],
-        axes={"step": AxisArray.Axis.TimeAxis(fs=10.0, offset=0.0)},
+        axes={
+            "step": AxisArray.TimeAxis(fs=10.0, offset=0.0),
+            "freq": AxisArray.LinearAxis(gain=1.0, offset=0.0),
+            "ch": AxisArray.CoordinateAxis(data=np.arange(4).astype(str), dims=["ch"]),
+        },
+        key="test_drop_axis",
     )
     gen = modify_axis({"step": None})
     if targ_dim_len != 1:
@@ -52,5 +62,8 @@ def test_drop_axis(targ_dim_len: int):
         res = gen.send(input_ax_arr)
         assert "step" not in res.dims
         assert "step" not in res.axes
+        assert "freq" in res.dims
+        assert "freq" in res.axes
+        assert "ch" in res.dims
+        assert "ch" in res.axes
         assert res.data.shape == (5, 4)
-

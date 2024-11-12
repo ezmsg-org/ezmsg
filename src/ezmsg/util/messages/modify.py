@@ -10,7 +10,7 @@ from ..generator import consumer, GenState
 
 @consumer
 def modify_axis(
-    name_map: typing.Optional[typing.Dict[str, str]] = None,
+    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None,
 ) -> typing.Generator[AxisArray, AxisArray, None]:
     """
     Modify an AxisArray's axes and dims according to a name_map.
@@ -34,7 +34,11 @@ def modify_axis(
             new_axes = {
                 name_map.get(old_k, old_k): v for old_k, v in axis_arr_in.axes.items()
             }
-            drop_ax_ix = [ix for ix, old_dim in enumerate(axis_arr_in.dims) if new_dims[ix] is None]
+            drop_ax_ix = [
+                ix
+                for ix, old_dim in enumerate(axis_arr_in.dims)
+                if new_dims[ix] is None
+            ]
             if len(drop_ax_ix) > 0:
                 # Rewrite new_dims and new_axes without the dropped axes
                 new_dims = [_ for _ in new_dims if _ is not None]
@@ -45,7 +49,7 @@ def modify_axis(
                     axis_arr_in,
                     data=np.squeeze(axis_arr_in.data, axis=tuple(drop_ax_ix)),
                     dims=new_dims,
-                    axes=new_axes
+                    axes=new_axes,
                 )
             else:
                 axis_arr_out = replace(axis_arr_in, dims=new_dims, axes=new_axes)
@@ -54,7 +58,7 @@ def modify_axis(
 
 
 class ModifyAxisSettings(ez.Settings):
-    name_map: typing.Optional[typing.Dict[str, str]] = None
+    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None
 
 
 class ModifyAxis(ez.Unit):

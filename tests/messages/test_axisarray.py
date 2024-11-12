@@ -29,9 +29,9 @@ def test_axes() -> None:
         DATA,
         dims=["ch", "time", "x", "y"],
         axes={
-            "time": AxisArray.Axis.TimeAxis(fs=5.0),
-            "x": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
-            "y": AxisArray.Axis(unit="mm", gain=0.2, offset=-13.0),
+            "time": AxisArray.TimeAxis(fs=5.0),
+            "x": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
+            "y": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
         },
         key="spatial_sensor_array",
         ch_names=["a", "b"],
@@ -47,9 +47,9 @@ def msg_gen(
             np.ones((2, 1, x_size, y_size)) * sidx,
             dims=["ch", "time", "x", "y"],
             axes=dict(
-                time=AxisArray.Axis.TimeAxis(fs=fs, offset=sidx / fs),
-                x=AxisArray.Axis(unit="mm"),
-                y=AxisArray.Axis(unit="mm"),
+                time=AxisArray.TimeAxis(fs=fs, offset=sidx / fs),
+                x=AxisArray.LinearAxis(unit="mm"),
+                y=AxisArray.LinearAxis(unit="mm"),
             ),
             key="spatial_sensor_array",
             ch_names=["a", "b"],
@@ -79,7 +79,7 @@ def test_concat() -> None:
     assert x_cat.shape[x_cat.get_axis_idx("x")] == (x_size * num_batches)
 
     batch_cat = AxisArray.concatenate(
-        *batches, dim="batch", axis=AxisArray.Axis.TimeAxis(fs / batch_size)
+        *batches, dim="batch", axis=AxisArray.TimeAxis(fs / batch_size)
     )
     assert batch_cat.dims[0] == "batch"
     assert batch_cat.shape[0] == num_batches
@@ -90,18 +90,26 @@ def test_concat() -> None:
     gen = msg_gen(fs, x_size, y_size)
     single_batch = [next(gen) for _ in range(batch_size)]
     # All messages pass
-    single_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    single_batch_cat = AxisArray.concatenate(
+        *single_batch, dim="time", filter_key="spatial_sensor_array"
+    )
     assert single_batch_cat.key == "spatial_sensor_array"
     assert single_batch_cat.shape[single_batch_cat.get_axis_idx("time")] == batch_size
     # Exclude one message based on filter_key
     single_batch[0].key = "wrong key"
-    filter_batch_cat = AxisArray.concatenate(*single_batch, dim="time", filter_key="spatial_sensor_array")
+    filter_batch_cat = AxisArray.concatenate(
+        *single_batch, dim="time", filter_key="spatial_sensor_array"
+    )
     assert filter_batch_cat.key == "spatial_sensor_array"
-    assert filter_batch_cat.shape[filter_batch_cat.get_axis_idx("time")] == (batch_size - 1)
+    assert filter_batch_cat.shape[filter_batch_cat.get_axis_idx("time")] == (
+        batch_size - 1
+    )
     # No filtering, but key is reset because it is not consistent
     nofilter_batch_cat = AxisArray.concatenate(*single_batch, dim="time")
     assert nofilter_batch_cat.key == ""
-    assert nofilter_batch_cat.shape[nofilter_batch_cat.get_axis_idx("time")] == batch_size
+    assert (
+        nofilter_batch_cat.shape[nofilter_batch_cat.get_axis_idx("time")] == batch_size
+    )
 
 
 @pytest.mark.parametrize(
@@ -123,7 +131,7 @@ def test_view2d(data: np.ndarray):
             data.copy(),
             dims=_dims,
             axes=dict(
-                time=AxisArray.Axis.TimeAxis(fs=5.0),
+                time=AxisArray.TimeAxis(fs=5.0),
             ),
         )
 
@@ -142,7 +150,9 @@ def test_sel():
     offset = -50
     data = (np.arange(400) * gain) + offset
     aa = AxisArray(
-        data, dims=["dim0"], axes=dict(dim0=AxisArray.Axis(gain=gain, offset=offset))
+        data,
+        dims=["dim0"],
+        axes=dict(dim0=AxisArray.LinearAxis(gain=gain, offset=offset)),
     )
 
     aa_sl = aa.sel(dim0=slice(-10.75, 1.5))  # slice based on axis info
@@ -192,7 +202,8 @@ def test_slice_along_axis(axis: int, sl):
 
 @pytest.mark.parametrize("nwin", [0, 3, 8])
 @pytest.mark.parametrize("axis", [0, 1, 2, -1, 3, -4])
-def test_sliding_win_oneaxis(nwin: int, axis: int):
+@pytest.mark.parametrize("step", [1, 2])
+def test_sliding_win_oneaxis(nwin: int, axis: int, step: int):
     import numpy.lib.stride_tricks as nps
 
     dims = [4, 5, 6]
@@ -200,22 +211,25 @@ def test_sliding_win_oneaxis(nwin: int, axis: int):
 
     if axis < -len(dims) or axis >= len(dims):
         with pytest.raises(IndexError):
-            sliding_win_oneaxis(data, nwin, axis)
+            sliding_win_oneaxis(data, nwin, axis, step)
         return
 
     if nwin > dims[axis]:
         with pytest.raises(ValueError):
-            sliding_win_oneaxis(data, nwin, axis)
+            sliding_win_oneaxis(data, nwin, axis, step)
         return
 
-    res = sliding_win_oneaxis(data, nwin, axis)
+    res = sliding_win_oneaxis(data, nwin, axis, step)
 
     if nwin == 0:
         assert res.size == 0
         return
 
     expected = nps.sliding_window_view(data, nwin, axis)
+    # Note: sliding window inserted at end, and trimmed axis left in place.
     dest_ax = axis if axis >= 0 else len(dims) + axis
     expected = np.moveaxis(expected, -1, dest_ax + 1)
+    if step > 1:
+        expected = slice_along_axis(expected, slice(None, None, step), dest_ax)
     assert np.array_equal(res, expected)
     assert np.shares_memory(res, expected)

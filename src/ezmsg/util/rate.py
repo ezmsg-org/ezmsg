@@ -21,7 +21,7 @@ class Rate(object):
         self.last_time = time.time()
         self.sleep_dur = 1.0 / hz
 
-    def _remaining(self, curr_time: float):
+    def _remaining(self, curr_time: float) -> float:
         """
         Calculate the time remaining for rate to sleep.
         @param curr_time: current time
@@ -37,7 +37,7 @@ class Rate(object):
         elapsed = curr_time - self.last_time
         return self.sleep_dur - elapsed
 
-    def remaining(self):
+    def remaining(self) -> float:
         """
         Return the time remaining for rate to sleep.
         @return: time remaining
@@ -46,16 +46,19 @@ class Rate(object):
         curr_time = time.time()
         return self._remaining(curr_time)
 
-    async def sleep(self):
+    def _sleep_logic(self) -> float:
         curr_time = time.time()
-        timeRemaining = self._remaining(curr_time)
-
-        if timeRemaining > 0.0:
-            await asyncio.sleep(timeRemaining)
-        else:
-            await asyncio.sleep(0)
+        time_remaining = self._remaining(curr_time)
 
         self.last_time = self.last_time + self.sleep_dur
 
         if curr_time - self.last_time > self.sleep_dur * 2:
             self.last_time = curr_time
+
+        return time_remaining if time_remaining > 0 else 0
+
+    async def sleep(self):
+        await asyncio.sleep(self._sleep_logic())
+
+    def sleep_sync(self):
+        time.sleep(self._sleep_logic())
