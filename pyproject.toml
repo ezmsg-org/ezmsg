@@ -45,7 +45,3 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]
-
-[tool.hatch.build.hooks.version]
-path = "src/ezmsg/core/__init__.py"
-pattern = true
