@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import replace
 import traceback
 import typing
 
@@ -7,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 
 import ezmsg.core as ez
-from .axisarray import AxisArray, slice_along_axis
+from .axisarray import AxisArray, slice_along_axis, replace
 from ..generator import GenState
 
 

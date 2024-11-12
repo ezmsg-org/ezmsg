@@ -1,11 +1,10 @@
-from dataclasses import replace
 import traceback
 import typing
 
 import numpy as np
 
 import ezmsg.core as ez
-from .axisarray import AxisArray
+from .axisarray import AxisArray, replace
 from ..generator import consumer, GenState
 
 

@@ -4,13 +4,14 @@ import warnings
 
 from abc import abstractmethod, ABC
 from contextlib import contextmanager
-from dataclasses import field, dataclass, replace
+from dataclasses import field, dataclass
 
 import numpy as np
 import numpy.typing as npt
 import numpy.lib.stride_tricks as nps
 
 from ezmsg.core.util import either_dict_or_kwargs
+from .util import replace
 
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
