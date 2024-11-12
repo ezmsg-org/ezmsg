@@ -251,7 +251,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
-    { name = "xarray" },
+    { name = "xarray", marker = "python_full_version < '3.13'" },
 ]
 
 [package.metadata]
@@ -265,7 +265,7 @@ requires-dist = [
     { name = "sphinx", marker = "extra == 'docs'", specifier = "<=7.2" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = "==2.0.0" },
     { name = "typing-extensions", specifier = ">=4.9.0" },
-    { name = "xarray", marker = "extra == 'test'", specifier = ">=2023.1.0" },
+    { name = "xarray", marker = "python_full_version < '3.13' and extra == 'test'", specifier = ">=2023.1.0" },
 ]
 
 [[package]]
