@@ -1,13 +1,13 @@
 [project]
 name = "ezmsg"
-version = "3.5.0"
+version = "3.6.0"
 description = "A simple DAG-based computation model"
 authors = [
   { name = "Griffin Milsap", email = "griffin.milsap@gmail.com" },
   { name = "Preston Peranich", email = "pperanich@gmail.com" },
   { name = "Chadwick Boulay", email = "chadwick.boulay@gmail.com" },
 ]
-license = "MIT"
+license = { file = "LICENSE" }
 readme = "README.md"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -23,6 +23,7 @@ test = [
   "pytest-asyncio>=0.23.8",
   "pytest-cov>=5.0.0",
   "flake8>=5.0.4",
+  "xarray>=2023.1.0;python_version<'3.13'",
 ]
 docs = ["sphinx<=7.2", "sphinx-rtd-theme==2.0.0", "ezmsg-sigproc>=1.2.3"]
 
@@ -44,7 +45,3 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]
-
-[tool.hatch.build.hooks.version]
-path = "src/ezmsg/core/__init__.py"
-pattern = true

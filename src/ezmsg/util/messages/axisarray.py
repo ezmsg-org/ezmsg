@@ -1,75 +1,180 @@
 import math
 import typing
+import warnings
 
+from abc import abstractmethod, ABC
 from contextlib import contextmanager
-from dataclasses import field, dataclass, replace
+from dataclasses import field, dataclass
 
 import numpy as np
 import numpy.typing as npt
 import numpy.lib.stride_tricks as nps
 
 from ezmsg.core.util import either_dict_or_kwargs
+from .util import replace
+
+if typing.TYPE_CHECKING:
+    try:
+        from xarray import DataArray
+    except ImportError:
+        pass
 
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
 
+@dataclass
+class AxisBase(ABC):
+    unit: str = ""
+
+    @typing.overload
+    def value(self, x: int) -> typing.Any: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray: ...
+    @abstractmethod
+    def value(self, x):
+        raise NotImplementedError
+
 
 @dataclass
-class AxisArray:
-    """
-    A lightweight message class comprising a numpy ndarray and its metadata.
-    """
+class LinearAxis(AxisBase):
+    gain: float = 1.0
+    offset: float = 0.0
 
+    @typing.overload
+    def value(self, x: int) -> float: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray[np.float64]: ...
+    def value(self, x):
+        return (x * self.gain) + self.offset
+
+    @typing.overload
+    def index(self, v: float, fn: typing.Callable = np.rint) -> int: ...
+    @typing.overload
+    def index(
+        self, v: npt.NDArray[np.float64], fn: typing.Callable = np.rint
+    ) -> npt.NDArray[np.int_]: ...
+    def index(self, v, fn=np.rint):
+        return fn((v - self.offset) / self.gain).astype(int)
+
+    @classmethod
+    def create_time_axis(cls, fs: float, offset: float = 0.0) -> "LinearAxis":
+        """Convenience method to construct a LinearAxis for time"""
+        return cls(unit="s", gain=1.0 / fs, offset=offset)
+
+
+@dataclass
+class ArrayWithNamedDims:
     data: npt.NDArray
     dims: typing.List[str]
-    axes: typing.Dict[str, "AxisArray.Axis"] = field(default_factory=dict)
-    key: str = ""
-
-    T = typing.TypeVar("T", bound="AxisArray")
-
-    @dataclass
-    class Axis:
-        unit: str = ""
-        gain: float = 1.0
-        offset: float = 0.0
-
-        @classmethod
-        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
-            """
-            Creates a time axis with dimension of seconds.
-            Specify fs in units of Hz (1.0/sec)
-            NOTE: offset corresponds to idx[0] on this dimension!
-            """
-            return cls(unit="s", gain=1.0 / fs, offset=offset)
-
-        def units(self, idx):
-            return (idx * self.gain) + self.offset
-
-        def index(self, val):
-            return np.round((val - self.offset) / self.gain)
-
-    @dataclass(frozen=True)
-    class AxisInfo:
-        axis: "AxisArray.Axis"
-        idx: int
-        size: int
-
-        def __len__(self) -> int:
-            return self.size
-
-        @property
-        def indices(self) -> npt.NDArray[np.int_]:
-            return np.arange(self.size)
-
-        @property
-        def values(self) -> npt.NDArray:
-            return self.axis.units(self.indices)
 
     def __post_init__(self):
         if len(self.dims) != self.data.ndim:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if other.__class__ is self.__class__:
+            if self.dims == other.dims and np.array_equal(self.data, other.data):
+                return True
+        return NotImplemented
+
+
+@dataclass(eq=False)
+class CoordinateAxis(AxisBase, ArrayWithNamedDims):
+    @typing.overload
+    def value(self, x: int) -> typing.Any: ...
+    @typing.overload
+    def value(self, x: npt.NDArray[np.int_]) -> npt.NDArray: ...
+    def value(self, x):
+        return self.data[x]
+
+
+@dataclass(eq=False)
+class AxisArray(ArrayWithNamedDims):
+    """
+    A lightweight message class comprising a numpy ndarray and its metadata.
+    """
+
+    axes: typing.Dict[str, AxisBase] = field(default_factory=dict)
+    attrs: typing.Dict[str, typing.Any] = field(default_factory=dict)
+    key: str = ""
+
+    T = typing.TypeVar("T", bound="AxisArray")
+
+    def __eq__(self, other):
+        # NOTE: ArrayWithNamedDims __eq__ checks for __class__ equivalence
+        # returns NotImplemented if classes aren't equal.  Unintuitively,
+        # NotImplemented seems to evaluate as 'True' in an if statement.
+        equal = super().__eq__(other)
+        if equal != True:
+            return equal
+
+        # checks for AxisArray fields
+        if (
+            self.key == other.key
+            and self.attrs == other.attrs
+            and self.axes == other.axes
+        ):
+            return True
+
+        return False
+
+    @dataclass
+    class Axis(LinearAxis):
+        # deprecated backward compatibility
+        def __post_init__(self) -> None:
+            warnings.warn(
+                "AxisArray.Axis is a deprecated alias for LinearAxis",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        @classmethod
+        def TimeAxis(cls, fs: float, offset: float = 0.0) -> "AxisArray.Axis":
+            return cls(unit="s", gain=1.0 / fs, offset=offset)
+
+        def units(self, idx):
+            # NOTE: This is poorly named anyway, it should have been `value`
+            return (idx * self.gain) + self.offset
+
+        def index(self, val):
+            return np.round((val - self.offset) / self.gain)
+
+    TimeAxis = LinearAxis.create_time_axis
+    LinearAxis = LinearAxis
+    CoordinateAxis = CoordinateAxis
+
+    @dataclass(frozen=True)
+    class AxisInfo:
+        axis: AxisBase
+        idx: int
+        size: typing.Optional[int] = None
+
+        def __post_init__(self) -> None:
+            if not isinstance(self.axis, CoordinateAxis) and self.size is None:
+                raise ValueError("must define size if not using CoordinateAxis")
+            elif isinstance(self.axis, CoordinateAxis) and self.size is not None:
+                raise ValueError("must not define size if using CoordinateAxis")
+
+        def __len__(self) -> int:
+            if self.size is None:
+                if isinstance(self.axis, CoordinateAxis):
+                    return self.axis.data.size
+                else:
+                    raise ValueError
+            else:
+                return self.size
+
+        @property
+        def indices(self) -> npt.NDArray[np.int_]:
+            return np.arange(len(self))
+
+        @property
+        def values(self) -> npt.NDArray:
+            return self.axis.value(self.indices)
 
     def isel(
         self: T,
@@ -95,7 +200,7 @@ class AxisArray:
                 indices = np.take(indices, ix, 0)
 
             if axis_name in out_axes:
-                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.units(indices[0]))
+                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.value(indices[0]))
             out_data = np.take(out_data, indices, ax.idx)
 
         return replace(self, data=out_data, axes=out_axes)
@@ -112,6 +217,8 @@ class AxisArray:
             axis = self.get_axis(axis_name)
             if not isinstance(ix, slice):
                 raise ValueError("sel only supports slices for now")
+            if not isinstance(axis, LinearAxis):
+                raise ValueError("sel only supports LinearAxis for now")
             start = int(axis.index(ix.start)) if ix.start is not None else None
             stop = int(axis.index(ix.stop)) if ix.stop is not None else None
             step = int(ix.step / axis.gain) if ix.step is not None else None
@@ -124,6 +231,18 @@ class AxisArray:
         """Shape of data"""
         return self.data.shape
 
+    def to_xr_dataarray(self) -> "DataArray":
+        from xarray import DataArray
+
+        coords = {}
+        for name, axis in self.axes.items():
+            if name in self.dims:
+                coords[name] = (name, self.ax(name).values)
+            elif isinstance(axis, CoordinateAxis):
+                coords[name] = (axis.dims, axis.data)
+
+        return DataArray(self.data, coords=coords, dims=self.dims, attrs=self.attrs)
+
     def ax(self, dim: typing.Union[str, int]) -> AxisInfo:
         axis_idx = dim if isinstance(dim, int) else self.get_axis_idx(dim)
         axis_name = dim if isinstance(dim, str) else self.get_axis_name(dim)
@@ -131,12 +250,12 @@ class AxisArray:
             axis=self.get_axis(axis_name), idx=axis_idx, size=self.shape[axis_idx]
         )
 
-    def get_axis(self, dim: typing.Union[str, int]) -> Axis:
+    def get_axis(self, dim: typing.Union[str, int]) -> AxisBase:
         if isinstance(dim, int):
             dim = self.get_axis_name(dim)
         if dim not in self.dims:
             raise ValueError(f"{dim=} not present in object")
-        return self.axes.get(dim, AxisArray.Axis())
+        return self.axes.get(dim, LinearAxis())  # backward compat
 
     def get_axis_name(self, dim: int) -> str:
         return self.dims[dim]
@@ -188,11 +307,11 @@ class AxisArray:
     def concatenate(
         *aas: T,
         dim: str,
-        axis: typing.Optional[Axis] = None,
-        filter_key: typing.Optional[str] = None
+        axis: typing.Optional[AxisBase] = None,
+        filter_key: typing.Optional[str] = None,
     ) -> T:
         if filter_key is not None:
-            aas = [aa for aa in aas if aa.key == filter_key]
+            aas = tuple([aa for aa in aas if aa.key == filter_key])
 
         aa_0 = aas[0]
         for aa in aas[1:]:
@@ -211,12 +330,16 @@ class AxisArray:
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
             new_data = np.concatenate(all_data, axis=dim_idx)
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
         else:
             new_data = np.array(all_data)
             new_dims = [dim] + new_dims
-            return replace(aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key)
+            return replace(
+                aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
+            )
 
     @staticmethod
     def transpose(
@@ -263,7 +386,9 @@ def slice_along_axis(
     return in_arr[all_slice]
 
 
-def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArray:
+def sliding_win_oneaxis(
+    in_arr: npt.NDArray, nwin: int, axis: int, step: int = 1
+) -> npt.NDArray:
     """
     Generates a view of an array using a sliding window of specified length along a specified axis of the input array.
     This is a slightly optimized version of nps.sliding_window_view with a few important differences:
@@ -279,6 +404,7 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
         in_arr: The input array.
         nwin: The size of the sliding window.
         axis: The axis along which the sliding window will be applied.
+        step: The size of the step between windows. If > 1, the strided window will be sliced with `slice_along_axis`
 
     Returns:
         A view to the input array with the sliding window applied.
@@ -291,16 +417,21 @@ def sliding_win_oneaxis(in_arr: npt.NDArray, nwin: int, axis: int) -> npt.NDArra
     """
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
-    out_strides = (
-        in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
-    )
     out_shape = (
         in_arr.shape[:axis]
         + (in_arr.shape[axis] - (nwin - 1),)
         + (nwin,)
         + in_arr.shape[axis + 1 :]
     )
-    return nps.as_strided(in_arr, strides=out_strides, shape=out_shape, writeable=False)
+    out_strides = (
+        in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
+    )
+    result = nps.as_strided(
+        in_arr, strides=out_strides, shape=out_shape, writeable=False
+    )
+    if step > 1:
+        result = slice_along_axis(result, slice(None, None, step), axis)
+    return result
 
 
 def _as2d(

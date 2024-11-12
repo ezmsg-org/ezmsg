@@ -27,5 +27,7 @@ def test_array_chunker(axis: int):
     assert all(chunk.data.shape[axis] == chunk_len for chunk in chunks[:-1])
     assert chunks[-1].data.shape[axis] == dshape[axis] % chunk_len
     assert np.array_equal([_.axes["time"].offset for _ in chunks], tvec[::chunk_len])
-    assert np.array_equal(np.concatenate([chunk.data for chunk in chunks], axis=axis), data)
+    assert np.array_equal(
+        np.concatenate([chunk.data for chunk in chunks], axis=axis), data
+    )
     assert all(np.may_share_memory(chunk.data, data) for chunk in chunks)
