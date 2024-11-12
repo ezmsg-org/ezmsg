@@ -7,7 +7,7 @@ authors = [
   { name = "Preston Peranich", email = "pperanich@gmail.com" },
   { name = "Chadwick Boulay", email = "chadwick.boulay@gmail.com" },
 ]
-license = "MIT"
+license = { file = "LICENSE" }
 readme = "README.md"
 classifiers = [
   "Programming Language :: Python :: 3",
