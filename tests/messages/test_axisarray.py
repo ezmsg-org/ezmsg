@@ -250,7 +250,7 @@ def test_to_xr_dataarray():
         dims=["ch", "time", "x", "y"],
         axes={
             "time": AxisArray.TimeAxis(fs=5.0),
-            "x": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
+            "x": AxisArray.CoordinateAxis(data = np.arange(DATA.shape[2]), dims = ['x']),
             "y": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
             "quality": AxisArray.CoordinateAxis(unit = '%', data = quality, dims = ['x', 'y'])
         },
@@ -264,5 +264,6 @@ def test_to_xr_dataarray():
     assert np.allclose(da.time.data, np.array([0.0, 0.2, 0.4, 0.6, 0.8]))
 
     quality_data = da.where(da.quality == 1.0).stack(pixel = ['x', 'y']).dropna('pixel')
-    assert np.allclose(quality_data.x.data, np.array([-13.0, -12.8, -12.6, -12.6, -12.4]))
+    assert np.allclose(quality_data.x.data, np.array([0, 1, 2, 2, 3]))
     assert np.allclose(quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6]))
+

@@ -236,11 +236,10 @@ class AxisArray(ArrayWithNamedDims):
 
         coords = {}
         for name, axis in self.axes.items():
-            if name in self.dims:
-                coords[name] = (name, self.ax(name).values)
-            elif isinstance(axis, CoordinateAxis):
+            if isinstance(axis, CoordinateAxis):
                 coords[name] = (axis.dims, axis.data)
-
+            elif name in self.dims:
+                coords[name] = (name, self.ax(name).values)
         return DataArray(self.data, coords=coords, dims=self.dims, attrs=self.attrs)
 
     def ax(self, dim: typing.Union[str, int]) -> AxisInfo:
