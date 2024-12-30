@@ -1,12 +1,14 @@
-import os
-import sys
-import base64
-import asyncio
 import argparse
+import asyncio
+import base64
+import json
 import logging
+import os
 import subprocess
+import sys
 import typing
 import webbrowser
+import zlib
 
 from .graphserver import GraphService
 from .shmserver import SHMService
@@ -44,9 +46,12 @@ def cmdline() -> None:
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
 
+    parser.add_argument("--target", help="Target for mermaid output", default="ink")
+
     class Args:
         command: str
         address: typing.Optional[str]
+        target: str
 
     args = parser.parse_args(namespace=Args)
 
@@ -61,10 +66,10 @@ def cmdline() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    loop.run_until_complete(run_command(args.command, graph_address, shm_address))
+    loop.run_until_complete(run_command(args.command, graph_address, shm_address, args.target))
 
 
-async def run_command(cmd: str, graph_address: Address, shm_address: Address) -> None:
+async def run_command(cmd: str, graph_address: Address, shm_address: Address, target: str = "ink") -> None:
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
 
@@ -123,11 +128,35 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
         print(graph_out)
 
         if cmd == "mermaid":
-            webbrowser.open(mm(graph_out))
+            webbrowser.open(mm(graph_out, target=target))
 
 
-def mm(graph):
-    graphbytes = graph.encode("utf8")
+def mm(graph: str, target="ink") -> str:
+    if target != "ink":
+        jdict = {
+            "code": graph,
+            "mermaid": {"theme": "default"},
+            "updateDiagram": True,
+            "autoSync": True,
+            "rough": False,
+        }
+        graph = json.dumps(jdict)
+    graphbytes: bytes = graph.encode("utf8")
+
+    if target != "ink":
+        compress = zlib.compressobj(9, zlib.DEFLATED, 15, 8, zlib.Z_DEFAULT_STRATEGY)
+        graphbytes = compress.compress(graphbytes)
+        graphbytes += compress.flush()
+
     base64_bytes = base64.b64encode(graphbytes)
     base64_string = base64_bytes.decode("ascii")
-    return f"https://mermaid.ink/img/{base64_string}"
+
+    if target == "ink":
+        prefix = "https://mermaid.ink/img/"
+    else:
+        type_str = "pako"  # or "base64" if we skip compression above.
+        if target == "live":
+            prefix = f"https://mermaid.live/edit#{type_str}:"
+        else:  # "chart"
+            prefix = f"https://www.mermaidchart.com/play#{type_str}:"
+    return prefix + base64_string
