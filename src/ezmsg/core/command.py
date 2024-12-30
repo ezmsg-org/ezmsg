@@ -125,10 +125,11 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address, ta
 
     elif cmd in ["graphviz", "mermaid"]:
         graph_out = await graph_service.get_formatted_graph(cmd)
-        print(graph_out)
 
         if cmd == "mermaid":
             webbrowser.open(mm(graph_out, target=target))
+        else:
+            print(graph_out)
 
 
 def mm(graph: str, target="ink") -> str:
