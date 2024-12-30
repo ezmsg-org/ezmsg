@@ -315,7 +315,7 @@ class GraphService(ServiceManager[GraphServer]):
         await close_stream_writer(writer)
         return dag
 
-    async def get_parsed_dag(self) -> typing.Optional[defaultdict[str, set[str]]]:
+    async def get_pruned_graph(self) -> typing.Optional[defaultdict[str, set[str]]]:
         try:
             dag: DAG = await self.dag()
         except (ConnectionRefusedError, ConnectionResetError):
@@ -353,7 +353,7 @@ class GraphService(ServiceManager[GraphServer]):
         return dag.graph.copy()
 
     async def get_formatted_graph(self, fmt: str, direction: str = "LR") -> str:
-        graph_connections = await self.get_parsed_dag()
+        graph_connections = await self.get_pruned_graph()
 
         if graph_connections is None:
             return ""
