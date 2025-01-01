@@ -355,7 +355,7 @@ class GraphService(ServiceManager[GraphServer]):
     async def get_formatted_graph(self, fmt: str, direction: str = "LR") -> str:
         graph_connections = await self.get_pruned_graph()
 
-        if graph_connections is None:
+        if graph_connections is None or not graph_connections:
             return ""
 
         # Let's come up with UUID node names
