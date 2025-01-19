@@ -353,6 +353,10 @@ class GraphService(ServiceManager[GraphServer]):
         return dag.graph.copy()
 
     async def get_formatted_graph(self, fmt: str, direction: str = "LR") -> str:
+        if fmt not in ["mermaid", "graphviz"]:
+            raise ValueError(
+                f"Invalid format '{fmt}'. Options are 'mermaid' or 'graphviz'"
+            )
         graph_connections = await self.get_pruned_graph()
 
         if graph_connections is None or not graph_connections:

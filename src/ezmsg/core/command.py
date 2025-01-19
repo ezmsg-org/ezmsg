@@ -163,10 +163,14 @@ def mm(graph: str, target="live") -> str:
 
     if target == "ink":
         prefix = "https://mermaid.ink/img/"
-    else:
+    elif target in ["live", "play"]:
         type_str = "pako"  # or "base64" if we skip compression above.
         if target == "live":
             prefix = f"https://mermaid.live/edit#{type_str}:"
-        else:  # "chart"
+        else:  # "play"
             prefix = f"https://www.mermaidchart.com/play#{type_str}:"
+    else:
+        raise ValueError(
+            f"Unknown mermaid target '{target}'. Available options are 'ink', 'live', or 'play'."
+        )
     return prefix + base64_string
