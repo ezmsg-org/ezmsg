@@ -46,7 +46,11 @@ def cmdline() -> None:
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
 
-    parser.add_argument("--target", help="Target for mermaid output", default="ink")
+    parser.add_argument(
+        "--target",
+        help="Target for mermaid output. Options are 'ink', 'live', and 'play'.",
+        default="live",
+    )
 
     class Args:
         command: str
@@ -69,7 +73,9 @@ def cmdline() -> None:
     loop.run_until_complete(run_command(args.command, graph_address, shm_address, args.target))
 
 
-async def run_command(cmd: str, graph_address: Address, shm_address: Address, target: str = "ink") -> None:
+async def run_command(
+    cmd: str, graph_address: Address, shm_address: Address, target: str = "live"
+) -> None:
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
 
@@ -126,12 +132,16 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address, ta
     elif cmd in ["graphviz", "mermaid"]:
         graph_out = await graph_service.get_formatted_graph(cmd)
         print(graph_out)
+        if cmd == "mermaid" and target == "live":
+            print(
+                "---\nIf the graph does not render immediately, try toggling the 'Pan & Zoom' button."
+            )
 
         if cmd == "mermaid":
             webbrowser.open(mm(graph_out, target=target))
 
 
-def mm(graph: str, target="ink") -> str:
+def mm(graph: str, target="live") -> str:
     if target != "ink":
         jdict = {
             "code": graph,
