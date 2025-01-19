@@ -70,7 +70,9 @@ def cmdline() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    loop.run_until_complete(run_command(args.command, graph_address, shm_address, args.target))
+    loop.run_until_complete(
+        run_command(args.command, graph_address, shm_address, args.target)
+    )
 
 
 async def run_command(

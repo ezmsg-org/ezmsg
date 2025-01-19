@@ -397,6 +397,7 @@ class GraphService(ServiceManager[GraphServer]):
                 indent(f'rankdir="{direction}"', IND),
             ]
             footer = ["}"]
+
             def per_leaf(g, leaf):
                 out = None
                 if isinstance(g[leaf], defaultdict):
@@ -413,6 +414,7 @@ class GraphService(ServiceManager[GraphServer]):
         else:  # fmt == mermaid
             header = [f"flowchart {direction}"]
             footer = []
+
             def per_leaf(g, leaf):
                 out = None
                 if isinstance(g[leaf], defaultdict):
@@ -435,6 +437,8 @@ class GraphService(ServiceManager[GraphServer]):
                     out += indent("\n".join(leaf_list), IND)
             return out[:-1]
 
-        graph_out = "\n".join(header + [recurse_graph(graph), indent(connections, IND)] + footer)
+        graph_out = "\n".join(
+            header + [recurse_graph(graph), indent(connections, IND)] + footer
+        )
 
         return graph_out
