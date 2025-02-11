@@ -136,7 +136,7 @@ async def run_command(
         print(graph_out)
         if cmd == "mermaid" and target == "live":
             print(
-                "---\nIf the graph does not render immediately, try toggling the 'Pan & Zoom' button."
+                "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
             )
 
         if cmd == "mermaid":
