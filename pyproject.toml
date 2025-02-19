@@ -1,6 +1,6 @@
 [project]
 name = "ezmsg"
-version = "3.6.0"
+version = "3.6.1"
 description = "A simple DAG-based computation model"
 authors = [
   { name = "Griffin Milsap", email = "griffin.milsap@gmail.com" },
