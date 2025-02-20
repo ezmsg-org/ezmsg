@@ -1,17 +1,24 @@
+from abc import abstractmethod, ABC
+from contextlib import contextmanager
+from dataclasses import field, dataclass
 import math
 import typing
 import warnings
 
-from abc import abstractmethod, ABC
-from contextlib import contextmanager
-from dataclasses import field, dataclass
+import ezmsg.core as ez
 
-import numpy as np
-import numpy.typing as npt
-import numpy.lib.stride_tricks as nps
+try:
+    import numpy as np
+    import numpy.typing as npt
+    import numpy.lib.stride_tricks as nps
+except ModuleNotFoundError:
+    ez.logger.error("Install ezmsg with the AxisArray extra:"
+                    'pip install "ezmsg[AxisArray]"')
+    raise
 
 from ezmsg.core.util import either_dict_or_kwargs
 from .util import replace
+
 
 if typing.TYPE_CHECKING:
     try:

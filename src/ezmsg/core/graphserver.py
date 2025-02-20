@@ -1,7 +1,10 @@
 import asyncio
+from collections import defaultdict
 import logging
 import pickle
+from textwrap import indent
 import typing
+from uuid import uuid4
 
 from contextlib import suppress
 
@@ -27,6 +30,8 @@ from .netprotocol import (
 )
 
 logger = logging.getLogger("ezmsg")
+
+IND = "  "
 
 
 class GraphServer(ThreadedAsyncServer):
@@ -309,3 +314,131 @@ class GraphService(ServiceManager[GraphServer]):
         await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
         await close_stream_writer(writer)
         return dag
+
+    async def get_pruned_graph(self) -> typing.Optional[defaultdict[str, set[str]]]:
+        try:
+            dag: DAG = await self.dag()
+        except (ConnectionRefusedError, ConnectionResetError):
+            logger.info(
+                f"GraphServer not running @{self.address}, or host is refusing connections"
+            )
+            return None
+
+        graph_connections = dag.graph.copy()
+        # Let's eliminate proxy topics, i.e. connections with inputs and outputs.
+        source_nodes = []
+        for node, conns in graph_connections.items():
+            if len(conns) > 0:
+                source_nodes += [node]
+        proxy_topics = []
+        for conns in graph_connections.values():
+            for conn in conns:
+                if conn in source_nodes and conn not in proxy_topics:
+                    proxy_topics += [conn]
+        # Replace Proxy Topics with actual source and downstream
+        for proxy_topic in proxy_topics:
+            downstreams = graph_connections.pop(proxy_topic)
+            logger.info(f"{proxy_topic} downstream connections: {downstreams}")
+            for node, conns in graph_connections.items():
+                for conn in conns:
+                    if conn == proxy_topic:
+                        new_conns = conns.copy()
+                        new_conns.remove(proxy_topic)
+                        new_conns.union(downstreams)
+                        logger.info(
+                            f"Updating connections for {node} from {conns} to {new_conns}"
+                        )
+                        graph_connections[node] = new_conns
+
+        return dag.graph.copy()
+
+    async def get_formatted_graph(self, fmt: str, direction: str = "LR") -> str:
+        if fmt not in ["mermaid", "graphviz"]:
+            raise ValueError(
+                f"Invalid format '{fmt}'. Options are 'mermaid' or 'graphviz'"
+            )
+        graph_connections = await self.get_pruned_graph()
+
+        if graph_connections is None or not graph_connections:
+            return ""
+
+        # Let's come up with UUID node names
+        nodes = set(graph_connections.keys())
+        if fmt == "mermaid":
+            node_map = {name: f"{str(uuid4())}" for name in nodes}
+        else:
+            node_map = {name: f'"{str(uuid4())}"' for name in nodes}  # graphviz
+
+        # Construct the graph
+        def tree():
+            return defaultdict(tree)
+
+        graph: defaultdict = tree()
+
+        connections = ""
+        for node, conns in graph_connections.items():
+            subgraph = graph
+            path = node.split("/")
+            route = path[:-1]
+            stream = path[-1]
+            for seg in route:
+                subgraph = subgraph[seg]
+            subgraph[stream] = node
+
+            for sub in conns:
+                if fmt == "mermaid":
+                    connections += f"{node_map[node]} --> {node_map[sub]}" + "\n"
+                else:
+                    connections += f"{node_map[node]} -> {node_map[sub]};" + "\n"
+
+        if fmt == "graphviz":
+            header = [
+                "digraph EZ {",
+                indent(f'rankdir="{direction}"', IND),
+            ]
+            footer = ["}"]
+
+            def per_leaf(g, leaf):
+                out = None
+                if isinstance(g[leaf], defaultdict):
+                    out = [
+                        f"subgraph {leaf.lower()} {{",
+                        indent("cluster = true;", IND),
+                        indent(f'label = "{leaf}";', IND),
+                        f"{recurse_graph(g[leaf])}}};",
+                    ]
+                elif isinstance(g[leaf], str):
+                    out = [f"{node_map[g[leaf]]} [label={leaf}];"]
+                return out
+
+        else:  # fmt == mermaid
+            header = [f"flowchart {direction}"]
+            footer = []
+
+            def per_leaf(g, leaf):
+                out = None
+                if isinstance(g[leaf], defaultdict):
+                    out = [
+                        f"subgraph {leaf.lower()} [{leaf}]",
+                        # "direction LR",
+                        f"{recurse_graph(g[leaf])}",
+                        "end",
+                    ]
+                elif isinstance(g[leaf], str):
+                    out = [f"{node_map[g[leaf]]}[{leaf}]"]
+                return out
+
+        def recurse_graph(g: defaultdict):
+            out = ""
+            for leaf in g:
+                leaf_list = per_leaf(g, leaf)
+                if leaf_list is not None:
+                    leaf_list += [""]  # Append a newline
+                    out += indent("\n".join(leaf_list), IND)
+            return out[:-1]
+
+        graph_out = "\n".join(
+            header + [recurse_graph(graph), indent(connections, IND)] + footer
+        )
+
+        return graph_out

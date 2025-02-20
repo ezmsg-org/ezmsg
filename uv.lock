@@ -240,6 +240,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+axisarray = [
+    { name = "numpy" },
+]
 docs = [
     { name = "ezmsg-sigproc" },
     { name = "sphinx" },
@@ -258,7 +261,8 @@ test = [
 requires-dist = [
     { name = "ezmsg-sigproc", marker = "extra == 'docs'", specifier = ">=1.2.3" },
     { name = "flake8", marker = "extra == 'test'", specifier = ">=5.0.4" },
-    { name = "numpy", marker = "extra == 'test'", specifier = ">=1.24.2" },
+    { name = "numpy", marker = "extra == 'axisarray'", specifier = ">=1.24.4" },
+    { name = "numpy", marker = "extra == 'test'", specifier = ">=1.24.4" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23.8" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0" },

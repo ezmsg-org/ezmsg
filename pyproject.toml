@@ -1,6 +1,6 @@
 [project]
 name = "ezmsg"
-version = "3.6.0"
+version = "3.6.1"
 description = "A simple DAG-based computation model"
 authors = [
   { name = "Griffin Milsap", email = "griffin.milsap@gmail.com" },
@@ -15,7 +15,6 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "numpy>=1.24.4",
     "typing-extensions >= 4.9.0",
 ]
 
@@ -26,8 +25,12 @@ test = [
   "pytest-cov>=5.0.0",
   "flake8>=5.0.4",
   "xarray>=2023.1.0;python_version<'3.13'",
+  "numpy>=1.24.4",
 ]
 docs = ["sphinx<=7.2", "sphinx-rtd-theme==2.0.0", "ezmsg-sigproc>=1.2.3"]
+axisarray = [
+    "numpy>=1.24.4",
+]
 
 
 [project.scripts]

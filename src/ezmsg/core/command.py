@@ -1,16 +1,14 @@
-import os
-import sys
-import base64
-import asyncio
 import argparse
+import asyncio
+import base64
+import json
 import logging
+import os
 import subprocess
+import sys
 import typing
 import webbrowser
-
-from collections import defaultdict
-from uuid import uuid4
-from textwrap import indent
+import zlib
 
 from .graphserver import GraphService
 from .shmserver import SHMService
@@ -24,11 +22,8 @@ from .netprotocol import (
     PUBLISHER_START_PORT_DEFAULT,
     close_stream_writer,
 )
-from .dag import DAG
 
 logger = logging.getLogger("ezmsg")
-
-IND = "  "
 
 
 def cmdline() -> None:
@@ -51,9 +46,16 @@ def cmdline() -> None:
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
 
+    parser.add_argument(
+        "--target",
+        help="Target for mermaid output. Options are 'ink', 'live', and 'play'.",
+        default="live",
+    )
+
     class Args:
         command: str
         address: typing.Optional[str]
+        target: str
 
     args = parser.parse_args(namespace=Args)
 
@@ -68,10 +70,14 @@ def cmdline() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    loop.run_until_complete(run_command(args.command, graph_address, shm_address))
+    loop.run_until_complete(
+        run_command(args.command, graph_address, shm_address, args.target)
+    )
 
 
-async def run_command(cmd: str, graph_address: Address, shm_address: Address) -> None:
+async def run_command(
+    cmd: str, graph_address: Address, shm_address: Address, target: str = "live"
+) -> None:
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
 
@@ -125,195 +131,48 @@ async def run_command(cmd: str, graph_address: Address, shm_address: Address) ->
                 f"Could not issue shutdown command to GraphServer @ {graph_service.address}; server not running?"
             )
 
-    elif cmd == "graphviz":
-        try:
-            dag: DAG = await graph_service.dag()
-        except (ConnectionRefusedError, ConnectionResetError):
-            logger.info(
-                f"GraphServer not running @{graph_address}, or host is refusing connections"
+    elif cmd in ["graphviz", "mermaid"]:
+        graph_out = await graph_service.get_formatted_graph(cmd)
+        print(graph_out)
+        if cmd == "mermaid" and target == "live":
+            print(
+                "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
             )
-            return
 
-        graph_connections = dag.graph.copy()
-        # Let's eliminate proxy topics, i.e. connections with inputs and outputs.
-        source_nodes = []
-        for node, conns in graph_connections.items():
-            if len(conns) > 0:
-                source_nodes += [node]
-        proxy_topics = []
-        for conns in graph_connections.values():
-            for conn in conns:
-                if conn in source_nodes and conn not in proxy_topics:
-                    proxy_topics += [conn]
-        # Replace Proxy Topics with actual source and downstream
-        for proxy_topic in proxy_topics:
-            downstreams = graph_connections.pop(proxy_topic)
-            logger.info(f"{proxy_topic} downstream connetions: {downstreams}")
-            for node, conns in graph_connections.items():
-                for conn in conns:
-                    if conn == proxy_topic:
-                        new_conns = conns.copy()
-                        new_conns.remove(proxy_topic)
-                        new_conns.union(downstreams)
-                        logger.info(
-                            f"Updating connections for {node} from {conns} to {new_conns}"
-                        )
-                        graph_connections[node] = new_conns
-
-        graph_connections = dag.graph.copy()
-        # Let's come up with UUID node names
-        nodes = set(graph_connections.keys())
-        node_map = {name: f'"{str(uuid4())}"' for name in nodes}
-
-        # Construct the graph
-        def tree():
-            return defaultdict(tree)
-
-        graph: defaultdict = tree()
-
-        connections = ""
-        for node, conns in graph_connections.items():
-            subgraph = graph
-            path = node.split("/")
-            route = path[:-1]
-            stream = path[-1]
-            for seg in route:
-                subgraph = subgraph[seg]
-            subgraph[stream] = node
-
-            for sub in conns:
-                connections += f"{node_map[node]} -> {node_map[sub]};" + "\n"
-
-        # Now convert to dot syntax
-        def recurse_graph(g: defaultdict):
-            out = ""
-            for leaf in g:
-                if isinstance(g[leaf], defaultdict):
-                    out += indent(
-                        "\n".join(
-                            [
-                                f"subgraph {leaf.lower()} {{",
-                                indent("cluster = true;", IND),
-                                indent(f'label = "{leaf}";', IND),
-                                f"{recurse_graph(g[leaf])}}};",
-                                "",
-                            ]
-                        ),
-                        IND,
-                    )
-                elif isinstance(g[leaf], str):
-                    out += indent(f"{node_map[g[leaf]]} [label={leaf}];" + "\n", IND)
-            return out
-
-        subgraph_tree = recurse_graph(graph)
-
-        graphviz_out = "\n".join(
-            [
-                "digraph EZ {",
-                indent('rankdir="LR"', IND),
-                subgraph_tree,
-                indent(connections, IND),
-                "}",
-            ]
-        )
-
-        print(graphviz_out)
-    elif cmd == "mermaid":
-        try:
-            dag: DAG = await graph_service.dag()
-        except (ConnectionRefusedError, ConnectionResetError):
-            logger.info(
-                f"GraphServer not running @{graph_address}, or host is refusing connections"
-            )
-            return
-
-        graph_connections = dag.graph.copy()
-        # Let's eliminate proxy topics, i.e. connections with inputs and outputs.
-        source_nodes = []
-        for node, conns in graph_connections.items():
-            if len(conns) > 0:
-                source_nodes += [node]
-        proxy_topics = []
-        for conns in graph_connections.values():
-            for conn in conns:
-                if conn in source_nodes and conn not in proxy_topics:
-                    proxy_topics += [conn]
-        # Replace Proxy Topics with actual source and downstream
-        for proxy_topic in proxy_topics:
-            downstreams = graph_connections.pop(proxy_topic)
-            logger.info(f"{proxy_topic} downstream connetions: {downstreams}")
-            for node, conns in graph_connections.items():
-                for conn in conns:
-                    if conn == proxy_topic:
-                        new_conns = conns.copy()
-                        new_conns.remove(proxy_topic)
-                        new_conns.union(downstreams)
-                        logger.info(
-                            f"Updating connections for {node} from {conns} to {new_conns}"
-                        )
-                        graph_connections[node] = new_conns
-
-        graph_connections = dag.graph.copy()
-        # Let's come up with UUID node names
-        nodes = set(graph_connections.keys())
-        node_map = {name: f"{str(uuid4())}" for name in nodes}
-
-        # Construct the graph
-        def tree():
-            return defaultdict(tree)
-
-        graph: defaultdict = tree()
-
-        connections = ""
-        for node, conns in graph_connections.items():
-            subgraph = graph
-            path = node.split("/")
-            route = path[:-1]
-            stream = path[-1]
-            for seg in route:
-                subgraph = subgraph[seg]
-            subgraph[stream] = node
-
-            for sub in conns:
-                connections += f"{node_map[node]} --> {node_map[sub]}" + "\n"
-
-        # Now convert to dot syntax
-        def recurse_graph(g: defaultdict):
-            out = ""
-            for leaf in g:
-                if isinstance(g[leaf], defaultdict):
-                    out += indent(
-                        "\n".join(
-                            [
-                                f"subgraph {leaf.lower()} [{leaf}]",
-                                # "direction LR",
-                                f"{recurse_graph(g[leaf])}",
-                                "end",
-                                "",
-                            ]
-                        ),
-                        IND,
-                    )
-                elif isinstance(g[leaf], str):
-                    out += indent(f"{node_map[g[leaf]]}[{leaf}]" + "\n", IND)
-            return out
-
-        subgraph_tree = recurse_graph(graph)
-
-        mermaid = "\n".join(
-            [
-                "flowchart LR",
-                subgraph_tree,
-                indent(connections, IND),
-            ]
-        )
-
-        # print(mermaid)
-        webbrowser.open(mm(mermaid))
+        if cmd == "mermaid":
+            webbrowser.open(mm(graph_out, target=target))
 
 
-def mm(graph):
-    graphbytes = graph.encode("utf8")
+def mm(graph: str, target="live") -> str:
+    if target != "ink":
+        jdict = {
+            "code": graph,
+            "mermaid": {"theme": "default"},
+            "updateDiagram": True,
+            "autoSync": True,
+            "rough": False,
+        }
+        graph = json.dumps(jdict)
+    graphbytes: bytes = graph.encode("utf8")
+
+    if target != "ink":
+        compress = zlib.compressobj(9, zlib.DEFLATED, 15, 8, zlib.Z_DEFAULT_STRATEGY)
+        graphbytes = compress.compress(graphbytes)
+        graphbytes += compress.flush()
+
     base64_bytes = base64.b64encode(graphbytes)
     base64_string = base64_bytes.decode("ascii")
-    return f"https://mermaid.ink/img/{base64_string}"
+
+    if target == "ink":
+        prefix = "https://mermaid.ink/img/"
+    elif target in ["live", "play"]:
+        type_str = "pako"  # or "base64" if we skip compression above.
+        if target == "live":
+            prefix = f"https://mermaid.live/edit#{type_str}:"
+        else:  # "play"
+            prefix = f"https://www.mermaidchart.com/play#{type_str}:"
+    else:
+        raise ValueError(
+            f"Unknown mermaid target '{target}'. Available options are 'ink', 'live', or 'play'."
+        )
+    return prefix + base64_string
