@@ -1,3 +1,4 @@
+from _typeshed import DataclassInstance
 import sys
 import typing
 
@@ -12,6 +13,8 @@ else:
 # All settings classes are dataclasses
 # https://rednafi.github.io/digressions/python/2020/06/26/python-metaclasses.html
 #  see -- #avoiding-dataclass-decorator-with-metaclasses
+
+SettingsType = typing.TypeVar("SettingsType", bound=typing.Type[DataclassInstance])
 
 
 @dataclass_transform()

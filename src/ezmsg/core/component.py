@@ -1,8 +1,9 @@
 from abc import ABCMeta
 from copy import deepcopy
+import typing
 from dataclasses import fields, MISSING, is_dataclass
 
-from .settings import Settings
+from .settings import SettingsType, Settings
 from .state import State
 from .addressable import Addressable
 from .stream import Stream
@@ -54,11 +55,11 @@ class ComponentMeta(ABCMeta):
                 continue
 
             if field_name == "SETTINGS":
-                if not issubclass(field_value, Settings):
-                    logger.error(
-                        f"{name} Settings must be a subclass of `ez.Settings`!"
-                    )
+                # if not issubclass(field_value, Settings):
+                if not is_dataclass(field_value):
+                    logger.error(f"{name} Settings must be a dataclass!")
 
+                assert isinstance(field_value, type)
                 for settings_type in base_settings_types:
                     if not issubclass(field_value, settings_type):
                         logger.error(
@@ -94,7 +95,8 @@ class ComponentMeta(ABCMeta):
                 cls.__settings_type__ = Settings
 
 
-class Component(Addressable, metaclass=ComponentMeta):
+# class Synth(ez.Unit):
+class Component(Addressable, typing.Generic[SettingsType], metaclass=ComponentMeta):
     """
     Metaclass which :obj:`Unit` and :obj:`Collection` inherit from.
     """
@@ -105,7 +107,7 @@ class Component(Addressable, metaclass=ComponentMeta):
     _main: Optional[Callable[..., None]]
     _threads: Dict[str, Callable]
 
-    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
+    def __init__(self, *args, settings: Optional[SettingsType] = None, **kwargs):
         super(Component, self).__init__()
 
         self.SETTINGS = None
@@ -125,12 +127,12 @@ class Component(Addressable, metaclass=ComponentMeta):
             if len(args) > 0 and isinstance(args[0], self.__class__.__settings_type__):
                 settings = args[0]
             elif len(args) > 0 or len(kwargs) > 0:
-                settings = self.__class__.__settings_type__(*args, **kwargs)
+                settings = self.__class__.__settings_type__(*args, **kwargs)  # type: ignore
             else:
                 try:
                     # If we weren't supplied settings, we will try to
                     # instantiate the settings type from annotations
-                    settings = self.__class__.__settings_type__()
+                    settings = self.__class__.__settings_type__()  # type: ignore
                 except TypeError:
                     # We couldn't instantiate settings with default value
                     # We will rely on late configuration via apply_settings
@@ -155,7 +157,7 @@ class Component(Addressable, metaclass=ComponentMeta):
                     f"{self.address}: STATE.{field.name} was not initialized!"
                 )
 
-    def apply_settings(self, settings: Settings) -> None:
+    def apply_settings(self, settings: SettingsType) -> None:
         """
         Update the ``Component``‘s ``Settings`` object.
 
@@ -163,6 +165,7 @@ class Component(Addressable, metaclass=ComponentMeta):
             settings: An instance of the class-specific ``Settings``.
 
         """
+        assert is_dataclass(settings)
         self.SETTINGS = settings
         self._settings_applied = True
 

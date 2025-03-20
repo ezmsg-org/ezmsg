@@ -1,3 +1,4 @@
+import typing
 from abc import ABC, ABCMeta
 from dataclasses import dataclass
 
@@ -7,6 +8,8 @@ from typing import (
     Any,
     Type,
 )
+
+StateType = typing.TypeVar("StateType")
 
 
 class StateMeta(ABCMeta):
