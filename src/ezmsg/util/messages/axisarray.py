@@ -1,6 +1,7 @@
 from abc import abstractmethod, ABC
 from contextlib import contextmanager
 from dataclasses import field, dataclass
+from array_api_compat import get_namespace, is_cupy_array, is_numpy_array
 import math
 import typing
 import warnings
@@ -12,8 +13,9 @@ try:
     import numpy.typing as npt
     import numpy.lib.stride_tricks as nps
 except ModuleNotFoundError:
-    ez.logger.error("Install ezmsg with the AxisArray extra:"
-                    'pip install "ezmsg[AxisArray]"')
+    ez.logger.error(
+        "Install ezmsg with the AxisArray extra:" 'pip install "ezmsg[AxisArray]"'
+    )
     raise
 
 from ezmsg.core.util import either_dict_or_kwargs
@@ -28,6 +30,7 @@ if typing.TYPE_CHECKING:
 
 # TODO: Typehinting needs continued help
 #  concatenate/transpose should probably not be staticmethods
+
 
 @dataclass
 class AxisBase(ABC):
@@ -84,7 +87,8 @@ class ArrayWithNamedDims:
         if self is other:
             return True
         if other.__class__ is self.__class__:
-            if self.dims == other.dims and np.array_equal(self.data, other.data):
+            xp = get_namespace(self.data)
+            if self.dims == other.dims and xp.array_equal(self.data, other.data):
                 return True
         return NotImplemented
 
@@ -188,6 +192,8 @@ class AxisArray(ArrayWithNamedDims):
         indexers: typing.Optional[typing.Any] = None,
         **indexers_kwargs: typing.Any,
     ) -> T:
+        xp = get_namespace(self.data)
+
         indexers = either_dict_or_kwargs(indexers, indexers_kwargs, "isel")
 
         out_axes = {an: a for an, a in self.axes.items()}
@@ -197,18 +203,18 @@ class AxisArray(ArrayWithNamedDims):
             if not isinstance(ix, (np.ndarray, int, slice)):
                 raise ValueError("isel only accepts arrays, ints, or slices")
             ax = self.ax(axis_name)
-            indices = np.arange(len(ax))
+            indices = xp.arange(len(ax))
 
             # There has to be a more efficient way to do this
             if isinstance(ix, slice):
                 indices = indices[ix]
             else:
                 ix = [ix] if isinstance(ix, int) else ix
-                indices = np.take(indices, ix, 0)
 
+                indices = xp.take(indices, ix, 0)
             if axis_name in out_axes:
                 out_axes[axis_name] = replace(ax.axis, offset=ax.axis.value(indices[0]))
-            out_data = np.take(out_data, indices, ax.idx)
+            out_data = xp.take(out_data, indices, ax.idx)
 
         return replace(self, data=out_data, axes=out_axes)
 
@@ -286,12 +292,13 @@ class AxisArray(ArrayWithNamedDims):
     def iter_over_axis(
         self: T, axis: typing.Union[str, int]
     ) -> typing.Generator[T, None, None]:
+        xp = get_namespace(self.data)
         axis_idx = self.axis_idx(axis)
         dim_name = self.dims[axis_idx]
         new_dims = [d for i, d in enumerate(self.dims) if i != axis_idx]
         new_axes = {d: a for d, a in self.axes.items() if d != dim_name}
 
-        for it_data in np.moveaxis(self.data, axis_idx, 0):
+        for it_data in xp.moveaxis(self.data, axis_idx, 0):
             it_aa = replace(
                 self,
                 data=it_data,
@@ -317,6 +324,7 @@ class AxisArray(ArrayWithNamedDims):
         axis: typing.Optional[AxisBase] = None,
         filter_key: typing.Optional[str] = None,
     ) -> T:
+        xp = get_namespace(*[aa.data for aa in aas])
         if filter_key is not None:
             aas = tuple([aa for aa in aas if aa.key == filter_key])
 
@@ -336,13 +344,13 @@ class AxisArray(ArrayWithNamedDims):
 
         if dim in aa_0.dims:
             dim_idx = aa_0.axis_idx(dim=dim)
-            new_data = np.concatenate(all_data, axis=dim_idx)
+            new_data = xp.concatenate(all_data, axis=dim_idx)
             return replace(
                 aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
             )
 
         else:
-            new_data = np.array(all_data)
+            new_data = xp.array(all_data)
             new_dims = [dim] + new_dims
             return replace(
                 aa_0, data=new_data, dims=new_dims, axes=new_axes, key=new_key
@@ -355,10 +363,11 @@ class AxisArray(ArrayWithNamedDims):
             typing.Union[typing.Iterable[str], typing.Iterable[int]]
         ] = None,
     ) -> T:
+        xp = get_namespace(aa.data)
         dims = reversed(range(aa.data.ndim)) if dims is None else dims
         dim_indices = [aa.axis_idx(d) for d in dims]
         new_dims = [aa.dims[d] for d in dim_indices]
-        new_data = np.transpose(aa.data, dim_indices)
+        new_data = xp.transpose(aa.data, dim_indices)
         return replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
 
 
@@ -424,25 +433,42 @@ def sliding_win_oneaxis(
     """
     if -in_arr.ndim <= axis < 0:
         axis = in_arr.ndim + axis
+
+    is_f_order = in_arr.flags.f_contiguous and not in_arr.flags.c_contiguous
+
     out_shape = (
         in_arr.shape[:axis]
         + (in_arr.shape[axis] - (nwin - 1),)
         + (nwin,)
         + in_arr.shape[axis + 1 :]
     )
+
+    stride_axis = in_arr.strides[axis]
     out_strides = (
-        in_arr.strides[:axis] + (in_arr.strides[axis],) * 2 + in_arr.strides[axis + 1 :]
+        in_arr.strides[:axis]
+        + ((stride_axis,) * 2 if not is_f_order else (stride_axis,) * 2)
+        + in_arr.strides[axis + 1 :]
     )
-    result = nps.as_strided(
-        in_arr, strides=out_strides, shape=out_shape, writeable=False
-    )
+
+    if is_numpy_array(in_arr):
+        from numpy.lib.stride_tricks import as_strided  # type: ignore
+        from functools import partial
+
+        as_strided = partial(as_strided, writeable=False)
+    elif is_cupy_array(in_arr):
+        from cupy.lib.stride_tricks import as_strided  # type: ignore
+    else:
+        raise Exception(
+            f"Unsupported array module for sliding_win_oneaxis: {get_namespace(in_arr)}"
+        )
+    result = as_strided(in_arr, strides=out_strides, shape=out_shape)
     if step > 1:
         result = slice_along_axis(result, slice(None, None, step), axis)
     return result
 
 
 def _as2d(
-    in_arr: npt.NDArray, axis: int = 0
+    in_arr: npt.NDArray, axis: int = 0, *, xp
 ) -> typing.Tuple[npt.NDArray, typing.Tuple[int, ...]]:
     arr = in_arr
     if arr.ndim == 0:
@@ -450,14 +476,14 @@ def _as2d(
     elif arr.ndim == 1:
         arr = arr[:, np.newaxis]
 
-    arr = np.moveaxis(arr, axis, 0)
+    arr = xp.moveaxis(arr, axis, 0)
     remaining_shape = arr.shape[1:]
-    arr = arr.reshape(arr.shape[0], np.prod(remaining_shape))
+    arr = arr.reshape(arr.shape[0], math.prod(remaining_shape))
     return arr, remaining_shape
 
 
-def as2d(in_arr: npt.NDArray, axis: int = 0) -> npt.NDArray:
-    arr, _ = _as2d(in_arr, axis=axis)
+def as2d(in_arr: npt.NDArray, axis: int = 0, *, xp) -> npt.NDArray:
+    arr, _ = _as2d(in_arr, axis=axis, xp=xp)
     return arr
 
 
@@ -472,13 +498,14 @@ def view2d(
     NOTE: In practice, I'm not sure this is very useful because it requires modifying
     the numpy array data in-place, which limits its application to zero-copy messages
     """
-    arr, remaining_shape = _as2d(in_arr, axis=axis)
+    xp = get_namespace(in_arr)
+    arr, remaining_shape = _as2d(in_arr, axis=axis, xp=xp)
 
     yield arr
 
     if not np.shares_memory(arr, in_arr):
         arr = arr.reshape(arr.shape[0], *remaining_shape)
-        arr = np.moveaxis(arr, 0, axis)
+        arr = xp.moveaxis(arr, 0, axis)
         in_arr[:] = arr
 
 
