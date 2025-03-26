@@ -1,7 +1,9 @@
 version = 1
+revision = 1
 requires-python = ">=3.8"
 resolution-markers = [
-    "python_full_version < '3.10'",
+    "python_full_version == '3.9.*'",
+    "python_full_version < '3.9'",
     "python_full_version == '3.10.*'",
     "python_full_version >= '3.11'",
 ]
@@ -13,6 +15,32 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/71/a8ee96d1fd95ca04a0d2e2d9c4081dac4c2d2b12f7ddb899c8cb9bfd1532/alabaster-0.7.13.tar.gz", hash = "sha256:a27a4a084d5e690e16e01e03ad2b2e552c61a65469419b907243193de1a84ae2", size = 11454 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/88/c7083fc61120ab661c5d0b82cb77079fc1429d3f913a456c1c82cf4658f7/alabaster-0.7.13-py3-none-any.whl", hash = "sha256:1ee19aca801bbabb5ba3f5f258e4422dfa86f82f3e9cefb0859b283cdd7f62a3", size = 13857 },
+]
+
+[[package]]
+name = "array-api-compat"
+version = "1.9"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.9'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/2c/3568b547cec656e717e5f3fe2b899c3ef052aef17c137c2c04635854c9c5/array_api_compat-1.9.tar.gz", hash = "sha256:8fb35f2895822b1cc6618449efd84aa76dcea1ab96940304f869663fd6a0dcd8", size = 42870 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/78/17985eac75d04c30f8cc375e4400e20b0787dc4a1c853a8fe9fad7932f55/array_api_compat-1.9-py3-none-any.whl", hash = "sha256:76db63c2d2461ba0e86b920c8b087f0a1617eb14de3ec29fe6811eeecad9c5e8", size = 49489 },
+]
+
+[[package]]
+name = "array-api-compat"
+version = "1.11.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.9.*'",
+    "python_full_version == '3.10.*'",
+    "python_full_version >= '3.11'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6c/1e/d04312a19a67744298b7546885149488b8afbb965dfe693aa4964bb60586/array_api_compat-1.11.2.tar.gz", hash = "sha256:a3b7f7b6af18f4c42e79423b1b2479798998b6a74355069d77a01a5282755b5d", size = 50776 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/d8/3388c7da49f522e51ab2f919797db28782216cadc9ecc9976160302cfcd6/array_api_compat-1.11.2-py3-none-any.whl", hash = "sha256:b1d0059714a4153b3ae37c989e47b07418f727be5b22908dd3cf9d19bdc2c547", size = 53149 },
 ]
 
 [[package]]
@@ -233,9 +261,11 @@ wheels = [
 
 [[package]]
 name = "ezmsg"
-version = "3.6.0"
+version = "3.6.1"
 source = { editable = "." }
 dependencies = [
+    { name = "array-api-compat", version = "1.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "array-api-compat", version = "1.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "typing-extensions" },
 ]
 
@@ -259,6 +289,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "array-api-compat", specifier = ">=1.9" },
     { name = "ezmsg-sigproc", marker = "extra == 'docs'", specifier = ">=1.2.3" },
     { name = "flake8", marker = "extra == 'test'", specifier = ">=5.0.4" },
     { name = "numpy", marker = "extra == 'axisarray'", specifier = ">=1.24.4" },
@@ -271,6 +302,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.9.0" },
     { name = "xarray", marker = "python_full_version < '3.13' and extra == 'test'", specifier = ">=2023.1.0" },
 ]
+provides-extras = ["test", "docs", "axisarray"]
 
 [[package]]
 name = "ezmsg-sigproc"
