@@ -62,11 +62,19 @@ def cmdline() -> None:
         action="count",
     )
 
+    parser.add_argument(
+        "-n",
+        "--nobrowser",
+        help="Do not automatically open the browser for mermaid output. `--target` value will be ignored.",
+        action="store_true",
+    )
+
     class Args:
         command: str
         address: typing.Optional[str]
         target: str
         compact: typing.Optional[int]
+        nobrowser: bool
 
     args = parser.parse_args(namespace=Args)
 
@@ -82,7 +90,14 @@ def cmdline() -> None:
     asyncio.set_event_loop(loop)
 
     loop.run_until_complete(
-        run_command(args.command, graph_address, shm_address, args.target, args.compact)
+        run_command(
+            args.command,
+            graph_address,
+            shm_address,
+            args.target,
+            args.compact,
+            args.nobrowser,
+        )
     )
 
 
@@ -92,6 +107,7 @@ async def run_command(
     shm_address: Address,
     target: str = "live",
     compact: typing.Optional[int] = None,
+    nobrowser: bool = False,
 ) -> None:
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
@@ -152,11 +168,12 @@ async def run_command(
         )
         print(graph_out)
         if cmd == "mermaid":
-            if target == "live":
-                print(
-                    "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
-                )
-            webbrowser.open(mm(graph_out, target=target))
+            if not nobrowser:
+                if target == "live":
+                    print(
+                        "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
+                    )
+                webbrowser.open(mm(graph_out, target=target))
 
 
 def mm(graph: str, target="live") -> str:
