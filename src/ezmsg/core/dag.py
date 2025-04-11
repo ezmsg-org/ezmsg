@@ -1,7 +1,6 @@
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
-
 from typing import List, Set, DefaultDict
 
 
@@ -42,9 +41,8 @@ class DAG:
         test_graph[from_node].add(to_node)
         test_graph[to_node]
 
-        for node in test_graph.keys():
-            if node in _bfs(test_graph, node):
-                raise CyclicException
+        if from_node in _bfs(test_graph, from_node):
+            raise CyclicException
 
         # No cycles!  Modify referenced data structure
         self.graph[from_node].add(to_node)
@@ -79,9 +77,7 @@ def _leaves(graph: GraphType) -> Set[str]:
     return set([f for f, t in graph.items() if len(t) == 0])
 
 
-# Bredth First Search of a graph
-
-
+# Breadth First Search of a graph
 def _bfs(graph: GraphType, node: str) -> List[str]:
     connected: Set[str] = set()
     queue = [node]

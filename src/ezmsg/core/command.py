@@ -52,10 +52,21 @@ def cmdline() -> None:
         default="live",
     )
 
+    parser.add_argument(
+        "-c",
+        "--compact",
+        help="""Use compact graph representation. Only used when `cmd` is 'mermaid' or 'graphviz'.
+        Removes the lowest level of detail (typically streams). Can be stacked (eg. '-cc').
+        Warning: this will also prune the graph of proxy topics (nodes that are both sources and targets).
+        """,
+        action="count",
+    )
+
     class Args:
         command: str
         address: typing.Optional[str]
         target: str
+        compact: typing.Optional[int]
 
     args = parser.parse_args(namespace=Args)
 
@@ -71,12 +82,16 @@ def cmdline() -> None:
     asyncio.set_event_loop(loop)
 
     loop.run_until_complete(
-        run_command(args.command, graph_address, shm_address, args.target)
+        run_command(args.command, graph_address, shm_address, args.target, args.compact)
     )
 
 
 async def run_command(
-    cmd: str, graph_address: Address, shm_address: Address, target: str = "live"
+    cmd: str,
+    graph_address: Address,
+    shm_address: Address,
+    target: str = "live",
+    compact: typing.Optional[int] = None,
 ) -> None:
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
@@ -132,14 +147,15 @@ async def run_command(
             )
 
     elif cmd in ["graphviz", "mermaid"]:
-        graph_out = await graph_service.get_formatted_graph(cmd)
+        graph_out = await graph_service.get_formatted_graph(
+            fmt=cmd, compact_level=compact
+        )
         print(graph_out)
-        if cmd == "mermaid" and target == "live":
-            print(
-                "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
-            )
-
         if cmd == "mermaid":
+            if target == "live":
+                print(
+                    "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
+                )
             webbrowser.open(mm(graph_out, target=target))
 
 
