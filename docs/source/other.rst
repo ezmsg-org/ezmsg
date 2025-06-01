@@ -15,3 +15,8 @@ Notebooks
 ---------
 
 An ezmsg pipeline can be run in a notebook environment with an extra parameter. When using ``run()``, include the optional kwarg ``force_single_process=True``.
+
+Media
+-----
+
+* `BCI Society 2025 Poster <https://github.com/ezmsg-org/ezmsg/releases/download/V3.6.1/ezmsg_poster_BCI2025.pdf>`_
