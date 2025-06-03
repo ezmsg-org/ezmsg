@@ -322,10 +322,10 @@ class GraphService(ServiceManager[GraphServer]):
             )
         try:
             dag: DAG = await self.dag()
-        except (ConnectionRefusedError, ConnectionResetError):
-            logger.info(
-                f"GraphServer not running @{self.address}, or host is refusing connections"
-            )
+        except (ConnectionRefusedError, ConnectionResetError) as e:
+            err_msg = f"GraphServer not running at address '{self.address}', or host is refusing connections"
+            logger.error(err_msg)
+            raise type(e)(err_msg) from e
         graph_connections = dag.graph.copy()
         if graph_connections is None or not graph_connections:
             return ""
