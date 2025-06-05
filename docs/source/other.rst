@@ -20,3 +20,4 @@ Media
 -----
 
 * `BCI Society 2025 Poster <https://github.com/ezmsg-org/ezmsg/releases/download/V3.6.1/ezmsg_poster_BCI2025.pdf>`_
+* `Society For Neuroscience 2024 Poster <https://github.com/ezmsg-org/ezmsg/releases/download/V3.6.1/ezmsg_poster_SfN2024.pdf>`_
