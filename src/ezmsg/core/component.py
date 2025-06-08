@@ -54,23 +54,32 @@ class ComponentMeta(ABCMeta):
                 continue
 
             if field_name == "SETTINGS":
-                if not issubclass(field_value, Settings):
-                    logger.error(
-                        f"{name} Settings must be a subclass of `ez.Settings`!"
+                if not (
+                    (is_dataclass(field_value) and isinstance(field_value, type))
+                    and getattr(
+                        getattr(field_value, "__dataclass_params__", None),
+                        "frozen",
+                        False,
                     )
+                ):
+                    raise Exception(f"{name} Settings must be a frozen dataclass!")
 
                 for settings_type in base_settings_types:
+                    if settings_type is Settings:
+                        continue
                     if not issubclass(field_value, settings_type):
                         logger.error(
                             f"{name} Settings of type {field_value.__name__} must be a subclass of {settings_type.__name__}"
                         )
                 cls.__settings_type__ = field_value
 
-            if field_name == "STATE":
-                if not issubclass(field_value, State):
-                    logger.error(f"{name} State must be a subclass of `ez.State`!")
+            elif field_name == "STATE":
+                if not (is_dataclass(field_value) and isinstance(field_value, type)):
+                    raise Exception(f"{name} State must be a dataclass!")
 
                 for state_type in base_state_types:
+                    if state_type is State:
+                        continue
                     if not issubclass(field_value, state_type):
                         logger.error(
                             f"{name} State of type {field_value.__name__} must be a subclass of {state_type.__name__}"
@@ -105,8 +114,8 @@ class Component(Addressable, metaclass=ComponentMeta):
     _main: Optional[Callable[..., None]]
     _threads: Dict[str, Callable]
 
-    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
-        super(Component, self).__init__()
+    def __init__(self, *args, settings: Optional[Any] = None, **kwargs):
+        super().__init__()
 
         self.SETTINGS = None
         self.STATE = None
@@ -155,7 +164,7 @@ class Component(Addressable, metaclass=ComponentMeta):
                     f"{self.address}: STATE.{field.name} was not initialized!"
                 )
 
-    def apply_settings(self, settings: Settings) -> None:
+    def apply_settings(self, settings: Any) -> None:
         """
         Update the ``Component``‘s ``Settings`` object.
 
