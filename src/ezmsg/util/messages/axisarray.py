@@ -348,55 +348,125 @@ class AxisArray(ArrayWithNamedDims):
     def isel(
         self: _AxisArrayType,
         indexers: typing.Optional[typing.Any] = None,
+        drop: bool = False,
         **indexers_kwargs: typing.Any,
-    ) -> T:
+    ) -> _AxisArrayType:
         """
         Selects data by integer indices along specified dimensions.
 
         Args:
             indexers: A dictionary where keys are dimension names and values are
                       integer indices, slices, or NumPy arrays of integer indices.
+            drop: If `True`, dimensions indexed by a single integer will be
+                  dropped. If `False` (default), they will be preserved as
+                  singleton dimensions (size 1).
             **indexers_kwargs: Alternative way to specify indexers as keyword arguments.
 
         Returns:
             A new `AxisArray` containing the selected data. Axes are updated accordingly.
 
         Raises:
-            ValueError: If an indexer is not an integer, slice, or NumPy array.
+            ValueError: If an indexer type is invalid.
         """
         indexers = either_dict_or_kwargs(indexers, indexers_kwargs, "isel")
 
-        out_axes = {an: a for an, a in self.axes.items()}
-        out_data = self.data
+        # Prepare for constructing the new state
+        resulting_axes = self.axes.copy()
+        
+        # np_idx_constructor will hold the actual objects used for NumPy indexing
+        np_idx_constructor: typing.List[typing.Any] = [slice(None)] * self.data.ndim
+        
+        # resulting_dims_list will be the list of dimension names for the new AxisArray
+        resulting_dims_list: typing.List[str] = [] 
 
-        for axis_name, ix in indexers.items():
-            if not isinstance(ix, (np.ndarray, int, slice)):
-                raise ValueError("isel only accepts arrays, ints, or slices")
-            ax = self.ax(axis_name)
-            indices = np.arange(len(ax))
+        for original_ax_idx, original_dim_name in enumerate(self.dims):
+            # Determine if and how this dimension is being indexed by the user
+            user_ix_spec = indexers.get(original_dim_name, indexers.get(original_ax_idx))
 
-            # There has to be a more efficient way to do this
-            if isinstance(ix, slice):
-                indices = indices[ix]
-            else:
-                ix = [ix] if isinstance(ix, int) else ix
-                indices = np.take(indices, ix, 0)
+            if user_ix_spec is None:
+                # This dimension is not indexed by the user; it's kept as is.
+                resulting_dims_list.append(original_dim_name)
+                # np_idx_constructor[original_ax_idx] is already slice(None)
+                continue
 
-            if axis_name in out_axes:
-                out_axes[axis_name] = replace(ax.axis, offset=ax.axis.value(indices[0]))
-            out_data = np.take(out_data, indices, ax.idx)
+            # This dimension IS being indexed. Validate the indexer type.
+            if not isinstance(user_ix_spec, (np.ndarray, int, slice)):
+                raise ValueError(
+                    f"Indexer for dimension '{original_dim_name}' must be an int, slice, or ndarray, "
+                    f"got {type(user_ix_spec)}."
+                )
 
-        return replace(self, data=out_data, axes=out_axes)
+            ax_info = self.ax(original_dim_name) # Needed for axis updates
+
+            if isinstance(user_ix_spec, int):
+                if drop:
+                    # Dimension is dropped: use the integer directly for NumPy indexing.
+                    np_idx_constructor[original_ax_idx] = user_ix_spec
+                    # Remove its axis object if it exists.
+                    if original_dim_name in resulting_axes:
+                        del resulting_axes[original_dim_name]
+                    # The dimension name is NOT added to resulting_dims_list.
+                else:
+                    # Convert negative index to positive for consistent slice creation
+                    dim_size = ax_info.size
+                    normalized_idx = user_ix_spec if user_ix_spec >= 0 else user_ix_spec + dim_size
+                    if not (0 <= normalized_idx < dim_size):
+                        raise IndexError(f"Index {user_ix_spec} is out of bounds for dimension '{original_dim_name}' with size {dim_size}")
+
+                    # Dimension is kept as singleton: use a slice for NumPy indexing.
+                    np_idx_constructor[original_ax_idx] = slice(normalized_idx, normalized_idx + 1)
+                    resulting_dims_list.append(original_dim_name) # Add to kept dims.
+                    # Update axis offset if it's a LinearAxis.
+                    if original_dim_name in resulting_axes and isinstance(resulting_axes[original_dim_name], LinearAxis):
+                        new_offset = resulting_axes[original_dim_name].value(normalized_idx)
+                        resulting_axes[original_dim_name] = replace(
+                            resulting_axes[original_dim_name], offset=new_offset
+                        )
+            
+            elif isinstance(user_ix_spec, (slice, np.ndarray)):
+                # Dimension is sliced or indexed by an array; it's kept.
+                np_idx_constructor[original_ax_idx] = user_ix_spec
+                resulting_dims_list.append(original_dim_name) # Add to kept dims.
+                
+                # Update axis offset if LinearAxis.
+                if original_dim_name in resulting_axes and isinstance(resulting_axes[original_dim_name], LinearAxis):
+                    current_dim_indices_for_axis_obj = np.arange(ax_info.size)
+                    if isinstance(user_ix_spec, slice):
+                        selected_indices_for_axis_update = current_dim_indices_for_axis_obj[user_ix_spec]
+                    else: # np.ndarray (assumed to be integer indices)
+                        selected_indices_for_axis_update = np.take(
+                            current_dim_indices_for_axis_obj, user_ix_spec, axis=0
+                        )
+                    
+                    if len(selected_indices_for_axis_update) > 0:
+                        new_offset = resulting_axes[original_dim_name].value(selected_indices_for_axis_update[0])
+                        resulting_axes[original_dim_name] = replace(
+                            resulting_axes[original_dim_name], offset=new_offset
+                        )
+                    elif original_dim_name in resulting_axes: # Dimension becomes size 0.
+                        del resulting_axes[original_dim_name]
+                            
+        resulting_data = self.data[tuple(np_idx_constructor)]
+
+        # Ensure axes in resulting_axes correspond to dimensions in resulting_dims_list.
+        final_pruned_axes = {
+            k: v for k, v in resulting_axes.items() if k in resulting_dims_list
+        }
+
+        return replace(self, data=resulting_data, dims=resulting_dims_list, axes=final_pruned_axes)
 
     def sel(
         self: _AxisArrayType,
         indexers: typing.Optional[typing.Any] = None,
+        drop: bool = False,
         **indexers_kwargs: typing.Any,
-    ) -> T:
+    ) -> _AxisArrayType:
         """
         Selects data by coordinate values along specified dimensions.
 
-        Currently, this method only supports slices for `LinearAxis` types.
+        This method currently only supports slices for `LinearAxis` types.
+        If `drop` is True and a slice selects a single element, the dimension
+        will be dropped.
 
         Args:
             indexers: A dictionary where keys are dimension names and values are slices
@@ -404,26 +474,51 @@ class AxisArray(ArrayWithNamedDims):
             **indexers_kwargs: Alternative way to specify indexers as keyword arguments.
 
         Returns:
-            A new `AxisArray` containing the selected data.
+            A new `AxisArray` containing the selected data. Axes are updated accordingly.
 
         Raises:
             ValueError: If an indexer is not a slice or if the axis is not a `LinearAxis`.
         """
         indexers = either_dict_or_kwargs(indexers, indexers_kwargs, "sel")
 
-        out_indexers = dict()
-        for axis_name, ix in indexers.items():
+        out_indexers_for_isel = dict()
+        for axis_name, ix_coord_slice in indexers.items():
             axis = self.get_axis(axis_name)
-            if not isinstance(ix, slice):
+
+            if not isinstance(ix_coord_slice, slice):
                 raise ValueError("sel only supports slices for now")
             if not isinstance(axis, LinearAxis):
                 raise ValueError("sel only supports LinearAxis for now")
-            start = int(axis.index(ix.start)) if ix.start is not None else None
-            stop = int(axis.index(ix.stop)) if ix.stop is not None else None
-            step = int(ix.step / axis.gain) if ix.step is not None else None
-            out_indexers[axis_name] = slice(start, stop, step)
+            
+            # Convert coordinate slice to integer-based slice components
+            start_idx = axis.index(ix_coord_slice.start) if ix_coord_slice.start is not None else None
+            stop_idx = axis.index(ix_coord_slice.stop) if ix_coord_slice.stop is not None else None
+            
+            step_idx: typing.Optional[int] = None
+            if ix_coord_slice.step is not None:
+                if axis.gain == 0:
+                    raise ValueError(f"LinearAxis '{axis_name}' has gain=0, cannot calculate step for sel.")
+                
+                index_step_float = ix_coord_slice.step / axis.gain
+                step_idx = int(np.rint(index_step_float))
+                
+                if step_idx == 0:
+                    if ix_coord_slice.step == 0: # User explicitly asked for step 0
+                        raise ValueError(f"Coordinate step for axis '{axis_name}' is 0, which is invalid for a slice.")
+                    else: # Calculated index step rounded to 0, but original coord step was non-zero
+                        raise ValueError(
+                            f"Coordinate step {ix_coord_slice.step} for axis '{axis_name}' "
+                            f"with gain {axis.gain} results in an index step of {index_step_float}, "
+                            "which rounds to 0. Slice steps must be non-zero integers."
+                        )
 
-        return self.isel(**out_indexers)
+            int_indexer_for_dim: typing.Union[slice, int] = slice(start_idx, stop_idx, step_idx)
+
+            out_indexers_for_isel[axis_name] = int_indexer_for_dim
+            # The `drop` argument is passed to isel, which will only act on it
+            # if the int_indexer_for_dim for a particular axis is an integer.
+        
+        return self.isel(indexers=out_indexers_for_isel, drop=drop)
 
     def modify_dims(self: _AxisArrayType, name_map: typing.Dict[str, typing.Optional[str]]) -> _AxisArrayType:
         """

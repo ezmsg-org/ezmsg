@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import ezmsg.core as ez
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, concatenate
 from ezmsg.util.generator import consumer
 from ezmsg.util.gen_to_unit import gen_to_unit
 
@@ -114,7 +114,7 @@ def my_gen_func_axarr(
         if history is None:
             history = axis_arr_in
         else:
-            history = AxisArray.concatenate(history, axis_arr_in, dim=axis)
+            history = concatenate(history, axis_arr_in, dim=axis)
         axis_arr_out = history  # copy?
 
 
