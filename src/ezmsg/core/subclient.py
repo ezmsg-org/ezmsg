@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
-from .shmserver import SHMContext, SHMService
+from .shm import SHMContext
 from .messagecache import MessageCache, Cache
 from .messagemarshal import MessageMarshal
 
@@ -33,7 +33,7 @@ logger = logging.getLogger("ezmsg")
 class Subscriber:
     """
     A subscriber client for receiving messages from publishers.
-    
+
     Subscriber manages connections to multiple publishers, handles different
     transport methods (local, shared memory, TCP), and provides both copying
     and zero-copy message access patterns with automatic acknowledgment.
@@ -49,15 +49,15 @@ class Subscriber:
     _shms: dict[UUID, SHMContext]
     _incoming: "asyncio.Queue[tuple[UUID, int]]"
 
-    _shm_service: SHMService
+    _graph_service: GraphService
 
     @classmethod
     async def create(
-        cls, topic: str, graph_service: GraphService, shm_service: SHMService, **kwargs
+        cls, topic: str, graph_service: GraphService, **kwargs
     ) -> "Subscriber":
         """
         Create a new Subscriber instance and register it with the graph server.
-        
+
         :param topic: The topic this subscriber will listen to.
         :type topic: str
         :param graph_service: Service for graph server communication.
@@ -71,17 +71,17 @@ class Subscriber:
         reader, writer = await graph_service.open_connection()
         writer.write(Command.SUBSCRIBE.value)
         id_str = await read_str(reader)
-        sub = cls(UUID(id_str), topic, shm_service, **kwargs)
+        sub = cls(UUID(id_str), topic, graph_service, **kwargs)
         writer.write(uint64_to_bytes(sub.pid))
         writer.write(encode_str(sub.topic))
         sub._graph_task = asyncio.create_task(sub._graph_connection(reader, writer))
         await sub._initialized.wait()
         return sub
 
-    def __init__(self, id: UUID, topic: str, shm_service: SHMService, **kwargs) -> None:
+    def __init__(self, id: UUID, topic: str, graph_service: GraphService, **kwargs) -> None:
         """
         Initialize a Subscriber instance.
-        
+
         :param id: Unique identifier for this subscriber.
         :type id: UUID
         :param topic: The topic this subscriber listens to.
@@ -100,12 +100,12 @@ class Subscriber:
         self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
 
-        self._shm_service = shm_service
+        self._graph_service = graph_service
 
     def close(self) -> None:
         """
         Close the subscriber and cancel all associated tasks.
-        
+
         Cancels graph connection, all publisher connection tasks,
         and closes all shared memory contexts.
         """
@@ -118,7 +118,7 @@ class Subscriber:
     async def wait_closed(self) -> None:
         """
         Wait for all subscriber resources to be fully closed.
-        
+
         Waits for graph connection termination, all publisher connection
         tasks to complete, and all shared memory contexts to close.
         """
@@ -135,10 +135,10 @@ class Subscriber:
     ) -> None:
         """
         Handle communication with the graph server.
-        
+
         Processes commands from the graph server including COMPLETE and UPDATE
         operations for managing publisher connections.
-        
+
         :param reader: Stream reader for receiving commands from graph server.
         :type reader: asyncio.StreamReader
         :param writer: Stream writer for responding to graph server.
@@ -197,10 +197,10 @@ class Subscriber:
     ) -> None:
         """
         Handle communication with a specific publisher.
-        
+
         Establishes connection, exchanges identification, and processes
         incoming messages from the publisher using various transport methods.
-        
+
         :param id: Unique identifier of the publisher.
         :type id: UUID
         :param address: Network address of the publisher.
@@ -246,7 +246,7 @@ class Subscriber:
                         if id in self._shms:
                             self._shms[id].close()
                         try:
-                            self._shms[id] = await self._shm_service.attach(shm_name)
+                            self._shms[id] = await self._graph_service.attach_shm(shm_name)
                         except ValueError:
                             logger.info(
                                 "Invalid SHM received from publisher; may be dead"
@@ -275,10 +275,10 @@ class Subscriber:
     async def recv(self) -> typing.Any:
         """
         Receive the next message with a deep copy.
-        
+
         This method creates a deep copy of the received message, allowing
         safe modification without affecting the original cached message.
-        
+
         :return: Deep copy of the received message.
         :rtype: typing.Any
         """
@@ -291,11 +291,11 @@ class Subscriber:
     async def recv_zero_copy(self) -> AsyncGenerator[typing.Any, None]:
         """
         Receive the next message with zero-copy access.
-        
+
         This context manager provides direct access to the cached message
         without copying. The message should not be modified or stored beyond
         the context manager's scope.
-        
+
         :return: Context manager yielding the received message.
         :rtype: collections.abc.AsyncGenerator[typing.Any, None]
         """

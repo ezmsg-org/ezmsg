@@ -19,10 +19,7 @@ DEFAULT_HOST = "127.0.0.1"
 GRAPHSERVER_ADDR_ENV = "EZMSG_GRAPHSERVER_ADDR"
 GRAPHSERVER_PORT_DEFAULT = 25978
 
-SHMSERVER_ADDR_ENV = "EZMSG_SHMSERVER_ADDR"
-SHMSERVER_PORT_DEFAULT = 25979
-
-RESERVED_PORTS = [GRAPHSERVER_PORT_DEFAULT, SHMSERVER_PORT_DEFAULT]
+RESERVED_PORTS = [GRAPHSERVER_PORT_DEFAULT]
 
 SERVER_PORT_START_ENV = "EZMSG_SERVER_PORT_START"
 SERVER_PORT_START_DEFAULT = 10000
@@ -34,7 +31,7 @@ PUBLISHER_START_PORT_DEFAULT = 25980
 class Address(typing.NamedTuple):
     """
     Network address representation with host and port.
-    
+
     Provides utility methods for address parsing, serialization,
     and socket binding operations.
     """
@@ -45,7 +42,7 @@ class Address(typing.NamedTuple):
     async def from_stream(cls, reader: asyncio.StreamReader) -> "Address":
         """
         Read an Address from an async stream.
-        
+
         :param reader: Stream reader to read address string from.
         :type reader: asyncio.StreamReader
         :return: Parsed Address instance.
@@ -58,7 +55,7 @@ class Address(typing.NamedTuple):
     def from_string(cls, address: str) -> "Address":
         """
         Parse an Address from a string representation.
-        
+
         :param address: Address string in "host:port" format.
         :type address: str
         :return: Parsed Address instance.
@@ -70,7 +67,7 @@ class Address(typing.NamedTuple):
     def to_stream(self, writer: asyncio.StreamWriter) -> None:
         """
         Write this address to an async stream.
-        
+
         :param writer: Stream writer to send address string to.
         :type writer: asyncio.StreamWriter
         """
@@ -79,7 +76,7 @@ class Address(typing.NamedTuple):
     def bind_socket(self) -> socket.socket:
         """
         Create and bind a socket to this address.
-        
+
         :return: Socket bound to this address.
         :rtype: socket.socket
         :raises IOError: If no free ports are available.
@@ -97,7 +94,7 @@ AddressType = tuple[str, int] | Address
 class ClientInfo:
     """
     Base information for client connections.
-    
+
     Tracks client identification, communication writer, and provides
     synchronized access to the writer for thread-safe operations.
     """
@@ -118,10 +115,10 @@ class ClientInfo:
     async def sync_writer(self) -> AsyncGenerator[asyncio.StreamWriter, None]:
         """
         Get synchronized access to the writer.
-        
+
         Ensures thread-safe access to the stream writer by coordinating
         access through an asyncio Event mechanism.
-        
+
         :return: Context manager yielding the synchronized writer.
         :rtype: collections.abc.AsyncGenerator[asyncio.StreamWriter, None]
         """
@@ -139,17 +136,17 @@ class ClientInfo:
 class PublisherInfo(ClientInfo):
     """
     Publisher-specific client information.
-    
+
     Extends ClientInfo with the publisher's network address.
     """
     address: Address
 
 
 @dataclass
-class SubscriberInfo(ClientInfo): 
+class SubscriberInfo(ClientInfo):
     """
     Subscriber-specific client information.
-    
+
     Currently identical to ClientInfo but may be extended in the future.
     """
     ...
@@ -158,7 +155,7 @@ class SubscriberInfo(ClientInfo):
 def uint64_to_bytes(i: int) -> bytes:
     """
     Convert a 64-bit unsigned integer to bytes.
-    
+
     :param i: Integer value to convert.
     :type i: int
     :return: Byte representation in little-endian format.
@@ -170,7 +167,7 @@ def uint64_to_bytes(i: int) -> bytes:
 def bytes_to_uint(b: bytes) -> int:
     """
     Convert bytes to a 64-bit unsigned integer.
-    
+
     :param b: Byte data to convert.
     :type b: bytes
     :return: Integer value decoded from little-endian bytes.
@@ -182,7 +179,7 @@ def bytes_to_uint(b: bytes) -> int:
 def encode_str(string: str) -> bytes:
     """
     Encode a string with length prefix for network transmission.
-    
+
     :param string: String to encode.
     :type string: str
     :return: Length-prefixed UTF-8 encoded bytes.
@@ -196,7 +193,7 @@ def encode_str(string: str) -> bytes:
 async def read_int(reader: asyncio.StreamReader) -> int:
     """
     Read a 64-bit unsigned integer from an async stream.
-    
+
     :param reader: Stream reader to read from.
     :type reader: asyncio.StreamReader
     :return: Integer value read from stream.
@@ -236,15 +233,16 @@ async def close_server(server: Server):
 class Command(enum.Enum):
     """
     Enumeration of protocol commands for ezmsg network communication.
-    
+
     Defines all command types used in the ezmsg protocol for graph management,
     publisher-subscriber communication, and shared memory operations.
     """
-    
+
+    @staticmethod
     def _generate_next_value_(name, start, count, last_values) -> bytes:
         """
         Generate byte values for enum members.
-        
+
         :param name: Name of the enum member.
         :type name: str
         :param start: Starting value (unused).
@@ -276,7 +274,7 @@ class Command(enum.Enum):
     TX_TCP = enum.auto()
     RX_ACK = enum.auto()
 
-    # SHMServer Commands
+    # SHM Commands
     SHM_CREATE = enum.auto()
     SHM_ATTACH = enum.auto()
 
@@ -292,10 +290,10 @@ def create_socket(
 ) -> socket.socket:
     """
     Create a socket bound to an available port.
-    
+
     Attempts to bind to the specified port, or searches for an available
     port within the given range if no specific port is provided.
-    
+
     :param host: Host address to bind to (defaults to DEFAULT_HOST).
     :type host: str | None
     :param port: Specific port to bind to (if None, searches for available port).

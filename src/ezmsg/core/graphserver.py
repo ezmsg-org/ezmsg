@@ -21,8 +21,10 @@ from .netprotocol import (
     uint64_to_bytes,
     GRAPHSERVER_ADDR_ENV,
     GRAPHSERVER_PORT_DEFAULT,
+    DEFAULT_SHM_SIZE,
 )
 from .server import ServiceManager, ThreadedAsyncServer
+from .shm import SharedMemory, SHMContext, SHMInfo
 
 
 logger = logging.getLogger("ezmsg")
@@ -31,7 +33,7 @@ logger = logging.getLogger("ezmsg")
 class GraphServer(ThreadedAsyncServer):
     """
     Pub-sub directed acyclic graph (DAG) server.
-    
+
     The GraphServer manages the message routing graph for ezmsg applications,
     handling publisher-subscriber relationships and maintaining the DAG structure.
 
@@ -45,6 +47,9 @@ class GraphServer(ThreadedAsyncServer):
 
     graph: DAG
     clients: dict[UUID, ClientInfo]
+    node: int
+    shms: dict[str, SHMInfo]
+
     _client_tasks: dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
 
@@ -54,10 +59,23 @@ class GraphServer(ThreadedAsyncServer):
         self.clients = dict()
         self._client_tasks = dict()
 
+        self.node = getnode()
+        self.shms = dict()
+
+
     async def setup(self) -> None:
         self._command_lock = asyncio.Lock()
 
     async def shutdown(self) -> None:
+        logger.info('shutting down')
+        for info in self.shms.values():
+            for lease_task in list(info.leases):
+                lease_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await lease_task
+            info.leases.clear()
+
+        logger.info('leases released')
         for task in self._client_tasks.values():
             task.cancel()
             with suppress(asyncio.CancelledError):
@@ -86,87 +104,114 @@ class GraphServer(ThreadedAsyncServer):
                 await close_stream_writer(writer)
                 return
 
-            # We only want to handle one command at a time
-            async with self._command_lock:
-                if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
-                    id = uuid1(node=node)
-                    writer.write(encode_str(str(id)))
+            elif req in [Command.SHM_CREATE.value, Command.SHM_ATTACH.value]:
+                info: Optional[SHMInfo] = None
 
-                    pid = await read_int(reader)
-                    topic = await read_str(reader)
+                if req == Command.SHM_CREATE.value:
+                    num_buffers = await read_int(reader)
+                    buf_size = await read_int(reader)
 
-                    if req == Command.SUBSCRIBE.value:
-                        info = SubscriberInfo(id, writer, pid, topic)
-                        self.clients[id] = info
-                        self._client_tasks[id] = asyncio.create_task(
-                            self._handle_client(id, reader, writer)
-                        )
-                        iface = writer.transport.get_extra_info("sockname")[0]
-                        await self._notify_subscriber(info, iface)
+                    # Create segment
+                    shm = SharedMemory(size=num_buffers * buf_size, create=True)
+                    shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
+                    shm.buf[0:8] = uint64_to_bytes(num_buffers)
+                    shm.buf[8:16] = uint64_to_bytes(buf_size)
+                    info = SHMInfo(shm)
+                    self.shms[shm.name] = info
+                    logger.debug(f"created {shm.name}")
 
-                    elif req == Command.PUBLISH.value:
-                        address = await Address.from_stream(reader)
-                        info = PublisherInfo(id, writer, pid, topic, address)
-                        self.clients[id] = info
-                        self._client_tasks[id] = asyncio.create_task(
-                            self._handle_client(id, reader, writer)
-                        )
-                        iface = writer.transport.get_extra_info("peername")[0]
-                        for sub in self._downstream_subs(info.topic):
-                            await self._notify_subscriber(sub, iface)
+                elif req == Command.SHM_ATTACH.value:
+                    shm_name = await read_str(reader)
+                    info = self.shms.get(shm_name, None)
 
-                    writer.write(Command.COMPLETE.value)
-                    await writer.drain()
+                if info is None:
                     return
 
-                elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
-                    from_topic = await read_str(reader)
-                    to_topic = await read_str(reader)
+                writer.write(Command.COMPLETE.value)
+                writer.write(encode_str(info.shm.name))
 
-                    cmd = self.graph.add_edge
-                    if req == Command.DISCONNECT.value:
-                        cmd = self.graph.remove_edge
+            else:
+                # We only want to handle one command at a time
+                async with self._command_lock:
+                    if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
+                        id = uuid1(node=node)
+                        writer.write(encode_str(str(id)))
 
-                    try:
-                        cmd(from_topic, to_topic)
-                        for sub in self._downstream_subs(to_topic):
-                            await self._notify_subscriber(sub)
+                        pid = await read_int(reader)
+                        topic = await read_str(reader)
+
+                        if req == Command.SUBSCRIBE.value:
+                            info = SubscriberInfo(id, writer, pid, topic)
+                            self.clients[id] = info
+                            self._client_tasks[id] = asyncio.create_task(
+                                self._handle_client(id, reader, writer)
+                            )
+                            iface = writer.transport.get_extra_info("sockname")[0]
+                            await self._notify_subscriber(info, iface)
+
+                        elif req == Command.PUBLISH.value:
+                            address = await Address.from_stream(reader)
+                            info = PublisherInfo(id, writer, pid, topic, address)
+                            self.clients[id] = info
+                            self._client_tasks[id] = asyncio.create_task(
+                                self._handle_client(id, reader, writer)
+                            )
+                            iface = writer.transport.get_extra_info("peername")[0]
+                            for sub in self._downstream_subs(info.topic):
+                                await self._notify_subscriber(sub, iface)
+
                         writer.write(Command.COMPLETE.value)
-                    except CyclicException:
-                        writer.write(Command.CYCLIC.value)
+                        await writer.drain()
+                        return
 
-                    await writer.drain()
+                    elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
+                        from_topic = await read_str(reader)
+                        to_topic = await read_str(reader)
 
-                    if req == Command.DISCONNECT.value:
-                        await close_stream_writer(writer)
+                        cmd = self.graph.add_edge
+                        if req == Command.DISCONNECT.value:
+                            cmd = self.graph.remove_edge
 
-                elif req == Command.SYNC.value:
-                    for pub in self._publishers():
                         try:
-                            async with pub.sync_writer() as pub_writer:
-                                pub_writer.write(Command.SYNC.value)
-                        except (ConnectionResetError, BrokenPipeError):
-                            continue
+                            cmd(from_topic, to_topic)
+                            for sub in self._downstream_subs(to_topic):
+                                await self._notify_subscriber(sub)
+                            writer.write(Command.COMPLETE.value)
+                        except CyclicException:
+                            writer.write(Command.CYCLIC.value)
 
-                    writer.write(Command.COMPLETE.value)
-                    await writer.drain()
+                        await writer.drain()
 
-                elif req == Command.PAUSE.value:
-                    for pub in self._publishers():
-                        pub.writer.write(Command.PAUSE.value)
+                        if req == Command.DISCONNECT.value:
+                            await close_stream_writer(writer)
 
-                elif req == Command.RESUME.value:
-                    for pub in self._publishers():
-                        pub.writer.write(Command.RESUME.value)
+                    elif req == Command.SYNC.value:
+                        for pub in self._publishers():
+                            try:
+                                async with pub.sync_writer() as pub_writer:
+                                    pub_writer.write(Command.SYNC.value)
+                            except (ConnectionResetError, BrokenPipeError):
+                                continue
 
-                elif req == Command.DAG.value:
-                    writer.write(Command.DAG.value)
-                    dag_bytes = pickle.dumps(self.graph)
-                    writer.write(uint64_to_bytes(len(dag_bytes)) + dag_bytes)
-                    writer.write(Command.COMPLETE.value)
+                        writer.write(Command.COMPLETE.value)
+                        await writer.drain()
 
-                else:
-                    logger.warn(f"GraphServer received unknown command {req}")
+                    elif req == Command.PAUSE.value:
+                        for pub in self._publishers():
+                            pub.writer.write(Command.PAUSE.value)
+
+                    elif req == Command.RESUME.value:
+                        for pub in self._publishers():
+                            pub.writer.write(Command.RESUME.value)
+
+                    elif req == Command.DAG.value:
+                        writer.write(Command.DAG.value)
+                        dag_bytes = pickle.dumps(self.graph)
+                        writer.write(uint64_to_bytes(len(dag_bytes)) + dag_bytes)
+                        writer.write(Command.COMPLETE.value)
+
+                    else:
+                        logger.warning(f"GraphServer received unknown command {req}")
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("GraphServer connection fail mid-command")
@@ -352,3 +397,32 @@ class GraphService(ServiceManager[GraphServer]):
         formatted_graph = graph_string(graph_connections, fmt=fmt, direction=direction)
 
         return formatted_graph
+
+    async def create_shm(
+        self, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE
+    ) -> SHMContext:
+        reader, writer = await self.open_connection()
+        writer.write(Command.SHM_CREATE.value)
+        writer.write(uint64_to_bytes(num_buffers))
+        writer.write(uint64_to_bytes(buf_size))
+        await writer.drain()
+
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            raise ValueError("Error creating SHM segment")
+
+        shm_name = await read_str(reader)
+        return SHMContext._create(shm_name, reader, writer)
+
+    async def attach_shm(self, name: str) -> SHMContext:
+        reader, writer = await self.open_connection()
+        writer.write(Command.SHM_ATTACH.value)
+        writer.write(encode_str(name))
+        await writer.drain()
+
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            raise ValueError("Invalid SHM Name")
+
+        shm_name = await read_str(reader)
+        return SHMContext._create(shm_name, reader, writer)

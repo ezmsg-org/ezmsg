@@ -2,6 +2,8 @@ import pytest
 import asyncio
 import ezmsg.core as ez
 
+from ezmsg.core.graphserver import GraphService
+
 from multiprocessing import Process
 
 from collections.abc import AsyncGenerator
@@ -105,12 +107,10 @@ class AttachEchoProcess(AttachTestProcess):
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="canonical port isn't always available")
 async def test_attach():
-    graph_service = ez.GraphService(address=ez.GraphService.default_address())
-    shm_service = ez.SHMService(address=ez.SHMService.default_address())
+    graph_service = GraphService(address=GraphService.default_address())
     graph_server = graph_service.create_server()
-    shm_server = shm_service.create_server()
 
-    async with ez.GraphContext(graph_service, shm_service):
+    async with ez.GraphContext(graph_service):
         settings = TransmitReceiveSettings()
 
         txrx_process = TransmitReceiveProcess(settings)
@@ -123,7 +123,6 @@ async def test_attach():
         txrx_process.join()
 
     graph_server.stop()
-    shm_server.stop()
 
 
 if __name__ == "__main__":

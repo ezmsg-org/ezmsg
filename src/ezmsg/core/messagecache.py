@@ -3,7 +3,7 @@ import logging
 from uuid import UUID
 from contextlib import contextmanager
 
-from .shmserver import SHMContext
+from .shm import SHMContext
 from .messagemarshal import MessageMarshal, UninitializedMemory
 
 from collections.abc import Generator

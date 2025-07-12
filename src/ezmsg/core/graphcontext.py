@@ -2,7 +2,6 @@ import asyncio
 import logging
 import typing
 
-from .shmserver import SHMServer, SHMService
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
@@ -15,12 +14,12 @@ logger = logging.getLogger("ezmsg")
 class GraphContext:
     """
     GraphContext maintains a list of created publishers, subscribers, and connections in the graph.
-    
+
     The GraphContext provides a managed environment for creating and tracking publishers,
     subscribers, and graph connections. When the context is no longer needed, it can
     revert changes in the graph which disconnects publishers and removes modifications
     that this context made.
-    
+
     It also maintains a context manager that ensures the graphserver and SHMServer are running.
 
     :param graph_service: Optional graph service instance to use
@@ -36,20 +35,15 @@ class GraphContext:
     _clients: set[Publisher | Subscriber]
     _edges: set[tuple[str, str]]
 
-    _shm_service: SHMService
-    _shm_server: SHMServer | None
     _graph_service: GraphService
     _graph_server: GraphServer | None
 
     def __init__(
         self,
         graph_service: GraphService | None = None,
-        shm_service: SHMService | None = None,
     ) -> None:
         self._clients = set()
         self._edges = set()
-        self._shm_service = shm_service if shm_service is not None else SHMService()
-        self._shm_server = None
         self._graph_service = (
             graph_service if graph_service is not None else GraphService()
         )
@@ -58,7 +52,7 @@ class GraphContext:
     async def publisher(self, topic: str, **kwargs) -> Publisher:
         """
         Create a publisher for the specified topic.
-        
+
         :param topic: The topic name to publish to
         :type topic: str
         :param kwargs: Additional keyword arguments for publisher configuration
@@ -66,7 +60,7 @@ class GraphContext:
         :rtype: Publisher
         """
         pub = await Publisher.create(
-            topic, self._graph_service, self._shm_service, **kwargs
+            topic, self._graph_service, **kwargs
         )
         self._clients.add(pub)
         return pub
@@ -74,7 +68,7 @@ class GraphContext:
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
         """
         Create a subscriber for the specified topic.
-        
+
         :param topic: The topic name to subscribe to
         :type topic: str
         :param kwargs: Additional keyword arguments for subscriber configuration
@@ -82,7 +76,7 @@ class GraphContext:
         :rtype: Subscriber
         """
         sub = await Subscriber.create(
-            topic, self._graph_service, self._shm_service, **kwargs
+            topic, self._graph_service, **kwargs
         )
         self._clients.add(sub)
         return sub
@@ -90,7 +84,7 @@ class GraphContext:
     async def connect(self, from_topic: str, to_topic: str) -> None:
         """
         Connect two topics in the message graph.
-        
+
         :param from_topic: The source topic name
         :type from_topic: str
         :param to_topic: The destination topic name
@@ -102,7 +96,7 @@ class GraphContext:
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
         """
         Disconnect two topics in the message graph.
-        
+
         :param from_topic: The source topic name
         :type from_topic: str
         :param to_topic: The destination topic name
@@ -114,7 +108,7 @@ class GraphContext:
     async def sync(self, timeout: float | None = None) -> None:
         """
         Synchronize with the graph server.
-        
+
         :param timeout: Optional timeout for the sync operation
         :type timeout: float | None
         """
@@ -133,19 +127,12 @@ class GraphContext:
         await self._graph_service.resume()
 
     async def _ensure_servers(self) -> None:
-        # This order is important so that we fail on non-existent
-        # graph_service before spinning up a shm_service
         self._graph_server = await self._graph_service.ensure()
-        self._shm_server = await self._shm_service.ensure()
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
             self._graph_server.stop()
         self._graph_server = None
-
-        if self._shm_server is not None:
-            self._shm_server.stop()
-        self._shm_server = None
 
     async def __aenter__(self) -> "GraphContext":
         await self._ensure_servers()
@@ -164,7 +151,7 @@ class GraphContext:
     async def revert(self) -> None:
         """
         Revert all changes made by this context.
-        
+
         This method closes all clients (publishers and subscribers) created by this
         context and removes all edges that were added to the graph. It is
         automatically called when exiting the context manager.

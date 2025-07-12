@@ -1,27 +1,27 @@
 import asyncio
 import pytest
 
-from ezmsg.core.shmserver import SHMService
+from ezmsg.core.graphserver import GraphService
 
 
 @pytest.mark.asyncio
 async def test_invalid_name() -> None:
-    service = SHMService()
+    service = GraphService()
     server = service.create_server()
 
     with pytest.raises(ValueError):
-        await service.attach("JERRY")
+        await service.attach_shm("JERRY")
 
     server.stop()
 
 
 @pytest.mark.asyncio
 async def test_rw() -> None:
-    service = SHMService()
+    service = GraphService()
     server = service.create_server()
 
-    shm = await service.create(4, 2**16)
-    attach_shm = await service.attach(shm.name)
+    shm = await service.create_shm(4, 2**16)
+    attach_shm = await service.attach_shm(shm.name)
 
     content = b"HELLO"
     with attach_shm.buffer(0) as mem:
@@ -40,11 +40,11 @@ async def test_rw() -> None:
 
 @pytest.mark.asyncio
 async def test_shm_detach_order() -> None:
-    service = SHMService()
+    service = GraphService()
     server = service.create_server()
 
-    shm = await service.create(4, 2**16)
-    attach_shm = await service.attach(shm.name)
+    shm = await service.create_shm(4, 2**16)
+    attach_shm = await service.attach_shm(shm.name)
 
     content = b"HELLO"
     with attach_shm.buffer(0) as mem:
@@ -60,9 +60,8 @@ async def test_shm_detach_order() -> None:
     await shm.wait_closed()
 
     # Close created SHM first
-
-    shm = await service.create(4, 2**16)
-    attach_shm = await service.attach(shm.name)
+    shm = await service.create_shm(4, 2**16)
+    attach_shm = await service.attach_shm(shm.name)
 
     content = b"BONJOUR"
     with shm.buffer(0) as mem:
@@ -81,12 +80,12 @@ async def test_shm_detach_order() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shmserver_shutdown() -> None:
-    service = SHMService()
+async def test_shutdown() -> None:
+    service = GraphService()
     server = service.create_server()
 
-    shm = await service.create(4, 2**16)
-    attach_shm = await service.attach(shm.name)
+    shm = await service.create_shm(4, 2**16)
+    attach_shm = await service.attach_shm(shm.name)
 
     content = b"HELLO"
     with shm.buffer(0) as mem:
@@ -104,4 +103,4 @@ if __name__ == "__main__":
     asyncio.run(test_invalid_name())
     asyncio.run(test_rw())
     asyncio.run(test_shm_detach_order())
-    asyncio.run(test_shmserver_shutdown())
+    asyncio.run(test_shutdown())
