@@ -281,7 +281,11 @@ class Publisher:
                         self._shm = new_shm
                         MessageCache[self.id].push(self._msg_id, self._shm)
 
-                    sub.writer.write(Command.TX_SHM.value + msg_id_bytes + encode_str(self._shm.name))
+                    sub.writer.write(
+                        Command.TX_SHM.value + \
+                        msg_id_bytes + \
+                        encode_str(self._shm.name)
+                    )
 
             else:
                 with MessageMarshal.serialize(self._msg_id, obj) as ser_obj:
