@@ -262,7 +262,6 @@ class Publisher:
             if not self._force_tcp and sub.id.node == self.id.node:
                 if sub.pid == self.pid:
                     sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
-
                 else:
                     try:
                         # Push cache to shm (if not already there)
@@ -282,21 +281,20 @@ class Publisher:
                         self._shm = new_shm
                         MessageCache[self.id].push(self._msg_id, self._shm)
 
-                    sub.writer.write(Command.TX_SHM.value)
-                    sub.writer.write(msg_id_bytes)
-                    sub.writer.write(encode_str(self._shm.name))
+                    sub.writer.write(Command.TX_SHM.value + msg_id_bytes + encode_str(self._shm.name))
 
             else:
                 with MessageMarshal.serialize(self._msg_id, obj) as ser_obj:
                     total_size, header, buffers = ser_obj
                     total_size_bytes = uint64_to_bytes(total_size)
 
-                    sub.writer.write(Command.TX_TCP.value)
-                    sub.writer.write(msg_id_bytes)
-                    sub.writer.write(total_size_bytes)
-                    sub.writer.write(header)
-                    for buffer in buffers:
-                        sub.writer.write(buffer)
+                    sub.writer.write(
+                        Command.TX_TCP.value + \
+                        msg_id_bytes + \
+                        total_size_bytes + \
+                        header + \
+                        b''.join([buffer for buffer in buffers])
+                    )
 
             try:
                 await sub.writer.drain()
