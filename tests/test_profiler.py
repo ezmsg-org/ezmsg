@@ -102,6 +102,30 @@ def test_logger_append_header_mismatch(mock_logger_path):
         handler.close()
 
 
+def test_logger_append_no_header(mock_logger_path):
+    """Test that the logger correctly appends to the logfile if append=True and the header is correct."""
+
+    # Create a file with no header
+    test_logpath = mock_logger_path
+    with open(test_logpath, "w") as f:
+        f.truncate(0)
+
+    logger = _setup_logger(append=True)
+
+    # Assert that the file had the correct header logged
+    assert test_logpath.exists()
+    with open(test_logpath, "r") as f:
+        first_line = f.readline().strip()
+    assert first_line == HEADER
+
+    # Clean up the logger handlers
+    handlers = logger.handlers
+    for handler in handlers:
+        if isinstance(handler, logging.FileHandler):
+            logger.removeHandler(handler)
+            handler.close()
+
+
 def test_logger_append_header_match(mock_logger_path):
     """Test that the logger correctly appends to the logfile if append=True and the header is correct."""
     correct_header = HEADER

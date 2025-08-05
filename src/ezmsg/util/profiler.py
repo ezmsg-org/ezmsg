@@ -34,15 +34,16 @@ def _setup_logger(append: bool = False) -> logging.Logger:
         if append:
             with open(logpath) as f:
                 first_line = f.readline().rstrip()
-            if first_line == HEADER:
-                write_header = False
-            else:
-                # Remove the file if appending, but headers do not match
-                ezmsg_logger = logging.getLogger("ezmsg")
-                ezmsg_logger.warning(
-                    "Profiling header mismatch: please make sure to use the same version of ezmsg for all processes."
-                )
-                logpath.unlink()
+            if first_line:
+                if first_line == HEADER:
+                    write_header = False
+                else:
+                    # Remove the file if appending, but headers do not match
+                    ezmsg_logger = logging.getLogger("ezmsg")
+                    ezmsg_logger.warning(
+                        "Profiling header mismatch: please make sure to use the same version of ezmsg for all processes."
+                    )
+                    logpath.unlink()
         else:
             # Remove the file if not appending
             logpath.unlink()
