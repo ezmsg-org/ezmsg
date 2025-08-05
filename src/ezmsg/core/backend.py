@@ -1,14 +1,15 @@
 import asyncio
 from collections.abc import Callable, Mapping, Iterable
 from collections.abc import Collection as AbstractCollection
-import logging
 import enum
+import logging
+import os
 
-from socket import socket
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
+from socket import socket
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
@@ -175,6 +176,7 @@ def run(
     backend_process: type[BackendProcess] = DefaultBackendProcess,
     graph_address: AddressType | None = None,
     force_single_process: bool = False,
+    profiler_log_name: str | None = None,
     **components_kwargs: Component,
 ) -> None:
     """
@@ -213,6 +215,7 @@ def run(
     .. note::
        The old method :obj:`run_system` has been deprecated and uses ``run()`` instead.
     """
+    os.environ["EZMSG_PROFILER"] = profiler_log_name or "ezprofiler.log"
     # FIXME: This function is the last major re-implementation needed to make this
     # codebase more maintainable.
     graph_service = GraphService(graph_address)
