@@ -12,8 +12,16 @@ def prune_graph_connections(
     graph_connections: GraphType,
 ) -> Tuple[Optional[GraphType], Optional[List[str]]]:
     """
-    Remove nodes from the graph that are proxy_topics, i.e. nodes that are both
-    source and target nodes in the connections graph.
+    Remove nodes from the graph that are proxy_topics.
+    
+    Proxy topics are nodes that are both source and target nodes in the
+    connections graph. This function removes them and connects their
+    upstream sources directly to their downstream targets.
+    
+    :param graph_connections: Graph representing topic connections.
+    :type graph_connections: GraphType
+    :return: Tuple of (pruned_graph, proxy_topics_list).
+    :rtype: tuple[GraphType | None, List[str] | None]
     """
     graph_conns = graph_connections.copy()
     source_nodes = []
@@ -44,6 +52,8 @@ def _pipeline_levels(
     graph_connections: GraphType, level_separator: str = "/"
 ) -> defaultdict:
     """
+    Compute hierarchy levels for pipeline components.
+    
     In ezmsg, a pipeline is built with units/collections, with subcomponents
     that are either more units/collection or input/output streams. The graph of
     the connections are stored in a DAG (directed acyclic graph object), but the
@@ -53,6 +63,13 @@ def _pipeline_levels(
     This function computes the level of each component in the hierarchy (not just
     the connection nodes) and returns a dictionary of the level of each pipeline
     parts, where 0 is the level of the connection (leaf) nodes.
+    
+    :param graph_connections: Graph representing component connections.
+    :type graph_connections: GraphType
+    :param level_separator: Character separating hierarchy levels.
+    :type level_separator: str
+    :return: Dictionary mapping component names to their hierarchy levels.
+    :rtype: defaultdict
     """
     graph_levels = defaultdict(int)
 
@@ -80,7 +97,12 @@ def _get_parent_node(node: str, level_separator: str = "/") -> str:
 
 
 class LeafNodeException(Exception):
-    """Raised when connection nodes are not leaf nodes in the pipeline hierarchy."""
+    """
+    Raised when connection nodes are not leaf nodes in the pipeline hierarchy.
+    
+    This exception indicates that the graph contains connections at non-leaf
+    levels of the component hierarchy, which violates expected structure.
+    """
 
 
 def get_compactified_graph(
@@ -206,7 +228,7 @@ def graph_string(
         ]
         footer = ["}"]
 
-        def node_string(graph: defaultdict, node: str) -> Optional[str]:
+        def node_string(graph: defaultdict, node: str) -> Optional[list[str]]:
             out = None
             if isinstance(graph[node], defaultdict):
                 out = [
@@ -223,7 +245,7 @@ def graph_string(
         header = [f"flowchart {direction}"]
         footer = []
 
-        def node_string(graph: defaultdict, node: str) -> Optional[str]:
+        def node_string(graph: defaultdict, node: str) -> Optional[list[str]]:
             out = None
             if isinstance(graph[node], defaultdict):
                 out = [

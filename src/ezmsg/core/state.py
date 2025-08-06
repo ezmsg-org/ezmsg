@@ -10,6 +10,12 @@ from typing import (
 
 
 class StateMeta(ABCMeta):
+    """
+    Metaclass that automatically applies dataclass decorator to State classes.
+    
+    This metaclass ensures all State subclasses are automatically converted
+    to mutable dataclasses with hash support but no automatic initialization.
+    """
     def __new__(
         cls,
         name: str,
@@ -17,6 +23,19 @@ class StateMeta(ABCMeta):
         classdict: Dict[str, Any],
         **kwargs: Any,
     ) -> Type["State"]:
+        """
+        Create a new State class with dataclass transformation.
+        
+        :param name: Name of the class being created.
+        :type name: str
+        :param bases: Base classes for the new class.
+        :type bases: Tuple[type, ...]
+        :param classdict: Class namespace dictionary.
+        :type classdict: Dict[str, Any]
+        :param kwargs: Additional keyword arguments.
+        :return: New State class with dataclass applied.
+        :rtype: Type[State]
+        """
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(unsafe_hash=True, frozen=False, init=False)(new_cls)  # type: ignore
 

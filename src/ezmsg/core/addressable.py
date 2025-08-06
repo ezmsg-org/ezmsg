@@ -4,10 +4,23 @@ SEPARATOR = "/"
 
 
 class Addressable:
+    """
+    Base class for objects that can be addressed within the ezmsg system.
+    
+    Addressable objects have a hierarchical address structure consisting of 
+    a location path and a name, similar to a filesystem path.
+    """
     _name: Optional[str]
     _location: Optional[List[str]]
 
     def __init__(self) -> None:
+        """
+        Initialize an Addressable object.
+        
+        The name and location are initially None and must be set before
+        the object can be properly addressed. This is achieved through
+        the ``_set_name()`` and ``_set_location()`` methods.
+        """
         self._name = None
         self._location = None
 
@@ -25,16 +38,39 @@ class Addressable:
 
     @property
     def name(self) -> str:
+        """
+        Get the name of this addressable object.
+        
+        :return: The object's name
+        :rtype: str
+        :raises AssertionError: If name has not been set
+        """
         if self._name is None:
             raise AssertionError
         return self._name
 
     @property
     def location(self) -> List[str]:
+        """
+        Get the location path of this addressable object.
+        
+        :return: List of path components representing the object's location
+        :rtype: List[str]
+        :raises AssertionError: If location has not been set
+        """
         if self._location is None:
             raise AssertionError
         return self._location
 
     @property
     def address(self) -> str:
+        """
+        Get the full address of this object.
+        
+        The address is constructed by joining the location path and name
+        with forward slashes, similar to a filesystem path.
+        
+        :return: The full address string
+        :rtype: str
+        """
         return "/".join(self.location + [self.name])

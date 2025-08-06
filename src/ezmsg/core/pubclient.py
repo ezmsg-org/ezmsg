@@ -37,6 +37,14 @@ BACKPRESSURE_REFRACTORY = 5.0  # sec
 
 
 class Publisher:
+    """
+    A publisher client for broadcasting messages to subscribers.
+    
+    Publisher manages shared memory allocation, connection handling with subscribers,
+    backpressure control, and supports both shared memory and TCP transport methods.
+    Messages are broadcast to all connected subscribers with automatic cleanup
+    and resource management.
+    """
     id: UUID
     pid: int
     topic: str
@@ -59,6 +67,12 @@ class Publisher:
 
     @staticmethod
     def client_type() -> bytes:
+        """
+        Get the client type identifier for publishers.
+        
+        :return: Command byte identifying this as a publisher client.
+        :rtype: bytes
+        """
         return Command.PUBLISH.value
 
     @classmethod
@@ -72,6 +86,25 @@ class Publisher:
         buf_size: int = DEFAULT_SHM_SIZE,
         **kwargs,
     ) -> "Publisher":
+        """
+        Create a new Publisher instance and register it with the graph server.
+        
+        :param topic: The topic this publisher will broadcast to.
+        :type topic: str
+        :param graph_service: Service for graph server communication.
+        :type graph_service: GraphService
+        :param shm_service: Service for shared memory management.
+        :type shm_service: SHMService
+        :param host: Optional host address to bind to.
+        :type host: Optional[str]
+        :param port: Optional port number to bind to.
+        :type port: Optional[int]
+        :param buf_size: Size of shared memory buffers.
+        :type buf_size: int
+        :param kwargs: Additional keyword arguments for Publisher constructor.
+        :return: Initialized and registered Publisher instance.
+        :rtype: Publisher
+        """
         reader, writer = await graph_service.open_connection()
         writer.write(Command.PUBLISH.value)
         id = UUID(await read_str(reader))
@@ -116,6 +149,22 @@ class Publisher:
         start_paused: bool = False,
         force_tcp: bool = False,
     ) -> None:
+        """
+        Initialize a Publisher instance.
+        
+        :param id: Unique identifier for this publisher.
+        :type id: UUID
+        :param topic: The topic this publisher broadcasts to.
+        :type topic: str
+        :param shm_service: Service for shared memory operations.
+        :type shm_service: SHMService
+        :param num_buffers: Number of buffers for message buffering.
+        :type num_buffers: int
+        :param start_paused: Whether to start in paused state.
+        :type start_paused: bool
+        :param force_tcp: Whether to force TCP transport instead of shared memory.
+        :type force_tcp: bool
+        """
         self.id = id
         self.pid = os.getpid()
         self.topic = topic
@@ -135,6 +184,12 @@ class Publisher:
         self._shm_service = shm_service
 
     def close(self) -> None:
+        """
+        Close the publisher and cancel all associated tasks.
+        
+        Cancels graph connection, shared memory, connection server,
+        and all subscriber handling tasks.
+        """
         self._graph_task.cancel()
         self._shm.close()
         self._connection_task.cancel()
@@ -142,6 +197,12 @@ class Publisher:
             task.cancel()
 
     async def wait_closed(self) -> None:
+        """
+        Wait for all publisher resources to be fully closed.
+        
+        Waits for shared memory cleanup, graph connection termination,
+        connection server shutdown, and all subscriber tasks to complete.
+        """
         await self._shm.wait_closed()
         with suppress(asyncio.CancelledError):
             await self._graph_task
@@ -154,6 +215,17 @@ class Publisher:
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        """
+        Handle communication with the graph server.
+        
+        Processes commands from the graph server including COMPLETE, PAUSE,
+        RESUME, and SYNC operations.
+        
+        :param reader: Stream reader for receiving commands from graph server.
+        :type reader: asyncio.StreamReader
+        :param writer: Stream writer for responding to graph server.
+        :type writer: asyncio.StreamWriter
+        """
         try:
             while True:
                 cmd = await reader.read(1)
@@ -189,6 +261,17 @@ class Publisher:
     async def _on_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        """
+        Handle new subscriber connections.
+        
+        Exchanges identification information with connecting subscribers
+        and sets up subscriber handling tasks.
+        
+        :param reader: Stream reader for receiving subscriber info.
+        :type reader: asyncio.StreamReader
+        :param writer: Stream writer for sending publisher info.
+        :type writer: asyncio.StreamWriter
+        """
         id_str = await read_str(reader)
         id = UUID(id_str)
         pid = await read_int(reader)
@@ -208,6 +291,17 @@ class Publisher:
     async def _handle_subscriber(
         self, info: SubscriberInfo, reader: asyncio.StreamReader
     ) -> None:
+        """
+        Handle communication with a specific subscriber.
+        
+        Processes acknowledgments from subscribers and manages backpressure
+        control based on subscriber feedback.
+        
+        :param info: Information about the subscriber connection.
+        :type info: SubscriberInfo
+        :param reader: Stream reader for receiving subscriber messages.
+        :type reader: asyncio.StreamReader
+        """
         self._subscribers[info.id] = info
 
         try:
@@ -230,21 +324,51 @@ class Publisher:
             del self._subscribers[info.id]
 
     async def sync(self) -> None:
-        """Pause and drain backpressure"""
+        """
+        Pause and drain backpressure.
+        
+        Temporarily pauses the publisher and waits for all pending
+        messages to be acknowledged by subscribers.
+        """
         self._running.clear()
         await self._backpressure.sync()
 
     @property
     def running(self) -> bool:
+        """
+        Check if the publisher is currently running.
+        
+        :return: True if publisher is running and accepting broadcasts.
+        :rtype: bool
+        """
         return self._running.is_set()
 
     def pause(self) -> None:
+        """
+        Pause the publisher to stop broadcasting messages.
+        
+        Messages sent to broadcast() will block until resumed.
+        """
         self._running.clear()
 
     def resume(self) -> None:
+        """
+        Resume the publisher to allow broadcasting messages.
+        
+        Unblocks any pending broadcast() calls.
+        """
         self._running.set()
 
     async def broadcast(self, obj: Any) -> None:
+        """
+        Broadcast a message to all connected subscribers.
+        
+        Handles message serialization, shared memory management, transport
+        selection (local/SHM/TCP), and backpressure control automatically.
+        
+        :param obj: The object/message to broadcast to subscribers.
+        :type obj: Any
+        """
         await self._running.wait()
 
         buf_idx = self._msg_id % self._num_buffers

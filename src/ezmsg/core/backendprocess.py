@@ -44,8 +44,15 @@ logger = logging.getLogger("ezmsg")
 
 class Complete(Exception):
     """
-    A type of ``Exception`` which signals to ``ezmsg`` that the function can be shut down gracefully.
-    If all functions in all :obj:`Units` raise ``Complete``, the entire pipeline will terminate execution.
+    A type of Exception raised by Unit methods, which signals to ezmsg that the
+    function can be shut down gracefully.
+    
+    If all functions in all Units raise Complete, the entire pipeline will
+    terminate execution. This exception is used to signal normal completion
+    of processing tasks.
+
+    .. note::
+       This exception indicates successful completion, not an error condition.
     """
 
     pass
@@ -53,7 +60,13 @@ class Complete(Exception):
 
 class NormalTermination(Exception):
     """
-    A type of ``Exception`` which signals to ``ezmsg`` that the pipeline can be shut down gracefully.
+    A type of Exception which signals to ezmsg that the pipeline can be shut down gracefully.
+    
+    This exception is used to indicate that the system should terminate normally,
+    typically when all processing is complete or when a graceful shutdown is requested.
+
+    .. note::
+       This exception indicates normal termination, not an error condition.
     """
 
     pass

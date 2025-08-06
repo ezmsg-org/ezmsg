@@ -109,6 +109,25 @@ async def run_command(
     compact: typing.Optional[int] = None,
     nobrowser: bool = False,
 ) -> None:
+    """
+    Run an ezmsg command with the specified parameters.
+    
+    This function handles various ezmsg commands like 'serve', 'start', 'shutdown', etc.
+    and manages the graph and shared memory services.
+
+    :param cmd: The command to execute ('serve', 'start', 'shutdown', 'graphviz', 'mermaid')
+    :type cmd: str
+    :param graph_address: Address of the graph service
+    :type graph_address: Address
+    :param shm_address: Address of the shared memory service
+    :type shm_address: Address
+    :param target: Target for visualization commands (default: 'live')
+    :type target: str
+    :param compact: Compactification level for visualization commands
+    :type compact: typing.Optional[int]
+    :param nobrowser: Whether to suppress browser opening for visualization
+    :type nobrowser: bool
+    """
     shm_service = SHMService(shm_address)
     graph_service = GraphService(graph_address)
 

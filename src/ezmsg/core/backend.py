@@ -153,7 +153,21 @@ def run_system(
     init_buf_size: int = DEFAULT_SHM_SIZE,
     backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
 ) -> None:
-    """Deprecated; just use run any component (unit, collection)"""
+    """
+    Deprecated function for running a system (Collection).
+    
+    .. deprecated:: 
+       Use :func:`run` instead to run any component (unit, collection).
+
+    :param system: The collection to run
+    :type system: Collection
+    :param num_buffers: Number of message buffers (deprecated parameter)
+    :type num_buffers: int
+    :param init_buf_size: Initial buffer size (deprecated parameter)
+    :type init_buf_size: int
+    :param backend_process: Backend process class to use
+    :type backend_process: typing.Type[BackendProcess]
+    """
     run(SYSTEM=system, backend_process=backend_process)
 
 
@@ -168,25 +182,40 @@ def run(
     **components_kwargs: Component,
 ) -> None:
     """
-    Begin execution of a set of :obj:`Component` s.
+    Begin execution of a set of Components.
 
-    `The old method` :obj:`run_system` `has been deprecated and uses` ``run()`` `instead.`
+    This is the main entry point for running ezmsg applications. It sets up the
+    execution environment, initializes components, and manages the message-passing
+    infrastructure. 
 
-    Args:
-        components: represents the nodes in the directed acyclic graph. It is a dictionary which contains the
-            ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()``
-            for each :obj:`Unit` and ``configure()`` for each :obj:`Collection`, if defined.
-        root_name:
-        connections: represents the edges is a ``NetworkDefinition`` which connects
-            ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph
-            using the contents of this parameter.
-        process_components: a list of ``Components`` which should live in their own process.
-        backend_process: is currently under development.
-        graph_address: the hostname and port of the graph server which ``ezmsg`` should connect to.
-            If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
-        force_single_process: run all ``Components`` in one process.
-            This is necessary when running ``ezmsg`` in a notebook.
-        components_kwargs:
+    On initialization, ``ezmsg`` will call ``initialize()`` for each :obj:`Unit` and 
+    ``configure()`` for each :obj:`Collection`, if defined. On initialization, ``ezmsg``
+      will create a directed acyclic graph using the contents of ``connections``.
+
+    :param components: Dictionary mapping component names to Component objects. The components
+    are the nodes in the ezmsg (directed acyclic) graph.
+    :type components: typing.Optional[typing.Mapping[str, Component]]
+    :param root_name: Optional root name for the component hierarchy
+    :type root_name: typing.Optional[str]
+    :param connections: Network definition specifying stream connections between components. These
+    are the edges in the ezmsg graph, connecting OutputStreams to InputStreams.
+    :type connections: typing.Optional[NetworkDefinition]
+    :param process_components: Collection of components that should run in separate processes
+    :type process_components: typing.Optional[typing.Collection[Component]]
+    :param backend_process: Backend process class to use for execution. Currently under development.
+    :type backend_process: typing.Type[BackendProcess]
+    :param graph_address: Address (hostname and port) of graph server which ezmsg should connect to.
+    If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
+    :type graph_address: typing.Optional[AddressType]
+    :param force_single_process: Whether to force all components into a single process
+    :type force_single_process: bool
+    :param components_kwargs: Additional components specified as keyword arguments
+    :type components_kwargs: Component
+
+    .. note::
+       Since jupyter notebooks run in a single process, you must set `force_single_process=True`.
+    .. note::
+       The old method :obj:`run_system` has been deprecated and uses ``run()`` instead.
     """
     # FIXME: This function is the last major re-implementation needed to make this
     # codebase more maintainable.

@@ -97,6 +97,16 @@ class ComponentMeta(ABCMeta):
 class Component(Addressable, metaclass=ComponentMeta):
     """
     Metaclass which :obj:`Unit` and :obj:`Collection` inherit from.
+    
+    The Component class provides the foundation for all components in the ezmsg framework,
+    including Units and Collections. It manages settings, state, streams, and provides
+    the basic infrastructure for message-passing components.
+    
+    :param settings: Optional settings object for component configuration
+    :type settings: Optional[Settings]
+
+    .. note::
+    When creating ezmsg nodes, inherit directly from :obj:`Unit` or :obj:`Collection`.
     """
 
     _tasks: Dict[str, Callable]  # Only Units will have tasks
@@ -157,11 +167,13 @@ class Component(Addressable, metaclass=ComponentMeta):
 
     def apply_settings(self, settings: Settings) -> None:
         """
-        Update the ``Component``‘s ``Settings`` object.
+        Update the Component's Settings object.
 
-        Args:
-            settings: An instance of the class-specific ``Settings``.
+        This method applies configuration settings to the component. Settings must be
+        applied before the component can be properly initialized and used.
 
+        :param settings: An instance of the class-specific Settings
+        :type settings: Settings
         """
         self.SETTINGS = settings
         self._settings_applied = True
@@ -177,20 +189,50 @@ class Component(Addressable, metaclass=ComponentMeta):
 
     @property
     def tasks(self) -> Dict[str, Callable]:
+        """
+        Get the dictionary of tasks for this component.
+        
+        :return: Dictionary mapping task names to their callable functions
+        :rtype: Dict[str, Callable]
+        """
         return self._tasks
 
     @property
     def streams(self) -> Dict[str, Stream]:
+        """
+        Get the dictionary of streams for this component.
+        
+        :return: Dictionary mapping stream names to their Stream objects
+        :rtype: Dict[str, Stream]
+        """
         return self._streams
 
     @property
     def components(self) -> Dict[str, "Component"]:
+        """
+        Get the dictionary of child components for this component.
+        
+        :return: Dictionary mapping component names to their Component objects
+        :rtype: Dict[str, Component]
+        """
         return self._components
 
     @property
     def main(self) -> Optional[Callable[..., None]]:
+        """
+        Get the main function for this component.
+        
+        :return: The main callable function, or None if not set
+        :rtype: Optional[Callable[..., None]]
+        """
         return self._main
 
     @property
     def threads(self) -> Dict[str, Callable]:
+        """
+        Get the dictionary of thread functions for this component.
+        
+        :return: Dictionary mapping thread names to their callable functions
+        :rtype: Dict[str, Callable]
+        """
         return self._threads

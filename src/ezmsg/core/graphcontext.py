@@ -14,13 +14,23 @@ logger = logging.getLogger("ezmsg")
 
 class GraphContext:
     """
-    GraphContext maintains a list of created
-    publishers, subscribers, and connections in the graph.
-    Once the context is no-longer-needed, we can revert()
-    changes in the graph which disconnects publishers and removes
-    changes that this context made.
-    It also maintains a context manager that ensures
-    graph and SHMServer are up.
+    GraphContext maintains a list of created publishers, subscribers, and connections in the graph.
+    
+    The GraphContext provides a managed environment for creating and tracking publishers,
+    subscribers, and graph connections. When the context is no longer needed, it can
+    revert changes in the graph which disconnects publishers and removes modifications
+    that this context made.
+    
+    It also maintains a context manager that ensures the graphserver and SHMServer are running.
+
+    :param graph_service: Optional graph service instance to use
+    :type graph_service: typing.Optional[GraphService]
+    :param shm_service: Optional shared memory service instance to use  
+    :type shm_service: typing.Optional[SHMService]
+
+    .. note::
+    The GraphContext is typically managed automatically by the ezmsg runtime
+    and doesn't need to be instantiated directly by user code.
     """
 
     _clients: typing.Set[typing.Union[Publisher, Subscriber]]
@@ -46,6 +56,15 @@ class GraphContext:
         self._graph_server = None
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
+        """
+        Create a publisher for the specified topic.
+        
+        :param topic: The topic name to publish to
+        :type topic: str
+        :param kwargs: Additional keyword arguments for publisher configuration
+        :return: A Publisher instance for the topic
+        :rtype: Publisher
+        """
         pub = await Publisher.create(
             topic, self._graph_service, self._shm_service, **kwargs
         )
@@ -53,6 +72,15 @@ class GraphContext:
         return pub
 
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
+        """
+        Create a subscriber for the specified topic.
+        
+        :param topic: The topic name to subscribe to
+        :type topic: str
+        :param kwargs: Additional keyword arguments for subscriber configuration
+        :return: A Subscriber instance for the topic
+        :rtype: Subscriber
+        """
         sub = await Subscriber.create(
             topic, self._graph_service, self._shm_service, **kwargs
         )
@@ -60,20 +88,48 @@ class GraphContext:
         return sub
 
     async def connect(self, from_topic: str, to_topic: str) -> None:
+        """
+        Connect two topics in the message graph.
+        
+        :param from_topic: The source topic name
+        :type from_topic: str
+        :param to_topic: The destination topic name
+        :type to_topic: str
+        """
         await self._graph_service.connect(from_topic, to_topic)
         self._edges.add((from_topic, to_topic))
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
+        """
+        Disconnect two topics in the message graph.
+        
+        :param from_topic: The source topic name
+        :type from_topic: str
+        :param to_topic: The destination topic name
+        :type to_topic: str
+        """
         await self._graph_service.disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
     async def sync(self, timeout: typing.Optional[float] = None) -> None:
+        """
+        Synchronize with the graph server.
+        
+        :param timeout: Optional timeout for the sync operation
+        :type timeout: typing.Optional[float]
+        """
         await self._graph_service.sync(timeout)
 
     async def pause(self) -> None:
+        """
+        Pause message processing in the graph.
+        """
         await self._graph_service.pause()
 
     async def resume(self) -> None:
+        """
+        Resume message processing in the graph.
+        """
         await self._graph_service.resume()
 
     async def _ensure_servers(self) -> None:
@@ -106,6 +162,13 @@ class GraphContext:
         return False
 
     async def revert(self) -> None:
+        """
+        Revert all changes made by this context.
+        
+        This method closes all clients (publishers and subscribers) created by this
+        context and removes all edges that were added to the graph. It is
+        automatically called when exiting the context manager.
+        """
         for client in self._clients:
             client.close()
 

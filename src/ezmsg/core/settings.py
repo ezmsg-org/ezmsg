@@ -16,6 +16,12 @@ else:
 
 @dataclass_transform()
 class SettingsMeta(ABCMeta):
+    """
+    Metaclass that automatically applies dataclass decorator to Settings classes.
+    
+    This metaclass ensures all Settings subclasses are automatically converted
+    to frozen dataclasses, providing immutability and proper initialization.
+    """
     def __new__(
         cls,
         name: str,
@@ -23,6 +29,19 @@ class SettingsMeta(ABCMeta):
         classdict: typing.Dict[str, typing.Any],
         **kwargs: typing.Any,
     ) -> typing.Type["Settings"]:
+        """
+        Create a new Settings class with dataclass transformation.
+        
+        :param name: Name of the class being created.
+        :type name: str
+        :param bases: Base classes for the new class.
+        :type bases: typing.Tuple[type, ...]
+        :param classdict: Class namespace dictionary.
+        :type classdict: typing.Dict[str, typing.Any]
+        :param kwargs: Additional keyword arguments.
+        :return: New Settings class with dataclass applied.
+        :rtype: typing.Type[Settings]
+        """
         new_cls = super().__new__(cls, name, bases, classdict)
         return dataclass(frozen=True)(new_cls)  # type: ignore
 

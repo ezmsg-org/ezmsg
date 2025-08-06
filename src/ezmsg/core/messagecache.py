@@ -11,29 +11,66 @@ from typing import Dict, Any, Optional, List, Generator
 logger = logging.getLogger("ezmsg")
 
 
-class CacheMiss(Exception): ...
+class CacheMiss(Exception): 
+    """
+    Exception raised when a requested message is not found in cache.
+    
+    This occurs when trying to retrieve a message that has been evicted
+    from the cache or was never stored in the first place.
+    """
+    ...
 
 
 class Cache:
-    """shared-memory backed cache for objects"""
+    """
+    Shared-memory backed cache for objects.
+    
+    Provides a buffer cache that can store objects both in memory
+    and in shared memory buffers, enabling efficient message passing between
+    processes with automatic eviction based on buffer age.
+    """
 
     num_buffers: int
     cache: List[Any]
     cache_id: List[Optional[int]]
 
     def __init__(self, num_buffers: int) -> None:
+        """
+        Initialize the cache with specified number of buffers.
+        
+        :param num_buffers: Number of cache buffers to maintain.
+        :type num_buffers: int
+        """
         self.num_buffers = num_buffers
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
 
     def put(self, msg_id: int, msg: Any) -> None:
-        """put an object into cache"""
+        """
+        Put an object into cache at the position determined by message ID.
+        
+        :param msg_id: Unique message identifier.
+        :type msg_id: int
+        :param msg: The message object to cache.
+        :type msg: Any
+        """
         buf_idx = msg_id % self.num_buffers
         self.cache_id[buf_idx] = msg_id
         self.cache[buf_idx] = msg
 
     def push(self, msg_id: int, shm: SHMContext) -> None:
-        """push an object from cache into shm"""
+        """
+        Push an object from cache into shared memory.
+        
+        If the message is not already in shared memory with the correct ID,
+        retrieves it from cache and serializes it to the shared memory buffer.
+        
+        :param msg_id: Message identifier to push.
+        :type msg_id: int
+        :param shm: Shared memory context to write to.
+        :type shm: SHMContext
+        :raises ValueError: If shared memory has wrong number of buffers.
+        """
         if self.num_buffers != shm.num_buffers:
             raise ValueError("shm has incorrect number of buffers")
 
@@ -48,7 +85,20 @@ class Cache:
     def get(
         self, msg_id: int, shm: Optional[SHMContext] = None
     ) -> Generator[Any, None, None]:
-        """get object from cache; if not in cache and shm provided -- get from shm"""
+        """
+        Get object from cache; if not in cache and shm provided -- get from shm.
+        
+        Provides a context manager for safe access to cached messages. If the
+        message is not in memory cache, attempts to retrieve from shared memory.
+        
+        :param msg_id: Message identifier to retrieve.
+        :type msg_id: int
+        :param shm: Optional shared memory context as fallback.
+        :type shm: Optional[SHMContext]
+        :return: Context manager yielding the requested message.
+        :rtype: Generator[Any, None, None]
+        :raises CacheMiss: If message not found in cache or shared memory.
+        """
 
         buf_idx = msg_id % self.num_buffers
         if self.cache_id[buf_idx] == msg_id:
@@ -69,6 +119,11 @@ class Cache:
                     yield obj
 
     def clear(self):
+        """
+        Clear all cached messages and identifiers.
+        
+        Resets all cache slots to None, effectively clearing the entire cache.
+        """
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
 
