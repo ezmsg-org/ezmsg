@@ -233,7 +233,26 @@ async def close_server(server: Server):
 
 
 class Command(enum.Enum):
+    """
+    Enumeration of protocol commands for ezmsg network communication.
+    
+    Defines all command types used in the ezmsg protocol for graph management,
+    publisher-subscriber communication, and shared memory operations.
+    """
+    
     def _generate_next_value_(name, start, count, last_values) -> bytes:
+        """
+        Generate byte values for enum members.
+        
+        :param name: Name of the enum member.
+        :type name: str
+        :param start: Starting value (unused).
+        :param count: Current count for automatic value generation.
+        :type count: int
+        :param last_values: Previously generated values (unused).
+        :return: Byte representation of the command.
+        :rtype: bytes
+        """
         return count.to_bytes(1, BYTEORDER, signed=False)
 
     COMPLETE = enum.auto()
@@ -270,6 +289,26 @@ def create_socket(
     max_port: int = 65535,
     ignore_ports: typing.List[int] = RESERVED_PORTS,
 ) -> socket.socket:
+    """
+    Create a socket bound to an available port.
+    
+    Attempts to bind to the specified port, or searches for an available
+    port within the given range if no specific port is provided.
+    
+    :param host: Host address to bind to (defaults to DEFAULT_HOST).
+    :type host: typing.Optional[str]
+    :param port: Specific port to bind to (if None, searches for available port).
+    :type port: typing.Optional[int]
+    :param start_port: Starting port for search range.
+    :type start_port: int
+    :param max_port: Maximum port for search range.
+    :type max_port: int
+    :param ignore_ports: List of ports to skip during search.
+    :type ignore_ports: typing.List[int]
+    :return: Bound socket ready for use.
+    :rtype: socket.socket
+    :raises IOError: If no available ports can be found in the specified range.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     if host is None:

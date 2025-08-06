@@ -73,6 +73,13 @@ class NormalTermination(Exception):
 
 
 class BackendProcess(Process):
+    """
+    Abstract base class for backend processes that execute Units.
+    
+    BackendProcess manages the execution of Units in a separate process,
+    handling initialization, coordination with other processes via barriers,
+    and cleanup operations.
+    """
     units: List[Unit]
     term_ev: EventType
     start_barrier: BarrierType
@@ -89,6 +96,22 @@ class BackendProcess(Process):
         graph_service: GraphService,
         shm_service: SHMService,
     ) -> None:
+        """
+        Initialize the backend process.
+        
+        :param units: List of Units to execute in this process.
+        :type units: List[Unit]
+        :param term_ev: Event for coordinated termination.
+        :type term_ev: EventType
+        :param start_barrier: Barrier for synchronized startup.
+        :type start_barrier: BarrierType
+        :param stop_barrier: Barrier for synchronized shutdown.
+        :type stop_barrier: BarrierType
+        :param graph_service: Service for graph server communication.
+        :type graph_service: GraphService
+        :param shm_service: Service for shared memory management.
+        :type shm_service: SHMService
+        """
         super().__init__()
         self.units = units
         self.term_ev = term_ev
@@ -99,6 +122,12 @@ class BackendProcess(Process):
         self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
+        """
+        Main entry point for the process execution.
+        
+        Sets up the event loop and handles the main processing logic
+        with proper exception handling for interrupts.
+        """
         self.task_finished_ev = threading.Event()
         with new_threaded_event_loop(self.task_finished_ev) as loop:
             try:
@@ -108,10 +137,27 @@ class BackendProcess(Process):
 
     @abstractmethod
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
+        """
+        Abstract method for implementing the main processing logic.
+        
+        Subclasses must implement this method to define how Units
+        are executed within the event loop.
+        
+        :param loop: The asyncio event loop for this process.
+        :type loop: asyncio.AbstractEventLoop
+        :raises NotImplementedError: Must be implemented by subclasses.
+        """
         raise NotImplementedError
 
 
 class DefaultBackendProcess(BackendProcess):
+    """
+    Default implementation of BackendProcess for executing Units.
+    
+    This class provides the standard execution model for ezmsg Units,
+    handling publishers, subscribers, and the complete Unit lifecycle
+    including initialization, execution, and shutdown.
+    """
     pubs: Dict[str, Publisher]
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -364,6 +410,18 @@ class DefaultBackendProcess(BackendProcess):
 async def handle_subscriber(
     sub: Subscriber, callables: Set[Callable[..., Coroutine[Any, Any, None]]]
 ):
+    """
+    Handle incoming messages from a subscriber and distribute to callables.
+    
+    Continuously receives messages from the subscriber and calls all registered
+    callables with each message. Removes callables that raise Complete or
+    NormalTermination exceptions.
+    
+    :param sub: Subscriber to receive messages from.
+    :type sub: Subscriber
+    :param callables: Set of async callables to invoke with messages.
+    :type callables: Set[Callable[..., Coroutine[Any, Any, None]]]
+    """
     while True:
         if not callables:
             sub.close()
@@ -384,6 +442,15 @@ async def handle_subscriber(
 
 
 def run_loop(loop: asyncio.AbstractEventLoop):
+    """
+    Run an asyncio event loop in the current thread.
+    
+    Sets the event loop for the current thread and runs it forever
+    until interrupted or stopped.
+    
+    :param loop: The asyncio event loop to run.
+    :type loop: asyncio.AbstractEventLoop
+    """
     asyncio.set_event_loop(loop)
     try:
         loop.run_forever()
@@ -395,6 +462,17 @@ def run_loop(loop: asyncio.AbstractEventLoop):
 def new_threaded_event_loop(
     ev: Optional[threading.Event] = None,
 ) -> Generator[asyncio.AbstractEventLoop, None, None]:
+    """
+    Create a new asyncio event loop running in a separate thread.
+    
+    Provides a context manager that yields an event loop running in its own
+    thread, allowing async operations to be run from synchronous code.
+    
+    :param ev: Optional event to signal when the loop is ready.
+    :type ev: Optional[threading.Event]
+    :return: Context manager yielding the event loop.
+    :rtype: Generator[asyncio.AbstractEventLoop, None, None]
+    """
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=run_loop, name="TaskThread", args=(loop,))
     thread.start()
