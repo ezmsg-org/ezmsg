@@ -742,6 +742,17 @@ def sliding_win_oneaxis(
 def _as2d(
     in_arr: npt.NDArray, axis: int = 0, *, xp
 ) -> typing.Tuple[npt.NDArray, typing.Tuple[int, ...]]:
+    """
+    Internal helper function to reshape array to 2D with specified axis first.
+    
+    :param in_arr: Input array to be reshaped
+    :type in_arr: npt.NDArray
+    :param axis: Axis to move to first position (default: 0)
+    :type axis: int
+    :param xp: Array namespace (numpy, cupy, etc.)
+    :return: Tuple of (reshaped_2d_array, original_remaining_shape)
+    :rtype: tuple[npt.NDArray, tuple[int, ...]]
+    """
     arr = in_arr
     if arr.ndim == 0:
         arr = arr.reshape(1, 1)

@@ -97,6 +97,9 @@ class TerminateOnTotal(ez.Unit):
         self.maybe_terminate()
 
     def maybe_terminate(self):
+        """
+        Check if termination conditions are met and raise NormalTermination if so.
+        """
         if self.STATE.total is not None:
             if self.STATE.n_messages >= self.STATE.total:
                 raise ez.NormalTermination

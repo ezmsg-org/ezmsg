@@ -13,6 +13,14 @@ from .rate import Rate
 
 
 def log_object(obj: typing.Any) -> str:
+    """
+    Convert an object to a JSON string with timestamp for logging.
+    
+    :param obj: Object to convert to log string
+    :type obj: typing.Any
+    :return: JSON string containing timestamp and object
+    :rtype: str
+    """
     return json.dumps({"ts": time.time(), "obj": obj}, cls=MessageEncoder)
 
 
@@ -75,7 +83,14 @@ class MessageLogger(ez.Unit):
     ``OUTPUT_STOP``, otherwise ``None``."""
 
     def open_file(self, filepath: Path) -> typing.Optional[Path]:
-        """Returns file path if file successfully opened, otherwise None"""
+        """
+        Open a file for message logging.
+        
+        :param filepath: Path to the file to open
+        :type filepath: Path
+        :return: File path if file successfully opened, otherwise None
+        :rtype: Path | None
+        """
         if filepath in self.STATE.output_files:
             # If the file is already open, we return None
             return None
@@ -91,7 +106,14 @@ class MessageLogger(ez.Unit):
         return filepath
 
     def close_file(self, filepath: Path) -> typing.Optional[Path]:
-        """Returns file path if file successfully closed, otherwise None"""
+        """
+        Close a file that was being used for message logging.
+        
+        :param filepath: Path to the file to close
+        :type filepath: Path
+        :return: File path if file successfully closed, otherwise None
+        :rtype: typing.Optional[Path]
+        """
         if filepath not in self.STATE.output_files:
             # We haven't opened this file
             return None

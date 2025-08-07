@@ -15,12 +15,11 @@ def modify_axis(
     """
     Modify an AxisArray's axes and dims according to a name_map.
 
-    Args:
-        name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
-          Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
-
-    Returns:
-        A primed generator object ready to yield an AxisArray with modified axes for each .send(axis_array)
+    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
+        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
+    :type name_map: dict[str, str | None] | None
+    :return: A primed generator object ready to yield an AxisArray with modified axes for each .send(axis_array).
+    :rtype: typing.Generator[AxisArray, AxisArray, None]
     """
     # State variables
     axis_arr_in = AxisArray(np.array([]), dims=[""])
@@ -58,10 +57,25 @@ def modify_axis(
 
 
 class ModifyAxisSettings(ez.Settings):
+    """
+    Settings for ModifyAxis unit.
+    
+    Configuration for modifying axis names and dimensions of AxisArray messages.
+
+    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
+        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
+    :type name_map: dict[str, str | None] | None
+    """
     name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None
 
 
 class ModifyAxis(ez.Unit):
+    """
+    Unit for modifying axis names and dimensions of AxisArray messages.
+    
+    Renames dimensions and axes according to a name mapping, with support for
+    dropping dimensions. Uses zero-copy operations for efficient processing.
+    """
     STATE = GenState
     SETTINGS = ModifyAxisSettings
 
@@ -70,19 +84,46 @@ class ModifyAxis(ez.Unit):
     INPUT_SETTINGS = ez.InputStream(ModifyAxisSettings)
 
     async def initialize(self) -> None:
+        """
+        Initialize the ModifyAxis unit.
+        
+        Sets up the generator for axis modification operations.
+        """
         self.construct_generator()
 
     def construct_generator(self):
+        """
+        Construct the axis-modifying generator with current settings.
+        
+        Creates a new modify_axis generator instance using the unit's name mapping.
+        """
         self.STATE.gen = modify_axis(name_map=self.SETTINGS.name_map)
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: ez.Settings) -> None:
+        """
+        Handle incoming settings updates.
+        
+        :param msg: New settings to apply.
+        :type msg: ez.Settings
+        """
         self.apply_settings(msg)
         self.construct_generator()
 
     @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+        """
+        Process incoming AxisArray messages and modify their axes.
+        
+        Uses zero-copy operations to efficiently modify axis names and dimensions
+        while preserving data integrity.
+        
+        :param message: Input AxisArray to modify.
+        :type message: AxisArray
+        :return: Async generator yielding AxisArray with modified axes.
+        :rtype: typing.AsyncGenerator
+        """
         try:
             ret = self.STATE.gen.send(message)
             if ret is not None:
