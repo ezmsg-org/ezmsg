@@ -825,7 +825,7 @@ def shape2d(arr: npt.NDArray, axis: int = 0) -> tuple[int, int]:
     Calculate the 2D shape when viewing array with specified axis first.
     
     :param arr: Input array
-    :type arr: npt.NDArray  
+    :type arr: npt.NDArray
     :param axis: Axis to move to first position (default: 0)
     :type axis: int
     :return: Tuple of (axis_size, remaining_elements)

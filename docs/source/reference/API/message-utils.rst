@@ -1,21 +1,12 @@
-Utility Classes
-===============
+Message Utility Classes
+===========================
 
-Classes which implement functionality which is commonly useful for ``ezmsg`` pipelines.
+Utility classes which implement functionality related to messages.
 
-AxisArray
----------
+replace
+------------
 
-.. automodule:: ezmsg.util.messages.axisarray
-   :show-inheritance:
-   :members:
-
-DebugLog
---------
-
-.. automodule:: ezmsg.util.debuglog
-   :show-inheritance:
-   :members:
+.. autofunction:: ezmsg.util.messages.axisarray.replace
 
 
 MessageReplay
@@ -46,13 +37,5 @@ MessageQueue
 ------------
 
 .. automodule:: ezmsg.util.messagequeue
-   :show-inheritance:
-   :members:
-
-
-Terminate
----------
-
-.. automodule:: ezmsg.util.terminate
    :show-inheritance:
    :members:
