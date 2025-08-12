@@ -1,4 +1,4 @@
-3. Running An Ezmsg System
+Running An Ezmsg System
 ############################
 
 **************************

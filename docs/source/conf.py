@@ -1,6 +1,6 @@
 # Configuration file for the Sphinx documentation builder.
 
-# -- Project information
+# -- Project information --------------------------
 
 project = "ezmsg"
 copyright = "2022, JHU/APL"
@@ -9,17 +9,34 @@ author = "JHU/APL"
 release = "3.3.4"
 version = "3.3.4"
 
-# -- General configuration
+# -- General configuration --------------------------
 
 extensions = [
-    "sphinx.ext.duration",
-    "sphinx.ext.doctest",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
+    "sphinx.ext.doctest",
+    "sphinx.ext.duration",
+    "sphinx.ext.graphviz",
     "sphinx.ext.intersphinx",
     "sphinx.ext.linkcode",
     "sphinx.ext.napoleon",
+    "sphinxext.rediraffe",
+    "myst_parser",
+    "sphinx_design",
 ]
+
+templates_path = ["_templates"]
+
+source_suffix = [".rst", ".md"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# The toctree master document
+master_doc = "index"
+
+# When set to True, `todo` and `todoList` produce output, else they produce nothing.
+todo_include_todos = False
+
+# -- Intersphinx configuration --------------------------
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
@@ -29,13 +46,26 @@ intersphinx_mapping = {
 }
 intersphinx_disabled_domains = ["std"]
 
-templates_path = ["_templates"]
 
-# -- Options for HTML output
 
-html_theme = "sphinx_rtd_theme"
+# -- Options for HTML output -----------------------------
 
-# -- Options for EPUB output
+html_theme = "pydata_sphinx_theme"
+html_logo = "_static/_images/ezmsg_logo.png"
+html_favicon = "_static/_images/ezmsg_logo.png"
+
+html_static_path = ["_static"]
+
+# Redirects for pages that are unavailable or moved
+rediraffe_redirects = {
+    "about.rst": "explanations/ezmsg.rst",
+    "getting-started.rst": "tutorials/start.rst",
+}
+
+# Timestamp is inserted at every page bottom in this strftime format.
+html_last_updated_fmt = '%Y-%m-%d'
+
+# -- Options for EPUB output --------------------------
 epub_show_urls = "footnote"
 
 add_module_names = False
@@ -57,3 +87,6 @@ def linkcode_resolve(domain, info):
         return f"{code_url}src/ezmsg/core/__init__.py"
     else:
         return f"{code_url}src/{filename}.py"
+
+# -- Options for graphviz -----------------------------
+graphviz_output_format = "svg"

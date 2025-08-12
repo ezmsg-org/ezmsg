@@ -28,7 +28,7 @@ test = [
   "xarray>=2023.1.0;python_version<'3.13'",
   "numpy>=1.24.4",
 ]
-docs = ["sphinx<=7.2", "sphinx-rtd-theme==2.0.0", "ezmsg-sigproc>=1.2.3"]
+docs = ["sphinx<=7.2", "pydata-sphinx-theme", "ezmsg-sigproc>=1.2.3", "sphinxext.rediraffe", "myst_parser", "sphinx_design"]
 axisarray = [
     "numpy>=1.24.4",
 ]

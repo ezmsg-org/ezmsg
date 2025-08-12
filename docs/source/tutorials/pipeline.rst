@@ -1,4 +1,4 @@
-2. Your First Ezmsg Pipeline
+Your First Ezmsg Pipeline
 ##############################
 
 ****************************

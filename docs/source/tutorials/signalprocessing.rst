@@ -1,4 +1,4 @@
-4. Leveraging Ezmsg For Signal Processing
+Leveraging ezmsg For Signal Processing
 ###############################################
 
 Ezmsg is a powerful framework for building signal processing applications. It provides a flexible and extensible architecture that allows users to create custom signal processors, integrate with ezmsg Units, and build complex processing pipelines.

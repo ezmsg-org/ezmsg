@@ -1,4 +1,4 @@
-About ``ezmsg-sigproc`` Signal Processors
+About ezmsg-sigproc Signal Processors
 ###########################################
 
 ``ezmsg-sigproc`` is an ``ezmsg`` extension that provides a template for building signal processing classes as well a way to easily convert to ezmsg units. 

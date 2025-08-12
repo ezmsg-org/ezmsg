@@ -1,9 +1,9 @@
-``ezmsg`` HOW TOs
+HOW TOs
 ##########################
 
 Answering common questions and providing guidance on using ``ezmsg`` effectively.
 
-``ezmsg`` System Basics
+ezmsg System Basics
 **************************
 
 This section covers the foundational aspects of the ``ezmsg`` system, including installation, updates, command-line usage, sandboxing, and visualization techniques.
@@ -13,7 +13,7 @@ This section covers the foundational aspects of the ``ezmsg`` system, including 
     basics/content-basics
 
 
-Creating ``ezmsg`` Units and Pipelines
+Creating ezmsg Units and Pipelines
 **************************************
 
 .. toctree::
@@ -29,7 +29,7 @@ AxisArray Message Format
 
     axisarray/content-axisarray
 
-Signal Processing with ``ezmsg``
+Signal Processing with ezmsg
 ********************************
 
 The following HOW TOs provide guidance on implementing signal processing functionalities using the ``ezmsg`` extension called ``ezmsg-sigproc``. These HOW TOs are designed to help you create, manage, and optimize signal processing units within the ``ezmsg`` framework.
@@ -38,7 +38,7 @@ The following HOW TOs provide guidance on implementing signal processing functio
 
     signalprocessing/content-signalprocessing
 
-Advanced ``ezmsg`` Usage
+Advanced ezmsg Usage
 *************************
 
 This section delves into advanced topics such as online and offline processing, Jupyter integration, and performance optimization techniques.

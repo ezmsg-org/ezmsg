@@ -1,5 +1,5 @@
-1. Getting Started
-###################
+Installation and Configuration
+###############################
 
 System Requirements
 *********************
