@@ -1,4 +1,4 @@
-Advanced ``ezmsg``HOW TOs
+Advanced ezmsg HOW TOs
 ##########################
 
 .. toctree::

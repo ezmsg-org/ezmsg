@@ -22,6 +22,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinxext.rediraffe",
     "myst_parser",
+    "sphinx_copybutton",
     "sphinx_design",
 ]
 
@@ -90,3 +91,6 @@ def linkcode_resolve(domain, info):
 
 # -- Options for graphviz -----------------------------
 graphviz_output_format = "svg"
+
+def setup(app):
+    app.add_css_file("custom.css")

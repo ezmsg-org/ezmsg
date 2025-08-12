@@ -1,38 +1,62 @@
 Installation and Configuration
 ###############################
 
+This page contains information about installing ezmsg and its extensions. It also provides instructions for developers who want to contribute to the ezmsg project.
+
+
 System Requirements
 *********************
 
-Due to reliance on ``multiprocessing.shared_memory``, ``ezmsg`` requires minimum Python 3.8. Beyond that, ezmsg is a pure Python library with no external dependencies.
+ezmsg is written in and for **Python**, so it requires a Python interpreter to run. Due to reliance on the in-built ``multiprocessing.shared_memory`` module, ezmsg requires at minimum Python 3.8. Beyond that, ezmsg is a pure Python library with no external dependencies.
+
+This also means that ezmsg is cross-platform and should run on any operating system that supports Python, including Windows, macOS, and Linux.
+
+In Windows and macOS, Python can be downloaded from the official website: `python.org <https://www.python.org/downloads/>`_. For newer users, we recommend using the `Anaconda <https://www.anaconda.com/download>`_ distribution of Python, which comes with a package manager and many useful libraries pre-installed.
+
+On Linux, Python is usually pre-installed, but you can also install it using your package manager: 
+
+.. code-block:: bash
+
+   # For Debian/Ubuntu-based systems
+   sudo apt install python3.<version> python3-pip -y
+
+   # For Red Hat/CentOS-based systems
+   sudo dnf install python3.<version> python3-pip -y
+
+   # For Arch Linux-based systems
+   sudo pacman -S python3.<version> python-pipx
+
+where ``3.<version>`` is the version of Python you want to install (e.g. 3.12).
+
+Whichever you choose, ensure that you have Python 3.8 or later installed on your system. You can verify your Python version by running:
+
+.. code-block:: bash
+
+   python3 --version
 
 
-**************************
 Installing ezmsg
 **************************
 
-From PyPi
-===============
+We can install ezmsg using :term:`pip`, which is the package manager for Python. It will handle all dependencies and ensure that you have the latest version. It will download the package from the Python Package Index (:term:`PyPI`) and install it on your system.
 
-To install the `ezmsg` framework, you can use pip:
+You can alternatively run ezmsg from source by cloning the repository, but this is only recommended for those planning to do some ezmsg development or if you have specific customization needs.
+
+From PyPI (using pip)
+======================
+
+To install the ezmsg framework, you can use pip:
 
 .. code-block:: bash
 
    pip install ezmsg
 
-Make sure you have Python 3.8 or later installed on your system. You can verify your Python version by running:
+Once installed, you can start using ezmsg in your projects.
 
-.. code-block:: bash
-
-   python --version
-
-Once installed, you can start using `ezmsg` in your projects.
-
-You can of course also clone the repository from GitHub like in the developers section allowing you to alter the base code. See next section for more information.
-
+From source (using git)
 ==========================
-For developers
-==========================
+
+You can also install ezmsg from the source (GitHub respository).  Please see the :doc:`Developer Guide <../developer/content-developer>` for more information on how to do this.
 
 Clone the project, then create a virtual environment and install it there.
 
@@ -45,7 +69,7 @@ Clone the project, then create a virtual environment and install it there.
   (env) pip install wheel # Optional, may be useful depending on your platform
   (env) pip install -e ".[test]"
 
-  (env) python -m pytest -v tests # Optionally, Perform tests
+  (env) python -m pytest -v tests # Optionally, perform tests
 
 .. code-block:: bash
 
@@ -56,90 +80,62 @@ Clone the project, then create a virtual environment and install it there.
   (env) pip install wheel # Optional, may be useful depending on your platform
   (env) pip install -e ".[test]"
 
-  (env) python -m pytest -v tests # Optionally, Perform tests
+  (env) python -m pytest -v tests # Optionally, perform tests
 
 
-If you want to contribute to the development of `ezmsg`, or write your own pipelinesyou can follow these steps:
 
-1. Fork the repository on GitHub.
-2. Create a new branch for your feature or bug fix.
-3. Make your changes and commit them with clear messages.
-4. Submit a pull request for review.
-
-We welcome contributions and feedback from the community!
-
-uv syncall --all-packages --all-extras
-
-And install the pre-commit hooks:
-.. code-block:: bash
-
-   pre-commit install
-
-Testing
-^^^^^^^^^^
-
-Testing ezmsg requires:
-
-* pytest
-* pytest-cov
-
-We expect a test-driven development, so not only do we expect you to write tests for your code, but also to run the tests before committing your changes. You can do this by running:
-.. code-block:: bash
-
-   pytest tests/
-
-**************************
 How to update ezmsg
 **************************
 
-To update `ezmsg` to the latest version, you can use pip:
+Updating ezmsg ensures you have the latest features, improvements, and bug fixes. 
+
+If you installed ezmsg using pip, you can easily update it using the following command:
+
 .. code-block:: bash
 
-   pip install --upgrade ezmsg
+  pip install --upgrade ezmsg
 
-This will ensure you have the latest features and bug fixes. If you have cloned the repository, you can pull the latest changes from the main branch:
+If you installed ezmsg by cloning the ezmsg repository, you can pull the latest changes from the main branch:
+
 .. code-block:: bash
 
    git pull origin main
 
-*****************************
-confirming installation
+
+Confirming installation
 *****************************
 
-To confirm that `ezmsg` is installed correctly, you can run the following command:
+To confirm that ezmsg is installed correctly, you can run the following command:
 
 .. code-block:: bash
 
    pip show ezmsg
 
 This will display information about the installed package, including its version and location.
-You can also run a simple test script to check if `ezmsg` is functioning as expected:
+You can also run a simple test script to check if ezmsg is functioning as expected:
+
 .. code-block:: python
 
    import ezmsg
 
    print("ezmsg is installed and working correctly!")
 
-****************************
+
 Extensions
 ****************************
 
-`ezmsg` provides a flexible framework for building and extending messaging pipelines. You can create your own custom message handlers, processors, and pipelines to suit your specific needs.
+ezmsg comes with a whole host of extensions that can be installed to add extra functionality. All of these are optional and can be installed as needed. 
 
-All of these are optional and can be installed as needed. To install an extension, you can use pip:
+To install an extension, you can use pip:
 
 .. code-block:: bash
 
    pip install ezmsg[extension_name]
 
-Here are some ways you can extend `ezmsg`:
+For more information on available extensions, please refer to the :doc:`Extensions page <../extensions>`.
 
-1. **Custom Message Handlers**: Create your own message handlers by subclassing the `ezmsg.MessageHandler` class. Implement the `handle_message` method to define how your handler processes incoming messages.
 
-2. **Message Processors**: Build custom message processors by subclassing the `ezmsg.MessageProcessor` class. Processors can be used to modify messages as they pass through the pipeline.
+Ready to build your first ezmsg pipeline?
+***********************************************
 
-3. **Pipelines**: Combine multiple message handlers and processors into a single pipeline by using the `ezmsg.Pipeline` class. This allows you to create complex processing workflows.
-
-4. **Plugins**: Develop plugins to add new features or integrations to `ezmsg`. Plugins can be distributed as separate packages and easily installed by users.
-
-For more information on creating extensions for `ezmsg`, please refer to the official documentation.
+You are now ready to start building your first ezmsg pipeline! Click next below or head to :doc:`pipeline` to get started.

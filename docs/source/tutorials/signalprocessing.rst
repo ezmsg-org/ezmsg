@@ -7,7 +7,7 @@ We will explore how to do this by recreating the `downsample` signal processor u
 
 .. tip: downsampling is a common signal processing operation that reduces the sampling rate of a signal by keeping only every nth sample. This is useful for reducing the amount of data to be processed, especially in real-time applications.
 
-*************************************
+
 Choosing your signal processing class
 *************************************
 
@@ -17,49 +17,49 @@ include decision tree here
 
 downsample is a bla bla, so we will create a . 
 
-****************************************
+
 Creating the downsample signal processor
 ****************************************
 
-====================================
+
 DownSampleSettings Class
 ====================================
 
 To create a downsample signal processor, we first define the settings for the processor. This includes parameters such as the downsampling factor and any other relevant configuration options
 
-=====================================
+
 DownSampleState Class
 =====================================
 
-======================================
+
 DownSample Class
 ======================================
 
 This class will inherit from the appropriate ezmsg signal processor base class and implement the necessary methods to perform the downsampling operation. The class will also define input and output ports for the signal processor.
 
-***************************************
+
 Input and Output streams
 ***************************************
 
 The `DownSample` class will define input and output streams to handle the data flow. The input stream will receive the signal data, and the output stream will send the downsampled data.
 
-========================================
+
 From/to a device
 ========================================
 
-========================================
+
 From/to AxisArray messages
 ========================================
 
 
 
-**********************************
+
 Using AxisArray messages
 **********************************
 
 The `DownSample` class can also work with AxisArray messages for more complex data structures. This allows for greater flexibility in handling multi-dimensional signals.
 
-*****************************************
+
 The final DownSample signal processor
 *****************************************
 
@@ -86,7 +86,7 @@ class DownSample(ezmsg.SignalProcessor):
         self.output_port.send(downsampled_data)
 
 
-***************************************
+
 Creating the DownSample ``ezmsg`` Unit
 ***************************************
 
@@ -108,7 +108,12 @@ class DownSampleUnitState(ezmsg.UnitState):
         super().__init__()
         self.current_index = 0
 
-****************************************
+Further Examples
+***********************
+
+The `Examples <https://github.com/iscoe/ezmsg/tree/master/examples>`_ directory is a great place to start. The homepage also has a link to a Google Colab notebook.
+
+
 See Also
 ****************************************
 

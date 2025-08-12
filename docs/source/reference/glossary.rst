@@ -11,3 +11,9 @@ Glossary
 
    Signal Processing
       The analysis, interpretation, and manipulation of signals using the `ezmsg` framework.
+
+   PyPI
+      The **Py**\ thon **P**\ ackage **I**\ ndex, a repository of software for the Python programming language.
+
+   pip
+      A package management system for installing and managing Python packages.

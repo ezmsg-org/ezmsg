@@ -1,4 +1,4 @@
-``ezmsg`` Pipeline HOW TOs
+ezmsg Pipeline HOW TOs
 ###########################
 
 .. toctree::
