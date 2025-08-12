@@ -1,16 +1,16 @@
 Running An ezmsg System
 ############################
 
-**************************
-Build a pipeline
-**************************
+
+|ezmsg_logo_small| Build a pipeline
+************************************
 
 In order to run an ezmsg system, we need a pipeline. A pipeline is a collection of units that process data in a specific order. You can build a pipeline by defining units and connecting them together. See the `:doc:`tutorials/pipeline` for more information on how to build a pipeline.
 
 
-***********************************
-Run the pipeline using your script
-***********************************
+
+|ezmsg_logo_small| Run the pipeline using your script
+*******************************************************
 
 Note, this sets graphserver address (host and port) to the default values. If you want to use a different address, you can set the `EZMSG_GRAPH_SERVER` environment variable before running your script.
 
@@ -23,11 +23,11 @@ This will start the pipeline and begin processing data. Make sure to replace `yo
 
 .. note::An ezmsg pipeline can be run in a notebook environment with an extra parameter. When using ``run()``, include the optional kwarg ``force_single_process=True``.
 
-*****************************************
-Run the pipeline using the command line
-*****************************************
 
-=================================
+|ezmsg_logo_small| Run the pipeline using the command line
+************************************************************
+
+
 Start an ezmsg system
 =================================
 
@@ -43,7 +43,7 @@ You can also use the ``start`` command to create a new ezmsg system but fork the
 
    ezmsg start --address localhost:5000
 
-==========================
+
 Run a pipeline in ezmsg
 ==========================
 
@@ -62,19 +62,19 @@ If you're working with the ezmsg repository, you can ensure you're running with 
 
 .. note: Run the script from a separate terminal window to keep the ezmsg server running in the background.
 
-===========================
+
 Shutdown the ezmsg system
 ===========================
 
-***********************************
-Miscellaneous command line options
-***********************************
+
+|ezmsg_logo_small| Miscellaneous command line options
+*******************************************************
 
 Other than the `serve`, `start` and `shutdown` commands, the ezmsg command-line interface allows you to visualise your pipeline graphically. 
 
 the two available commands are `graphviz` and `mermaid`. 
 
-===========================
+
 Mermaid visualisation
 ===========================
 
@@ -87,7 +87,7 @@ This will generate a Mermaid diagram of your pipeline and display it in the term
 
 include picture here
 
-===========================
+
 Graphviz visualisation
 ===========================
 
@@ -98,7 +98,7 @@ To visualise your pipeline using Graphviz, you can use the following command:
 
 This will generate a Graphviz diagram of your pipeline and display it in the terminal. You can then copy and paste the diagram into a Graphviz live editor to view it graphically.
 
-==============================================
+
 Compactify the pipeline graph visualisation
 ==============================================
 
@@ -116,3 +116,10 @@ or
 Note this option is stackable if your pipeline is very deep (collections within collections)
 
 include picture here
+
+|ezmsg_logo_small| Signal processing in ezmsg?
+************************************************
+
+.. |ezmsg_logo_small| image:: ../_static/_images/ezmsg_logo.png
+  :width: 40
+  :alt: ezmsg logo
