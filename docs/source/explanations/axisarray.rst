@@ -1,7 +1,7 @@
 About AxisArray
 ######################
 
-
+(under construction)
 ``AxisArray`` is a specialized message format used within the ``ezmsg`` framework to represent multi-dimensional data structures. It is designed to handle complex data types efficiently, making it suitable for applications in signal processing, scientific computing, and data analysis.
 
 Inspiration for the design of ``AxisArray`` comes from various sources, including:

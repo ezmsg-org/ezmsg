@@ -1,6 +1,8 @@
 About ezmsg
 ############
 
+(under construction)
+
 ``ezmsg`` is a lightweight, flexible, and extensible framework for building signal processing pipelines. It is designed to facilitate the development, deployment, and management of complex signal processing workflows, making it easier for users to create and share reusable components.
 
 

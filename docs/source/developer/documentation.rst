@@ -1,6 +1,8 @@
 ezmsg Documentation
 #######################
 
+(under construction)
+
 This document is intended for developers who are maintaining the Blackrock BCI Documentation. It is a guide to the documentation practices, including docstrings, READMEs, tutorials, and publishing the documentation.
 
 ## Content
