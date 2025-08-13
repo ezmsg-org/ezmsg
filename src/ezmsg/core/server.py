@@ -71,7 +71,8 @@ class ThreadedAsyncServer(Thread):
 
         async def monitor_shutdown() -> None:
             await self._loop.run_in_executor(None, self._shutdown.wait)
-            await close_server(server)
+            server.close()
+            await server.wait_closed()
 
         monitor_task = self._loop.create_task(monitor_shutdown())
 
@@ -82,9 +83,8 @@ class ThreadedAsyncServer(Thread):
 
         finally:
             await self.shutdown()
-            monitor_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await monitor_task
+            self._shutdown.set()
+            await monitor_task
 
     async def setup(self) -> None: ...
 
