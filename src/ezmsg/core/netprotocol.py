@@ -176,22 +176,29 @@ def create_socket(
     ignore_ports: typing.List[int] = RESERVED_PORTS,
 ) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     if host is None:
         host = DEFAULT_HOST
 
     if port is not None:
         sock.bind((host, port))
-        return sock
 
-    port = start_port
-    while port <= max_port:
-        if port not in ignore_ports:
-            try:
-                sock.bind((host, port))
-                return sock
-            except OSError:
-                pass
-        port += 1
+    else:
+        bound = False
+        port = start_port
+        while port <= max_port:
+            if port not in ignore_ports:
+                try:
+                    sock.bind((host, port))
+                    bound = True
+                    break
+                except OSError:
+                    pass
+            port += 1
 
-    raise IOError("Failed to bind socket; no free ports")
+        if not bound:
+            raise IOError("Failed to bind socket; no free ports")
+    
+    sock.setblocking(False)
+    return sock
