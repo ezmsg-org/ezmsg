@@ -276,12 +276,18 @@ class Publisher:
         pid = await read_int(reader)
         topic = await read_str(reader)
 
-        writer.write(encode_str(str(self.id)))
-        writer.write(uint64_to_bytes(self.pid))
-        writer.write(encode_str(self.topic))
-        writer.write(uint64_to_bytes(self._num_buffers))
+        # Subscriber determines if they have SHM access
+        writer.write(encode_str(self._shm.name))
+        shm_access = bool(await read_int(reader))
 
-        info = SubscriberInfo(id, writer, pid, topic)
+        writer.write(
+            encode_str(str(self.id)) + \
+            uint64_to_bytes(self.pid) + \
+            encode_str(self.topic) + \
+            uint64_to_bytes(self._num_buffers)
+        )
+
+        info = SubscriberInfo(id, writer, pid, topic, shm_access)
         coro = self._handle_subscriber(info, reader)
         self._subscriber_tasks[id] = asyncio.create_task(coro)
 
@@ -383,7 +389,7 @@ class Publisher:
         MessageCache[self.id].put(self._msg_id, obj)
 
         for sub in list(self._subscribers.values()):
-            if not self._force_tcp and sub.id.node == self.id.node:
+            if not self._force_tcp and sub.shm_access:
                 if sub.pid == self.pid:
                     sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
 

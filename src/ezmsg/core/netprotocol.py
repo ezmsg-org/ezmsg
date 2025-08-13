@@ -149,7 +149,7 @@ class SubscriberInfo(ClientInfo):
 
     Currently identical to ClientInfo but may be extended in the future.
     """
-    ...
+    shm_access: bool = False
 
 
 def uint64_to_bytes(i: int) -> bytes:
