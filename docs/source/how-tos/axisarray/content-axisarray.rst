@@ -8,6 +8,3 @@ AxisArray HOW TOs
     modify
     nwb
 
-1. :doc:`convert`
-2. :doc:`modify`
-3. :doc:`nwb`

@@ -8,6 +8,3 @@ Advanced ezmsg HOW TOs
     jupyter
     performance
 
-1. :doc:`online_offline`
-2. :doc:`jupyter`
-3. :doc:`performance`

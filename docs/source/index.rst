@@ -95,7 +95,7 @@ For more in-depth documentation about a specific tool, we recommend checking out
    How To <how-tos/content-howtos>
    Reference <reference/content-reference>
    Developer <developer/content-developer>
-   Extensions <extensions>
+   Extensions <extensions/content-extensions>
    Release Notes <release>
 
 .. |ezmsg_logo_large| image:: _static/_images/ezmsg_logo.png

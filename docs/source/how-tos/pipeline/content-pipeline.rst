@@ -9,8 +9,3 @@ ezmsg Pipeline HOW TOs
     inputoutput
     pipeline
 
-
-1. :doc:`unit`
-#. :doc:`collection`
-#. :doc:`inputoutput`
-#. :doc:`pipeline`

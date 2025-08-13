@@ -5,7 +5,7 @@ Running An ezmsg System
 |ezmsg_logo_small| Build a pipeline
 ************************************
 
-In order to run an ezmsg system, we need a pipeline. A pipeline is a collection of units that process data in a specific order. You can build a pipeline by defining units and connecting them together. See the `:doc:`tutorials/pipeline` for more information on how to build a pipeline.
+In order to run an ezmsg system, we need a pipeline. A pipeline is a collection of units that process data in a specific order. You can build a pipeline by defining units and connecting them together. See the :doc:`pipeline` for more information on how to build a pipeline.
 
 
 
@@ -27,6 +27,7 @@ This will start the pipeline and begin processing data. Make sure to replace `yo
 |ezmsg_logo_small| Run the pipeline using the command line
 ************************************************************
 
+The ``ezmsg`` command line interface exposes extra tools to manage a pipeline that is running in the background on a machine. Run ``ezmsg -h`` to see all the available options.
 
 Start an ezmsg system
 =================================

@@ -213,7 +213,7 @@ If using a Collection, the above code is no different. Units and Collections are
     connections = ()
     ez.run(components = components, connections = connections)
 
-.. warning:: DO NOT have two different ``ez.run()`` calls in the same script or notebook. Only one ``ez.run()`` call is allowed per execution context. We have given you two examples of how to build a pipeline from Units, so when running the code, comment out one of the previous two code blocks (components, connections, and ez.run() calls). 
+.. warning:: DO NOT have two different ``ez.run()`` calls in the same script or notebook. Only one ``ez.run()`` call is allowed per execution context. We have given you two examples of how to build a pipeline from Units, so when running the code, comment out one of the previous two code blocks (components, connections, and ``ez.run()`` calls). 
 
 |ezmsg_logo_small| How to run the pipeline?
 *********************************************
