@@ -99,10 +99,12 @@ class GraphServer(ThreadedAsyncServer):
                 info: Optional[SHMInfo] = None
 
                 if req == Command.SHM_CREATE.value:
+                    # TODO: UUID
                     num_buffers = await read_int(reader)
                     buf_size = await read_int(reader)
 
-                    # Create segment
+                    # Create segment 
+                    # TODO: Move me into shm.py
                     shm = SharedMemory(size=num_buffers * buf_size, create=True)
                     shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
                     shm.buf[0:8] = uint64_to_bytes(num_buffers)
@@ -394,10 +396,14 @@ class GraphService(ServiceManager[GraphServer]):
         return formatted_graph
 
     async def create_shm(
-        self, num_buffers: int, buf_size: int = DEFAULT_SHM_SIZE
+        self,
+        # TODO: add UUID parameter 
+        num_buffers: int, 
+        buf_size: int = DEFAULT_SHM_SIZE
     ) -> SHMContext:
         reader, writer = await self.open_connection()
         writer.write(Command.SHM_CREATE.value)
+        # TODO: serialize UUID
         writer.write(uint64_to_bytes(num_buffers))
         writer.write(uint64_to_bytes(buf_size))
         await writer.drain()

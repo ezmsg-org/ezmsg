@@ -2,6 +2,7 @@ import asyncio
 import logging
 import typing
 
+from uuid import UUID
 from dataclasses import dataclass, field
 from contextlib import contextmanager, suppress
 from multiprocessing import resource_tracker
@@ -16,27 +17,9 @@ logger = logging.getLogger("ezmsg")
 
 _std_register = resource_tracker.register
 
-
-def _ignore_shm(name, rtype):
-    if rtype == "shared_memory":
-        return
-    return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
-
-
-@contextmanager
-def _untracked_shm() -> typing.Generator[None, None, None]:
-    """Disable SHM tracking within context - https://bugs.python.org/issue38119"""
-    resource_tracker.register = _ignore_shm
-    yield
-    resource_tracker.register = _std_register
-
-
-class SHMContext:
-    """
-    SHMContext manages the memory map of a block of shared memory, and
-    exposes memoryview objects for reading and writing
-
+"""    
     ezmsg shared memory format:
+    TODO: [UUID]
     [ UINT64 -- n_buffers ]
     [ UINT64 -- buf_size ]
     [ buf_size - 16 -- buf0 data_block ]
@@ -50,6 +33,27 @@ class SHMContext:
     * data_block is the remaining memory in this buffer which contains message information
 
     This format repeats itself for every buffer in the SharedMemory block.
+"""
+
+
+# TODO: Update with a more recent monkeypatch
+def _ignore_shm(name, rtype):
+    if rtype == "shared_memory":
+        return
+    return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
+
+@contextmanager
+def _untracked_shm() -> typing.Generator[None, None, None]:
+    """Disable SHM tracking within context - https://bugs.python.org/issue38119"""
+    resource_tracker.register = _ignore_shm
+    yield
+    resource_tracker.register = _std_register
+
+
+class SHMContext:
+    """
+    SHMContext manages the memory map of a block of shared memory, and
+    exposes memoryview objects for reading and writing
     """
 
     _shm: SharedMemory
@@ -78,6 +82,7 @@ class SHMContext:
             slice(*seg) for seg in zip(buf_data_block_starts, buf_stops)
         ]
 
+    # TODO: Get rid of underscore and rename to attach
     @classmethod
     def _create(
         cls, shm_name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -146,6 +151,12 @@ class SHMContext:
 class SHMInfo:
     shm: SharedMemory
     leases: typing.Set["asyncio.Task[None]"] = field(default_factory=set)
+
+    @classmethod
+    def create(
+        cls, uuid: UUID, num_buffers: int, buf_size: int
+    ) -> "SHMInfo":
+        ...
 
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
