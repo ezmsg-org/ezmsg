@@ -87,7 +87,8 @@ class PublisherInfo(ClientInfo):
 
 
 @dataclass
-class SubscriberInfo(ClientInfo): ...
+class SubscriberInfo(ClientInfo):
+    shm_access: bool = False
 
 
 def uint64_to_bytes(i: int) -> bytes:

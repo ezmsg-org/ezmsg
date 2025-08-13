@@ -145,6 +145,17 @@ class Subscriber:
         writer.write(uint64_to_bytes(self.pid))
         writer.write(encode_str(self.topic))
         await writer.drain()
+
+        # Pub replies with current shm name
+        # We attempt to attach and let pub know if we have SHM access
+        shm_name = await read_str(reader)
+        try:
+            (await self._graph_service.attach_shm(shm_name)).close()
+            writer.write(uint64_to_bytes(1))
+        except (ValueError, OSError):
+            writer.write(uint64_to_bytes(0))
+        await writer.drain()
+
         pub_id_str = await read_str(reader)
         pub_pid = await read_int(reader)
         pub_topic = await read_str(reader)
