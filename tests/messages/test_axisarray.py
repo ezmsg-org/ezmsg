@@ -112,6 +112,51 @@ def test_concat() -> None:
     )
 
 
+def test_concat_with_coordinate_axis():
+    # Create two AxisArray objects with a CoordinateAxis
+    n_a = 2
+    n_b1 = 3
+    aa1 = AxisArray(
+        np.arange(n_a * n_b1).reshape(n_a, n_b1),
+        dims=["a", "b"],
+        axes={
+            "b": AxisArray.CoordinateAxis(
+                data=np.arange(1, 1 + n_b1),
+                dims=["b"]
+            )
+        }
+    )
+
+    n_b2 = 4
+    aa2 = AxisArray(
+        np.arange(n_a * n_b1, n_a * (n_b1 + n_b2)).reshape(n_a, n_b2),
+        dims=["a", "b"],
+        axes={
+            "b": AxisArray.CoordinateAxis(
+                data=np.arange(1 + n_b1, 1 + n_b1 + n_b2),
+                dims=["b"]
+            )
+        }
+    )
+
+    # Concatenate along the CoordinateAxis
+    concatenated = AxisArray.concatenate(aa1, aa2, dim="b")
+
+    # Check the shape of the concatenated array
+    assert concatenated.shape == (n_a, n_b1 + n_b2)
+
+    # Check the data of the concatenated CoordinateAxis
+    expected_axis_data = np.arange(1, 1 + n_b1 + n_b2)
+    assert np.array_equal(concatenated.axes["b"].data, expected_axis_data)
+
+    # Check that the other axes are preserved
+    assert "a" in concatenated.dims
+
+    # Check that the concatenated data is correct
+    expected_data = np.hstack((aa1.data, aa2.data))
+    assert np.array_equal(concatenated.data, expected_data)
+
+
 @pytest.mark.parametrize(
     "data",
     [

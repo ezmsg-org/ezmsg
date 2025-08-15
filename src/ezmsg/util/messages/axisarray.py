@@ -599,6 +599,13 @@ class AxisArray(ArrayWithNamedDims):
 
         if axis is not None:
             new_axes[dim] = axis
+        elif dim in aa_0.dims and dim in aa_0.axes and hasattr(aa_0.axes[dim], "data"):
+            ax_xp = get_namespace(aa_0.axes[dim].data)
+            new_axes[dim] = CoordinateAxis(
+                data=ax_xp.concatenate([aa.axes[dim].data for aa in aas]),
+                dims=aa_0.axes[dim].dims,
+                unit=aa_0.axes[dim].unit,
+            )
 
         all_data = [aa.data for aa in aas]
 
