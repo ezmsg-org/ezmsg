@@ -4,7 +4,13 @@ Glossary
 .. glossary::
 
    AxisArray
-      A specialized message format in `ezmsg` for handling multidimensional data arrays.
+      A specialized message format in `ezmsg` for handling multidimensional data arrays with labels and metadata, designed to facilitate signal processing tasks.
+   
+   DAG
+      A :term:`directed acyclic graph`.
+
+   directed acyclic graph
+      A graph structure where nodes are connected by directed edges, and there are no cycles, meaning you cannot return to a node once you leave it. Often shortened simply to DAG. In `ezmsg`, pipelines are represented as DAGs. for more information, see `<https://en.wikipedia.org/wiki/Directed_acyclic_graph>`_.
 
    ezmsg
       A messaging framework designed for efficient communication and signal processing.

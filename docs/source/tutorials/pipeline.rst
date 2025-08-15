@@ -77,9 +77,7 @@ For Count, we create an OutputStream and a publishing function which will perfor
         async def count(self) -> AsyncGenerator:
             count = 0
             while count < self.SETTINGS.iterations:
-                yield (self.OUTPUT_COUNT, CountMessage(
-                    value=count
-                ))
+                yield self.OUTPUT_COUNT, CountMessage(value=count)
                 count = count + 1
             
             raise ez.NormalTermination
@@ -118,9 +116,7 @@ The next Unit in the chain should accept a CountMessage from the first Unit, add
         @ez.subscriber(INPUT_COUNT)
         @ez.publisher(OUTPUT_PLUS_ONE)
         async def on_message(self, message) -> AsyncGenerator:
-            yield (self.OUTPUT_PLUS_ONE, CountMessage(
-                value=message.value + 1
-            ))
+            yield self.OUTPUT_PLUS_ONE, CountMessage(value=message.value + 1)
 
 The subscribing function will be called anytime the Unit receives a message to the InputStream ``INPUT_COUNT`` that the function subscribes to. It will then publish the result of adding one to the OutputStream ``OUTPUT_PLUS_ONE``. 
 
@@ -159,9 +155,7 @@ First, define the member Units. Then use ``configure()`` to apply settings to th
 
         # Use the configure function to apply settings to member Units
         def configure(self) -> None:
-            self.COUNT.apply_settings(
-                CountSettings(iterations=20)
-            )
+            self.COUNT.apply_settings(CountSettings(iterations=20))
 
         # Use the network function to connect inputs and outputs of Units
         def network(self) -> ez.NetworkDefinition:
