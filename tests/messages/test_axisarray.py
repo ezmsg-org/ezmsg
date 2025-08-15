@@ -119,12 +119,7 @@ def test_concat_with_coordinate_axis():
     aa1 = AxisArray(
         np.arange(n_a * n_b1).reshape(n_a, n_b1),
         dims=["a", "b"],
-        axes={
-            "b": AxisArray.CoordinateAxis(
-                data=np.arange(1, 1 + n_b1),
-                dims=["b"]
-            )
-        }
+        axes={"b": AxisArray.CoordinateAxis(data=np.arange(1, 1 + n_b1), dims=["b"])},
     )
 
     n_b2 = 4
@@ -133,10 +128,9 @@ def test_concat_with_coordinate_axis():
         dims=["a", "b"],
         axes={
             "b": AxisArray.CoordinateAxis(
-                data=np.arange(1 + n_b1, 1 + n_b1 + n_b2),
-                dims=["b"]
+                data=np.arange(1 + n_b1, 1 + n_b1 + n_b2), dims=["b"]
             )
-        }
+        },
     )
 
     # Concatenate along the CoordinateAxis
