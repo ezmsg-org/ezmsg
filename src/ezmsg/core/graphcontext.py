@@ -59,9 +59,7 @@ class GraphContext:
         :return: A Publisher instance for the topic
         :rtype: Publisher
         """
-        pub = await Publisher.create(
-            topic, self._graph_service, **kwargs
-        )
+        pub = await Publisher.create(topic, self._graph_service, **kwargs)
         self._clients.add(pub)
         return pub
 
@@ -75,9 +73,7 @@ class GraphContext:
         :return: A Subscriber instance for the topic
         :rtype: Subscriber
         """
-        sub = await Subscriber.create(
-            topic, self._graph_service, **kwargs
-        )
+        sub = await Subscriber.create(topic, self._graph_service, **kwargs)
         self._clients.add(sub)
         return sub
 

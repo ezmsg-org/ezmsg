@@ -100,7 +100,7 @@ class LoadTestSubscriber(ez.Unit):
     async def receive(self, sample: LoadTestSample) -> None:
         if sample.counter != self.STATE.counter + 1:
             ez.logger.warning(
-                f"{sample.counter - self.STATE.counter-1} samples skipped!"
+                f"{sample.counter - self.STATE.counter - 1} samples skipped!"
             )
         self.STATE.received_data.append(
             (sample._timestamp, time.time(), sample.counter)

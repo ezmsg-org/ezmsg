@@ -78,7 +78,9 @@ class Subscriber:
         await sub._initialized.wait()
         return sub
 
-    def __init__(self, id: UUID, topic: str, graph_service: GraphService, **kwargs) -> None:
+    def __init__(
+            self, id: UUID, topic: str, graph_service: GraphService, **kwargs
+    ) -> None:
         """
         Initialize a Subscriber instance.
 
@@ -257,7 +259,9 @@ class Subscriber:
                         if id in self._shms:
                             self._shms[id].close()
                         try:
-                            self._shms[id] = await self._graph_service.attach_shm(shm_name)
+                            self._shms[id] = await self._graph_service.attach_shm(
+                                shm_name
+                            )
                         except ValueError:
                             logger.info(
                                 "Invalid SHM received from publisher; may be dead"

@@ -281,10 +281,10 @@ class Publisher:
         shm_access = bool(await read_int(reader))
 
         writer.write(
-            encode_str(str(self.id)) + \
-            uint64_to_bytes(self.pid) + \
-            encode_str(self.topic) + \
-            uint64_to_bytes(self._num_buffers)
+            encode_str(str(self.id))
+            + uint64_to_bytes(self.pid)
+            + encode_str(self.topic)
+            + uint64_to_bytes(self._num_buffers)
         )
 
         info = SubscriberInfo(id, writer, pid, topic, shm_access)

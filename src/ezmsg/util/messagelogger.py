@@ -16,7 +16,7 @@ from .rate import Rate
 def log_object(obj: typing.Any) -> str:
     """
     Convert an object to a JSON string with timestamp for logging.
-    
+
     :param obj: Object to convert to log string
     :type obj: typing.Any
     :return: JSON string containing timestamp and object
@@ -38,7 +38,7 @@ class MessageLoggerSettings(ez.Settings):
     """
 
     output: Path | None = None
-    write_period: float = 0.0 # sec
+    write_period: float = 0.0  # sec
 
 
 class MessageLoggerState(ez.State):
@@ -86,7 +86,7 @@ class MessageLogger(ez.Unit):
     def open_file(self, filepath: Path) -> Path | None:
         """
         Open a file for message logging.
-        
+
         :param filepath: Path to the file to open
         :type filepath: Path
         :return: File path if file successfully opened, otherwise None
@@ -109,7 +109,7 @@ class MessageLogger(ez.Unit):
     def close_file(self, filepath: Path) -> Path | None:
         """
         Close a file that was being used for message logging.
-        
+
         :param filepath: Path to the file to close
         :type filepath: Path
         :return: File path if file successfully closed, otherwise None
@@ -161,7 +161,7 @@ class MessageLogger(ez.Unit):
     async def buffered_write(self) -> None:
         if self.SETTINGS.write_period <= 0:
             return
-        
+
         rate = Rate(1.0 / self.SETTINGS.write_period)
         while True:
             for output_f in self.STATE.output_files.values():

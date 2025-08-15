@@ -15,7 +15,7 @@ try:
     import numpy.lib.stride_tricks as nps
 except ModuleNotFoundError:
     ez.logger.error(
-        "Install ezmsg with the AxisArray extra:" 'pip install "ezmsg[AxisArray]"'
+        'Install ezmsg with the AxisArray extra:pip install "ezmsg[AxisArray]"'
     )
     raise
 

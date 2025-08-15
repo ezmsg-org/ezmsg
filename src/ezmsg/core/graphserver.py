@@ -62,7 +62,6 @@ class GraphServer(ThreadedAsyncServer):
         self.node = getnode()
         self.shms = dict()
 
-
     async def setup(self) -> None:
         self._command_lock = asyncio.Lock()
 
