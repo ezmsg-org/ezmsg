@@ -175,8 +175,8 @@ def profile_subpub(trace_oldest: bool = True):
                         ]
                     )
                 )
-                start = stop
                 yield stream, obj
+                start = time.perf_counter()
 
         return wrapped_task if logger.level == logging.DEBUG else func
 
