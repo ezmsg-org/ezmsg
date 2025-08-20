@@ -3,7 +3,7 @@ import logging
 import pickle
 from contextlib import suppress
 from typing import Dict, List, Optional, Tuple
-from uuid import UUID, getnode, uuid1
+from uuid import UUID, uuid1
 
 from . import __version__
 from .dag import DAG, CyclicException
@@ -14,6 +14,7 @@ from .netprotocol import (
     ClientInfo,
     SubscriberInfo,
     PublisherInfo,
+    ChannelInfo,
     AddressType,
     close_stream_writer,
     encode_str,
@@ -25,7 +26,7 @@ from .netprotocol import (
     DEFAULT_SHM_SIZE,
 )
 from .server import ServiceManager, ThreadedAsyncServer
-from .shm import SharedMemory, SHMContext, SHMInfo
+from .shm import SHMContext, SHMInfo
 
 
 logger = logging.getLogger("ezmsg")
@@ -34,13 +35,10 @@ logger = logging.getLogger("ezmsg")
 class GraphServer(ThreadedAsyncServer):
     """
     Pub-Sub Directed Acyclic Graph
-    Running as a process: start() and stop()
-    Running as a thread: start_server(), stop_server(), join_server()
     """
 
     graph: DAG
     clients: Dict[UUID, ClientInfo]
-    node: int
     shms: Dict[str, SHMInfo]
 
     _client_tasks: Dict[UUID, "asyncio.Task[None]"]
@@ -52,7 +50,6 @@ class GraphServer(ThreadedAsyncServer):
         self.clients = dict()
         self._client_tasks = dict()
 
-        self.node = getnode()
         self.shms = dict()
 
 
@@ -77,7 +74,6 @@ class GraphServer(ThreadedAsyncServer):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            node = await read_int(reader)
             writer.write(encode_str(__version__))
             await writer.drain()
 
@@ -96,7 +92,7 @@ class GraphServer(ThreadedAsyncServer):
                 return
             
             elif req in [Command.SHM_CREATE.value, Command.SHM_ATTACH.value]:
-                info: Optional[SHMInfo] = None
+                shm_info: Optional[SHMInfo] = None
 
                 if req == Command.SHM_CREATE.value:
                     # TODO: UUID
@@ -104,60 +100,97 @@ class GraphServer(ThreadedAsyncServer):
                     buf_size = await read_int(reader)
 
                     # Create segment 
-                    # TODO: Move me into shm.py
-                    shm = SharedMemory(size=num_buffers * buf_size, create=True)
-                    shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
-                    shm.buf[0:8] = uint64_to_bytes(num_buffers)
-                    shm.buf[8:16] = uint64_to_bytes(buf_size)
-                    info = SHMInfo(shm)
-                    self.shms[shm.name] = info
-                    logger.debug(f"created {shm.name}")
+                    shm_info = SHMInfo.create(num_buffers, buf_size)
+                    self.shms[shm_info.shm.name] = shm_info
+                    logger.debug(f"created {shm_info.shm.name}")
 
                 elif req == Command.SHM_ATTACH.value:
                     shm_name = await read_str(reader)
-                    info = self.shms.get(shm_name, None)
+                    shm_info = self.shms.get(shm_name, None)
 
-                if info is None:
+                if shm_info is None:
                     await close_stream_writer(writer)
                     return
 
                 writer.write(Command.COMPLETE.value)
-                writer.write(encode_str(info.shm.name))
+                writer.write(encode_str(shm_info.shm.name))
 
                 with suppress(asyncio.CancelledError):
-                    await info.lease(reader, writer)
+                    await shm_info.lease(reader, writer)
 
             else:
                 # We only want to handle one command at a time
                 async with self._command_lock:
-                    if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
-                        id = uuid1(node=node)
-                        writer.write(encode_str(str(id)))
+                    if req in [
+                        Command.SUBSCRIBE.value, 
+                        Command.PUBLISH.value, 
+                        Command.CHANNEL.value
+                    ]:
+                        id = uuid1()
 
-                        pid = await read_int(reader)
-                        topic = await read_str(reader)
+                        if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
+                            topic = await read_str(reader)
 
-                        if req == Command.SUBSCRIBE.value:
-                            info = SubscriberInfo(id, writer, pid, topic)
-                            self.clients[id] = info
-                            self._client_tasks[id] = asyncio.create_task(
-                                self._handle_client(id, reader, writer)
-                            )
-                            iface = writer.transport.get_extra_info("sockname")[0]
-                            await self._notify_subscriber(info, iface)
+                            if req == Command.SUBSCRIBE.value:
+                                info = SubscriberInfo(id, writer, topic)
+                                self.clients[id] = info
+                                self._client_tasks[id] = asyncio.create_task(
+                                    self._handle_client(id, reader, writer)
+                                )
 
-                        elif req == Command.PUBLISH.value:
-                            address = await Address.from_stream(reader)
-                            info = PublisherInfo(id, writer, pid, topic, address)
-                            self.clients[id] = info
-                            self._client_tasks[id] = asyncio.create_task(
-                                self._handle_client(id, reader, writer)
-                            )
-                            iface = writer.transport.get_extra_info("peername")[0]
-                            for sub in self._downstream_subs(info.topic):
-                                await self._notify_subscriber(sub, iface)
+                                writer.write(Command.COMPLETE.value)
+                                writer.write(encode_str(str(id)))
 
-                        writer.write(Command.COMPLETE.value)
+                                await self._notify_subscriber(info)
+
+                            elif req == Command.PUBLISH.value:
+                                address = await Address.from_stream(reader)
+                                info = PublisherInfo(id, writer, topic, address)
+                                self.clients[id] = info
+                                self._client_tasks[id] = asyncio.create_task(
+                                    self._handle_client(id, reader, writer)
+                                )
+                                
+                                writer.write(Command.COMPLETE.value)
+                                writer.write(encode_str(str(id)))
+                                
+                                for sub in self._downstream_subs(info.topic):
+                                    await self._notify_subscriber(sub)
+
+
+                        elif req == Command.CHANNEL.value:
+                            pub_id_str = await read_str(reader)
+                            pub_id = UUID(pub_id_str)
+
+                            pub_addr = None
+                            try:
+                                pub_info = self.clients[pub_id]
+                                if isinstance(pub_info, PublisherInfo):
+                                    # assemble an address the channel should be able to resolve
+                                    port = pub_info.address.port
+                                    iface = pub_info.writer.transport.get_extra_info("peername")[0]
+                                    pub_addr = Address(iface, port) 
+                                else:
+                                    logger.warning(f"Connecting channel requested {type(pub_info)}")
+
+                            except KeyError:
+                                logger.warning(f"Connecting channel requested non-existent publisher {pub_id=}")
+
+                            if pub_addr is not None:
+                                writer.write(Command.COMPLETE.value)
+                                writer.write(encode_str(str(id)))
+                                pub_addr.to_stream(writer)
+
+                                info = ChannelInfo(id, writer, pub_id)
+                                self.clients[id] = info
+                                self._client_tasks[id] = asyncio.create_task(
+                                    self._handle_client(id, reader, writer)
+                                )
+                            else:
+                                # Error, drop connection
+                                await close_stream_writer(writer)
+                                return
+
                         await writer.drain()
                         return
 
@@ -238,23 +271,12 @@ class GraphServer(ThreadedAsyncServer):
             del self.clients[id]
             await close_stream_writer(writer)
 
-    async def _notify_subscriber(
-        self, sub: SubscriberInfo, iface: Optional[str] = None
-    ) -> None:
+    async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
-            notification = []
-            for pub in self._upstream_pubs(sub.topic):
-                address = pub.address
-                if address is not None:
-                    if iface is not None:
-                        notification.append(f"{str(pub.id)}@{iface}:{address.port}")
-                    else:
-                        notification.append(
-                            f"{str(pub.id)}@{address.host}:{address.port}"
-                        )
+            pub_ids = [str(pub.id) for pub in self._upstream_pubs(sub.topic)]
 
             async with sub.sync_writer() as writer:
-                notify_str = ",".join(notification)
+                notify_str = ",".join(pub_ids)
                 writer.write(Command.UPDATE.value)
                 writer.write(encode_str(notify_str))
 
@@ -269,6 +291,11 @@ class GraphServer(ThreadedAsyncServer):
     def _subscribers(self) -> List[SubscriberInfo]:
         return [
             info for info in self.clients.values() if isinstance(info, SubscriberInfo)
+        ]
+    
+    def _channels(self) -> List[ChannelInfo]:
+        return [
+            info for info in self.clients.values() if isinstance(info, ChannelInfo)
         ]
 
     def _upstream_pubs(self, topic: str) -> List[PublisherInfo]:
@@ -293,8 +320,6 @@ class GraphService(ServiceManager[GraphServer]):
         self,
     ) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         reader, writer = await super().open_connection()
-        writer.write(uint64_to_bytes(getnode()))
-        await writer.drain()
         server_version = await read_str(reader)
         if server_version != __version__:
             logger.warning(
@@ -413,7 +438,7 @@ class GraphService(ServiceManager[GraphServer]):
             raise ValueError("Error creating SHM segment")
 
         shm_name = await read_str(reader)
-        return SHMContext._create(shm_name, reader, writer)
+        return SHMContext.attach(shm_name, reader, writer)
 
     async def attach_shm(self, name: str) -> SHMContext:
         reader, writer = await self.open_connection()
@@ -426,4 +451,4 @@ class GraphService(ServiceManager[GraphServer]):
             raise ValueError("Invalid SHM Name")
 
         shm_name = await read_str(reader)
-        return SHMContext._create(shm_name, reader, writer)
+        return SHMContext.attach(shm_name, reader, writer)

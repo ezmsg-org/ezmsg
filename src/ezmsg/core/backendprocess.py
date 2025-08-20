@@ -22,7 +22,7 @@ from .graphcontext import GraphContext
 from .graphserver import GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .messagecache import MessageCache
+from .messagechannel import CHANNELS
 from abc import abstractmethod
 
 from typing import (
@@ -258,8 +258,8 @@ class DefaultBackendProcess(BackendProcess):
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
 
-            for cache in MessageCache.values():
-                cache.clear()
+            # for cache in MessageCache.values():
+            #     cache.clear()
 
             asyncio.run_coroutine_threadsafe(context.revert(), loop=loop).result()
 

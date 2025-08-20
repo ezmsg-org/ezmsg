@@ -11,6 +11,7 @@ from multiprocessing.shared_memory import SharedMemory
 from .netprotocol import (
     close_stream_writer,
     bytes_to_uint,
+    uint64_to_bytes,
 )
 
 logger = logging.getLogger("ezmsg")
@@ -74,7 +75,7 @@ class SHMContext:
         with self._shm.buf[8:16] as buf_size_mem:
             self.buf_size = bytes_to_uint(buf_size_mem)
 
-        buf_starts = [buf_idx * self.buf_size for buf_idx in range(self.num_buffers)]
+        buf_starts = [buf_idx * (self.buf_size + 16) for buf_idx in range(self.num_buffers)]
         buf_stops = [buf_start + self.buf_size for buf_start in buf_starts]
         buf_data_block_starts = [buf_start + 16 for buf_start in buf_starts]
 
@@ -82,9 +83,8 @@ class SHMContext:
             slice(*seg) for seg in zip(buf_data_block_starts, buf_stops)
         ]
 
-    # TODO: Get rid of underscore and rename to attach
     @classmethod
-    def _create(
+    def attach(
         cls, shm_name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> "SHMContext":
         context = cls(shm_name)
@@ -132,7 +132,7 @@ class SHMContext:
                 return
             except BufferError:
                 logger.debug("BufferError caught... Sleeping.")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
 
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
@@ -154,10 +154,15 @@ class SHMInfo:
 
     @classmethod
     def create(
-        cls, uuid: UUID, num_buffers: int, buf_size: int
+        cls, num_buffers: int, buf_size: int
     ) -> "SHMInfo":
-        ...
-
+        buf_size += 16 * num_buffers # Repeated header info makes this a bit bigger
+        shm = SharedMemory(size=num_buffers * buf_size, create=True)
+        shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
+        shm.buf[0:8] = uint64_to_bytes(num_buffers)
+        shm.buf[8:16] = uint64_to_bytes(buf_size)
+        return cls(shm)
+    
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> "asyncio.Task[None]":

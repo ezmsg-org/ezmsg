@@ -38,13 +38,17 @@ class Marshal:
 
             if total_size >= len(mem):
                 raise UndersizedMemory(req_size=total_size)
+            
+            cls._write(mem, header, buffers)
 
-            sidx = len(header)
-            mem[:sidx] = header[:]
-            for buf in buffers:
-                blen = len(buf)
-                mem[sidx : sidx + blen] = buf[:]
-                sidx += blen
+    @classmethod
+    def _write(cls, mem: memoryview, header: bytes, buffers: List[memoryview]):
+        sidx = len(header)
+        mem[:sidx] = header[:]
+        for buf in buffers:
+            blen = len(buf)
+            mem[sidx : sidx + blen] = buf[:]
+            sidx += blen
 
     @classmethod
     def _assert_initialized(cls, mem: memoryview) -> None:
@@ -126,4 +130,7 @@ class Marshal:
                 MessageMarshal.to_mem(msg_id, obj, to_mem)
 
 
+# If some other byte-level representation is desired, you can just 
+# monkeypatch the module at runtime with a different Marhsal subclass 
+# TODO: This could also be done with environment variables
 MessageMarshal = Marshal

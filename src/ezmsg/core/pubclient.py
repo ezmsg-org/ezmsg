@@ -5,15 +5,17 @@ import time
 
 from uuid import UUID
 from contextlib import suppress
+from dataclasses import dataclass
 
 from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
-from .messagecache import MessageCache, Cache
+from .messagechannel import CHANNELS
 from .messagemarshal import MessageMarshal, UndersizedMemory
 
 from .netprotocol import (
     Address,
+    AddressType,
     uint64_to_bytes,
     read_int,
     read_str,
@@ -21,7 +23,7 @@ from .netprotocol import (
     close_stream_writer,
     close_server,
     Command,
-    SubscriberInfo,
+    ChannelInfo,
     create_socket,
     DEFAULT_SHM_SIZE,
     PUBLISHER_START_PORT_ENV,
@@ -36,6 +38,13 @@ BACKPRESSURE_WARNING = "EZMSG_DISABLE_BACKPRESSURE_WARNING" not in os.environ
 BACKPRESSURE_REFRACTORY = 5.0  # sec
 
 
+# Publisher needs a bit more information about connected channels
+@dataclass
+class PubChannelInfo(ChannelInfo):
+    pid: int
+    shm_ok: bool = False
+
+
 class Publisher:
     id: UUID
     pid: int
@@ -44,8 +53,8 @@ class Publisher:
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
     _connection_task: "asyncio.Task[None]"
-    _subscribers: Dict[UUID, SubscriberInfo]
-    _subscriber_tasks: Dict[UUID, "asyncio.Task[None]"]
+    _channels: Dict[UUID, PubChannelInfo]
+    _channel_tasks: Dict[UUID, "asyncio.Task[None]"]
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -55,7 +64,7 @@ class Publisher:
     _force_tcp: bool
     _last_backpressure_event: float
 
-    _graph_service: GraphService
+    _graph_address: AddressType | None
 
     @staticmethod
     def client_type() -> bytes:
@@ -65,78 +74,94 @@ class Publisher:
     async def create(
         cls,
         topic: str,
-        graph_service: GraphService,
+        graph_address: AddressType | None = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         buf_size: int = DEFAULT_SHM_SIZE,
+        num_buffers: int = 32,
         **kwargs,
     ) -> "Publisher":
+        # We have to fill in some parts of this class using async
+        pub = cls(topic, graph_address, num_buffers, **kwargs)
+
+        graph_service = GraphService(graph_address)
         reader, writer = await graph_service.open_connection()
-        writer.write(Command.PUBLISH.value)
-        id = UUID(await read_str(reader))
-        pub = cls(id, topic, graph_service, **kwargs)
-        writer.write(uint64_to_bytes(pub.pid) + encode_str(pub.topic))
-        pub._shm = await graph_service.create_shm(pub._num_buffers, buf_size)
+        pub._shm = await graph_service.create_shm(num_buffers, buf_size)
 
         start_port = int(
             os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
         )
         sock = create_socket(host, port, start_port=start_port)
-        server = await asyncio.start_server(pub._on_connection, sock=sock)
-        pub._address = Address(*sock.getsockname())
-        pub._address.to_stream(writer)
+        address = Address(*sock.getsockname())
+
+        server = await asyncio.start_server(pub._channel_connect, sock=sock)
+        
+        writer.write(Command.PUBLISH.value)
+        writer.write(encode_str(topic))
+        address.to_stream(writer)
+
+        result = await reader.readexactly(1)
+        if result != Command.COMPLETE.value:
+            logger.warning(f'Could not create publisher {topic=}')
+
+        pub.id = UUID(await read_str(reader))
+
         pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
 
         async def serve() -> None:
             try:
                 await server.serve_forever()
-            except asyncio.CancelledError:  # FIXME: Poor form?
-                logger.debug("pubclient serve is Cancelled...")
+            except asyncio.CancelledError:
+                logger.debug("{pub.log_name} cancelled")
             finally:
                 await close_server(server)
 
-        pub._connection_task = asyncio.create_task(serve(), name=f"pub_{str(id)}")
+        pub._connection_task = asyncio.create_task(serve(), name=pub.log_name)
 
         def on_done(_: asyncio.Future) -> None:
-            logger.debug("Closing pub server task.")
+            logger.debug("{pub.log_name} done")
 
         pub._connection_task.add_done_callback(on_done)
-        MessageCache[id] = Cache(pub._num_buffers)
-        await pub._initialized.wait()
+
+        # Create the local Channel (it shouldn't already exist)
+        await CHANNELS.get(pub.id, graph_address)
+
         return pub
 
     def __init__(
         self,
-        id: UUID,
         topic: str,
-        graph_service: GraphService,
+        graph_address: AddressType | None = None,
         num_buffers: int = 32,
         start_paused: bool = False,
         force_tcp: bool = False,
     ) -> None:
-        self.id = id
+        """DO NOT USE this constructor to make a Publisher; use `create` instead"""
         self.pid = os.getpid()
         self.topic = topic
 
         self._msg_id = 0
-        self._subscribers = dict()
-        self._subscriber_tasks = dict()
+        self._channels = dict()
+        self._channel_tasks = dict()
         self._running = asyncio.Event()
         if not start_paused:
             self._running.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
-        self._initialized = asyncio.Event()
         self._last_backpressure_event = -1
 
-        self._graph_service = graph_service
+        self._graph_address = graph_address
+
+    @property
+    def log_name(self) -> str:
+        return f"pub_{self.topic}{str(self.id)}"
 
     def close(self) -> None:
         self._graph_task.cancel()
         self._shm.close()
         self._connection_task.cancel()
-        for task in self._subscriber_tasks.values():
+        for task in self._channel_tasks.values():
             task.cancel()
 
     async def wait_closed(self) -> None:
@@ -145,7 +170,7 @@ class Publisher:
             await self._graph_task
         with suppress(asyncio.CancelledError):
             await self._connection_task
-        for task in self._subscriber_tasks.values():
+        for task in self._channel_tasks.values():
             with suppress(asyncio.CancelledError):
                 await task
 
@@ -157,9 +182,6 @@ class Publisher:
                 cmd = await reader.read(1)
                 if not cmd:
                     break
-
-                elif cmd == Command.COMPLETE.value:
-                    self._initialized.set()
 
                 elif cmd == Command.PAUSE.value:
                     self._running.clear()
@@ -184,35 +206,33 @@ class Publisher:
         finally:
             await close_stream_writer(writer)
 
-    async def _on_connection(
+    async def _channel_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        id_str = await read_str(reader)
-        id = UUID(id_str)
-        pid = await read_int(reader)
-        topic = await read_str(reader)
+        """ Only messagechannel._Channel will connect here """
 
-        # Subscriber determines if they have SHM access
-        writer.write(encode_str(self._shm.name))
-        shm_access = bool(await read_int(reader))
+        cmd = await reader.readexactly(1)
 
-        writer.write(
-            encode_str(str(self.id)) + \
-            uint64_to_bytes(self.pid) + \
-            encode_str(self.topic) + \
-            uint64_to_bytes(self._num_buffers)
-        )
-
-        info = SubscriberInfo(id, writer, pid, topic, shm_access)
-        coro = self._handle_subscriber(info, reader)
-        self._subscriber_tasks[id] = asyncio.create_task(coro)
+        if len(cmd) == 0:
+            return
+        
+        if cmd == Command.CHANNEL.value:
+            channel_id_str = await read_str(reader)
+            channel_id = UUID(channel_id_str)
+            writer.write(encode_str(self._shm.name))
+            shm_ok = await reader.readexactly(1) == Command.SHM_OK.value
+            pid = await read_int(reader)
+            info = PubChannelInfo(channel_id, writer, self.id, pid, shm_ok)
+            coro = self._handle_channel(info, reader)
+            self._channel_tasks[channel_id] = asyncio.create_task(coro)
+            writer.write(Command.COMPLETE.value + uint64_to_bytes(self._num_buffers))
 
         await writer.drain()
 
-    async def _handle_subscriber(
-        self, info: SubscriberInfo, reader: asyncio.StreamReader
+    async def _handle_channel(
+        self, info: PubChannelInfo, reader: asyncio.StreamReader
     ) -> None:
-        self._subscribers[info.id] = info
+        self._channels[info.id] = info
 
         try:
             while True:
@@ -226,12 +246,12 @@ class Publisher:
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
 
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Publisher {self.id}: Subscriber {id} connection fail")
+            logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
 
         finally:
             self._backpressure.free(info.id)
-            await close_stream_writer(self._subscribers[info.id].writer)
-            del self._subscribers[info.id]
+            await close_stream_writer(self._channels[info.id].writer)
+            del self._channels[info.id]
 
     async def sync(self) -> None:
         """Pause and drain backpressure"""
@@ -261,58 +281,58 @@ class Publisher:
             self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
-        MessageCache[self.id].put(self._msg_id, obj)
+        # Get local channel and put variable there for local tx
+        channel = await CHANNELS.get(self.id, self._graph_address)
+        channel.put(self._msg_id, obj)
 
-        for sub in list(self._subscribers.values()):
-            if not self._force_tcp and sub.shm_access:
-                if sub.pid == self.pid:
-                    sub.writer.write(Command.TX_LOCAL.value + msg_id_bytes)
-                else:
-                    try:
-                        # Push cache to shm (if not already there)
-                        MessageCache[self.id].push(self._msg_id, self._shm)
+        if any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
+            with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):
+                total_size_bytes = uint64_to_bytes(total_size)
 
-                    except UndersizedMemory as e:
-                        new_shm = await self._graph_service.create_shm(
-                            self._num_buffers, e.req_size * 2
-                        )
-
+                if any(ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()):
+                    if self._shm.buf_size < total_size:
+                        new_shm = await GraphService(self._graph_address).create_shm(self._num_buffers, total_size * 2)
+                        
                         for i in range(self._num_buffers):
                             with self._shm.buffer(i, readonly=True) as from_buf:
                                 with new_shm.buffer(i) as to_buf:
                                     MessageMarshal.copy_obj(from_buf, to_buf)
-
+                        
                         self._shm.close()
                         self._shm = new_shm
-                        MessageCache[self.id].push(self._msg_id, self._shm)
 
-                    sub.writer.write(
-                        Command.TX_SHM.value + \
-                        msg_id_bytes + \
-                        encode_str(self._shm.name)
-                    )
+                    with self._shm.buffer(buf_idx) as mem:
+                        MessageMarshal._write(mem, header, buffers)
 
-            else:
-                with MessageMarshal.serialize(self._msg_id, obj) as ser_obj:
-                    total_size, header, buffers = ser_obj
-                    total_size_bytes = uint64_to_bytes(total_size)
+                for channel in self._channels.values():
 
-                    sub.writer.write(
-                        Command.TX_TCP.value + \
-                        msg_id_bytes + \
-                        total_size_bytes + \
-                        header + \
-                        b''.join([buffer for buffer in buffers])
-                    )
+                    if self.pid == channel.pid and channel.shm_ok:
+                        continue # Local transmission handled by channel.put
 
-            try:
-                await sub.writer.drain()
-                self._backpressure.lease(sub.id, buf_idx)
+                    elif self.pid != channel.pid and channel.shm_ok:
+                        channel.writer.write(
+                            Command.TX_SHM.value + \
+                            msg_id_bytes + \
+                            encode_str(self._shm.name)
+                        )
 
-            except (ConnectionResetError, BrokenPipeError):
-                logger.debug(
-                    f"Publisher {self.id}: Subscriber {sub.id} connection fail"
-                )
-                continue
+                    elif self.pid != channel.pid and not channel.shm_ok:
+                        channel.writer.write(
+                            Command.TX_TCP.value + \
+                            msg_id_bytes + \
+                            total_size_bytes + \
+                            header + \
+                            b''.join([buffer for buffer in buffers])
+                        )
+                    
+                    try:
+                        await channel.writer.drain()
+                        self._backpressure.lease(channel.id, buf_idx)
+
+                    except (ConnectionResetError, BrokenPipeError):
+                        logger.debug(
+                            f"Publisher {self.id}: Channel {channel.id} connection fail"
+                        )
+                        continue
 
         self._msg_id += 1

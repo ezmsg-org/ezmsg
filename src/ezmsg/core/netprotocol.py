@@ -2,6 +2,7 @@ import asyncio
 import socket
 import typing
 import enum
+import os
 
 from uuid import UUID
 from dataclasses import field, dataclass
@@ -25,6 +26,11 @@ SERVER_PORT_START_DEFAULT = 10000
 
 PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
+
+GRAPHSERVER_ADDR = os.environ.get(
+    GRAPHSERVER_ADDR_ENV, 
+    f"{DEFAULT_HOST}:{GRAPHSERVER_PORT_DEFAULT}"
+)
 
 
 class Address(typing.NamedTuple):
@@ -58,8 +64,6 @@ AddressType = typing.Union[typing.Tuple[str, int], Address]
 class ClientInfo:
     id: UUID
     writer: asyncio.StreamWriter
-    pid: int
-    topic: str
 
     _pending: asyncio.Event = field(default_factory=asyncio.Event, init=False)
 
@@ -83,12 +87,18 @@ class ClientInfo:
 
 @dataclass
 class PublisherInfo(ClientInfo):
+    topic: str
     address: Address
 
 
 @dataclass
 class SubscriberInfo(ClientInfo):
-    shm_access: bool = False
+    topic: str
+
+
+@dataclass
+class ChannelInfo(ClientInfo):
+    pub_id: UUID
 
 
 def uint64_to_bytes(i: int) -> bytes:
@@ -167,6 +177,10 @@ class Command(enum.Enum):
     SHM_ATTACH = enum.auto()
 
     SHUTDOWN = enum.auto()
+    
+    CHANNEL = enum.auto()
+    SHM_OK = enum.auto()
+    SHM_ATTACH_FAILED = enum.auto()
 
 
 def create_socket(

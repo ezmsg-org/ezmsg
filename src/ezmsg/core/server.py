@@ -10,6 +10,7 @@ from threading import Thread, Event
 from .netprotocol import (
     Address,
     AddressType,
+    DEFAULT_HOST,
     close_server,
     close_stream_writer,
     create_socket,
@@ -98,6 +99,7 @@ class ThreadedAsyncServer(Thread):
 
 T = typing.TypeVar("T", bound=ThreadedAsyncServer)
 
+# TODO: Get rid of Service Manager and drop this in its own file
 
 class ServiceManager(typing.Generic[T]):
     _address: typing.Optional[Address] = None
@@ -139,7 +141,7 @@ class ServiceManager(typing.Generic[T]):
 
     @classmethod
     def default_address(cls) -> Address:
-        address_str = os.environ.get(cls.ADDR_ENV, f"127.0.0.1:{cls.PORT_DEFAULT}")
+        address_str = os.environ.get(cls.ADDR_ENV, f"{DEFAULT_HOST}:{cls.PORT_DEFAULT}")
         return Address.from_string(address_str)
 
     def create_server(self) -> T:
