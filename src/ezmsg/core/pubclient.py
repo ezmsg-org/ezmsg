@@ -11,7 +11,7 @@ from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
 from .messagechannel import CHANNELS
-from .messagemarshal import MessageMarshal, UndersizedMemory
+from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
     Address,

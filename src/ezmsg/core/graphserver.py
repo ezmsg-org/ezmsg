@@ -74,6 +74,10 @@ class GraphServer(ThreadedAsyncServer):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
+            # Always start communications by telling the client our ezmsg version
+            # This helps us get ahead of surprisingly common situations where
+            # the graph server and the graph clients are running different versions
+            # of ezmsg which could result in borked comms.
             writer.write(encode_str(__version__))
             await writer.drain()
 
@@ -118,80 +122,79 @@ class GraphServer(ThreadedAsyncServer):
                 with suppress(asyncio.CancelledError):
                     await shm_info.lease(reader, writer)
 
+            elif req == Command.CHANNEL.value:
+                channel_id = uuid1()
+                pub_id_str = await read_str(reader)
+                pub_id = UUID(pub_id_str)
+
+                pub_addr = None
+                try:
+                    pub_info = self.clients[pub_id]
+                    if isinstance(pub_info, PublisherInfo):
+                        # assemble an address the channel should be able to resolve
+                        port = pub_info.address.port
+                        iface = pub_info.writer.transport.get_extra_info("peername")[0]
+                        pub_addr = Address(iface, port) 
+                    else:
+                        logger.warning(f"Connecting channel requested {type(pub_info)}")
+
+                except KeyError:
+                    logger.warning(f"Connecting channel requested non-existent publisher {pub_id=}")
+
+                if pub_addr is not None:
+                    writer.write(Command.COMPLETE.value)
+                    writer.write(encode_str(str(channel_id)))
+                    pub_addr.to_stream(writer)
+
+                    info = ChannelInfo(channel_id, writer, pub_id)
+                    self.clients[channel_id] = info
+                    self._client_tasks[channel_id] = asyncio.create_task(
+                        self._handle_client(channel_id, reader, writer)
+                    )
+                else:
+                    # Error, drop connection
+                    await close_stream_writer(writer)
+
+                # Created a client; we must return early to avoid closing writer
+                return
+
             else:
                 # We only want to handle one command at a time
                 async with self._command_lock:
                     if req in [
                         Command.SUBSCRIBE.value, 
                         Command.PUBLISH.value, 
-                        Command.CHANNEL.value
                     ]:
-                        id = uuid1()
+                        client_id = uuid1()
+                        topic = await read_str(reader)
 
-                        if req in [Command.SUBSCRIBE.value, Command.PUBLISH.value]:
-                            topic = await read_str(reader)
+                        if req == Command.SUBSCRIBE.value:
+                            info = SubscriberInfo(client_id, writer, topic)
+                            self.clients[client_id] = info
+                            self._client_tasks[client_id] = asyncio.create_task(
+                                self._handle_client(client_id, reader, writer)
+                            )
 
-                            if req == Command.SUBSCRIBE.value:
-                                info = SubscriberInfo(id, writer, topic)
-                                self.clients[id] = info
-                                self._client_tasks[id] = asyncio.create_task(
-                                    self._handle_client(id, reader, writer)
-                                )
+                            writer.write(Command.COMPLETE.value)
+                            writer.write(encode_str(str(client_id)))
 
-                                writer.write(Command.COMPLETE.value)
-                                writer.write(encode_str(str(id)))
+                            await self._notify_subscriber(info)
 
-                                await self._notify_subscriber(info)
+                        elif req == Command.PUBLISH.value:
+                            address = await Address.from_stream(reader)
+                            info = PublisherInfo(client_id, writer, topic, address)
+                            self.clients[client_id] = info
+                            self._client_tasks[client_id] = asyncio.create_task(
+                                self._handle_client(client_id, reader, writer)
+                            )
+                            
+                            writer.write(Command.COMPLETE.value)
+                            writer.write(encode_str(str(client_id)))
+                            
+                            for sub in self._downstream_subs(info.topic):
+                                await self._notify_subscriber(sub)
 
-                            elif req == Command.PUBLISH.value:
-                                address = await Address.from_stream(reader)
-                                info = PublisherInfo(id, writer, topic, address)
-                                self.clients[id] = info
-                                self._client_tasks[id] = asyncio.create_task(
-                                    self._handle_client(id, reader, writer)
-                                )
-                                
-                                writer.write(Command.COMPLETE.value)
-                                writer.write(encode_str(str(id)))
-                                
-                                for sub in self._downstream_subs(info.topic):
-                                    await self._notify_subscriber(sub)
-
-
-                        elif req == Command.CHANNEL.value:
-                            pub_id_str = await read_str(reader)
-                            pub_id = UUID(pub_id_str)
-
-                            pub_addr = None
-                            try:
-                                pub_info = self.clients[pub_id]
-                                if isinstance(pub_info, PublisherInfo):
-                                    # assemble an address the channel should be able to resolve
-                                    port = pub_info.address.port
-                                    iface = pub_info.writer.transport.get_extra_info("peername")[0]
-                                    pub_addr = Address(iface, port) 
-                                else:
-                                    logger.warning(f"Connecting channel requested {type(pub_info)}")
-
-                            except KeyError:
-                                logger.warning(f"Connecting channel requested non-existent publisher {pub_id=}")
-
-                            if pub_addr is not None:
-                                writer.write(Command.COMPLETE.value)
-                                writer.write(encode_str(str(id)))
-                                pub_addr.to_stream(writer)
-
-                                info = ChannelInfo(id, writer, pub_id)
-                                self.clients[id] = info
-                                self._client_tasks[id] = asyncio.create_task(
-                                    self._handle_client(id, reader, writer)
-                                )
-                            else:
-                                # Error, drop connection
-                                await close_stream_writer(writer)
-                                return
-
-                        await writer.drain()
+                        # Created a client, must return early to avoid closing writer
                         return
 
                     elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
@@ -249,9 +252,21 @@ class GraphServer(ThreadedAsyncServer):
         await close_stream_writer(writer)
 
     async def _handle_client(
-        self, id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        self, client_id: UUID, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        logger.debug(f"Graph Server: Client connected: {id}")
+        """ 
+        The lifecycle of a graph client is tied to the lifecycle of this TCP connection.
+        We always attempt to read from the reader, and if the connection is ever closed
+        from the other side, reader.read(1) returns empty, we break the loop, and delete
+        the client from our list of connected clients.  Because we're always reading 
+        from the client within this task, we have to handle all client responses within
+        this task.  
+        
+        NOTE: _notify_subscriber requires a COMPLETE once the subscriber has reconfigured
+        its connections.  ClientInfo.sync_writer gives us the mechanism by which to block
+        _notify_subscriber until the COMPLETE is received in this context.  
+        """
+        logger.debug(f"Graph Server: Client connected: {client_id}")
 
         try:
             while True:
@@ -261,24 +276,27 @@ class GraphServer(ThreadedAsyncServer):
                     break
 
                 if req == Command.COMPLETE.value:
-                    self.clients[id].set_sync()
+                    self.clients[client_id].set_sync()
 
         except (ConnectionResetError, BrokenPipeError) as e:
-            logger.debug(f"Client {id} disconnected from GraphServer: {e}")
+            logger.debug(f"Client {client_id} disconnected from GraphServer: {e}")
 
         finally:
-            self.clients[id].set_sync()
-            del self.clients[id]
+            self.clients[client_id].set_sync()
+            del self.clients[client_id]
             await close_stream_writer(writer)
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
             pub_ids = [str(pub.id) for pub in self._upstream_pubs(sub.topic)]
 
+            # Update requires us to read a 'COMPLETE'
+            # This cannot be done from this context
             async with sub.sync_writer() as writer:
                 notify_str = ",".join(pub_ids)
                 writer.write(Command.UPDATE.value)
                 writer.write(encode_str(notify_str))
+                
 
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")

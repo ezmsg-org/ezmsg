@@ -78,7 +78,6 @@ class ClientInfo:
         await self._pending.wait()
         try:
             yield self.writer
-            await self.writer.drain()
             self._pending.clear()
             await self._pending.wait()
         finally:
