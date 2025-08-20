@@ -282,14 +282,15 @@ class Publisher:
             await self._backpressure.wait(buf_idx)
 
         # Get local channel and put variable there for local tx
-        channel = await CHANNELS.get(self.id, self._graph_address)
-        channel.put(self._msg_id, obj)
+        if not self._force_tcp:
+            channel = await CHANNELS.get(self.id, self._graph_address)
+            channel.put(self._msg_id, obj)
 
-        if any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
+        if self._force_tcp or any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
             with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):
                 total_size_bytes = uint64_to_bytes(total_size)
 
-                if any(ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()):
+                if not self._force_tcp and any(ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()):
                     if self._shm.buf_size < total_size:
                         new_shm = await GraphService(self._graph_address).create_shm(self._num_buffers, total_size * 2)
                         
@@ -306,17 +307,17 @@ class Publisher:
 
                 for channel in self._channels.values():
 
-                    if self.pid == channel.pid and channel.shm_ok:
+                    if not self._force_tcp and self.pid == channel.pid and channel.shm_ok:
                         continue # Local transmission handled by channel.put
 
-                    elif self.pid != channel.pid and channel.shm_ok:
+                    elif not self._force_tcp and self.pid != channel.pid and channel.shm_ok:
                         channel.writer.write(
                             Command.TX_SHM.value + \
                             msg_id_bytes + \
                             encode_str(self._shm.name)
                         )
 
-                    elif self.pid != channel.pid and not channel.shm_ok:
+                    else:
                         channel.writer.write(
                             Command.TX_TCP.value + \
                             msg_id_bytes + \
