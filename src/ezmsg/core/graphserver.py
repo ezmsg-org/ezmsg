@@ -49,9 +49,7 @@ class GraphServer(ThreadedAsyncServer):
         self.graph = DAG()
         self.clients = dict()
         self._client_tasks = dict()
-
         self.shms = dict()
-
 
     async def setup(self) -> None:
         self._command_lock = asyncio.Lock()
@@ -190,6 +188,9 @@ class GraphServer(ThreadedAsyncServer):
                             
                             writer.write(Command.COMPLETE.value)
                             writer.write(encode_str(str(client_id)))
+
+                            # Wait until pub's channel server is up before
+                            # notifying subs
                             
                             for sub in self._downstream_subs(info.topic):
                                 await self._notify_subscriber(sub)
@@ -297,7 +298,6 @@ class GraphServer(ThreadedAsyncServer):
                 writer.write(Command.UPDATE.value)
                 writer.write(encode_str(notify_str))
                 
-
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")
 

@@ -57,13 +57,12 @@ class SHMContext:
     exposes memoryview objects for reading and writing
     """
 
-    _shm: SharedMemory
-    _data_block_segs: typing.List[slice]
-
     num_buffers: int
     buf_size: int
 
-    monitor: asyncio.Future
+    _shm: SharedMemory
+    _data_block_segs: typing.List[slice]
+    _graph_task: asyncio.Task[None]
 
     def __init__(self, name: str) -> None:
         with _untracked_shm():
@@ -88,29 +87,30 @@ class SHMContext:
         cls, shm_name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> "SHMContext":
         context = cls(shm_name)
-
-        async def monitor() -> None:
-            try:
-                await reader.read()
-                logger.debug("Read from SHMContext monitor reader")
-            except asyncio.CancelledError:
-                pass
-            finally:
-                await close_stream_writer(writer)
-
-        def close(_: asyncio.Future) -> None:
-            context.close()
-
-        context.monitor = asyncio.create_task(monitor(), name=f"{shm_name}_monitor")
-        context.monitor.add_done_callback(close)
+        context._graph_task = asyncio.create_task(
+            context._graph_connection(reader, writer), 
+            name=f"{context.name}_monitor"
+        )
         return context
+    
+    async def _graph_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            await reader.read()
+            logger.debug(f"SHMContext {self.name} GraphServer hangup")
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"SHMContext {self.name} GraphServer {type(e)}")
+        finally:
+            await close_stream_writer(writer)
+            self._shm.close()
 
     @contextmanager
     def buffer(
         self, idx: int, readonly: bool = False
     ) -> typing.Generator[memoryview, None, None]:
         if self._shm.buf is None:
-            raise BufferError(f"cannot access {self._shm.name}: server disconnected")
+            raise BufferError(f"cannot access {self.name}: server disconnected")
 
         with self._shm.buf[self._data_block_segs[idx]] as mem:
             if readonly:
@@ -121,22 +121,11 @@ class SHMContext:
                 yield mem
 
     def close(self) -> None:
-        asyncio.create_task(self.close_shm(), name=f"Close {self._shm.name}")
-        self.monitor.cancel()
-
-    async def close_shm(self) -> None:
-        while True:
-            try:
-                self._shm.close()
-                logger.debug("Closed SHM segment.")
-                return
-            except BufferError:
-                logger.debug("BufferError caught... Sleeping.")
-                await asyncio.sleep(0.1)
+        self._graph_task.cancel()
 
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
-            await self.monitor
+            await self._graph_task
 
     @property
     def name(self) -> str:
@@ -145,6 +134,17 @@ class SHMContext:
     @property
     def size(self) -> int:
         return self.buf_size - 16  # 16 byte header
+    
+    # This seems like it shouldn't be a thing.
+    # async def close_shm(self) -> None:
+    #     while True:
+    #         try:
+    #             self._shm.close()
+    #             logger.debug("Closed SHM segment.")
+    #             return
+    #         except BufferError:
+    #             logger.debug("BufferError caught... Sleeping.")
+    #             await asyncio.sleep(0.1)
 
 
 @dataclass
@@ -166,16 +166,18 @@ class SHMInfo:
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> "asyncio.Task[None]":
-        async def _wait_for_eof() -> None:
-            try:
-                await reader.read()
-            finally:
-                await close_stream_writer(writer)
-
-        lease = asyncio.create_task(_wait_for_eof())
+        lease = asyncio.create_task(self._wait_for_eof(reader, writer))
         lease.add_done_callback(self._release)
         self.leases.add(lease)
         return lease
+    
+    async def _wait_for_eof(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            await reader.read()
+        finally:
+            await close_stream_writer(writer)
 
     def _release(self, task: "asyncio.Task[None]"):
         self.leases.discard(task)

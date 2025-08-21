@@ -26,7 +26,7 @@ class Subscriber:
     topic: str
 
     _graph_address: AddressType | None
-    _graph_task: "asyncio.Task[None]"
+    _graph_task: asyncio.Task[None]
     _cur_pubs: typing.Set[UUID]
     _incoming: NotificationQueue
 
@@ -42,6 +42,7 @@ class Subscriber:
         graph_address: AddressType | None, 
         **kwargs
     ) -> "Subscriber":
+        logger.info(f'attempting to create sub {topic=}')
         reader, writer = await GraphService(graph_address).open_connection()
         writer.write(Command.SUBSCRIBE.value)
         writer.write(encode_str(topic))
@@ -53,7 +54,12 @@ class Subscriber:
         id_str = await read_str(reader)
 
         sub = cls(UUID(id_str), topic, graph_address, **kwargs)
-        sub._graph_task = asyncio.create_task(sub._graph_connection(reader, writer))
+        sub._graph_task = asyncio.create_task(
+            sub._graph_connection(reader, writer),
+            name = f'sub-{sub.id}: _graph_connection'
+        )
+
+        logger.info(f'created sub {topic=} {sub.id=}')
 
         return sub
 
@@ -92,13 +98,14 @@ class Subscriber:
                 elif cmd == Command.UPDATE.value:
                     update = await read_str(reader)
                     pub_ids = set([UUID(id) for id in update.split(',')]) if update else set()
+                    logger.info(f'{pub_ids=}')
 
                     for pub_id in set(pub_ids - self._cur_pubs):
-                        channel = await CHANNELS.subscribe(pub_id, self.id, self._incoming, self._graph_address)
+                        channel = await CHANNELS.register(pub_id, self.id, self._incoming, self._graph_address)
                         self._channels[pub_id] = channel
 
                     for pub_id in set(self._cur_pubs - pub_ids):
-                        channel = await CHANNELS.unsubscribe(pub_id, self.id, self._graph_address)
+                        await CHANNELS.unregister(pub_id, self.id, self._graph_address)
                         del self._channels[pub_id]
 
                     writer.write(Command.COMPLETE.value)
@@ -113,7 +120,8 @@ class Subscriber:
             logger.debug(f"Subscriber {self.id} lost connection to graph server")
 
         finally:
-            await CHANNELS.unsubscribe_all(self.id, self._graph_address)
+            for pub_id in self._channels:
+                await CHANNELS.unregister(pub_id, self.id, self._graph_address)
             await close_stream_writer(writer)
 
     async def recv(self) -> typing.Any:

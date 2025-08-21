@@ -83,6 +83,7 @@ class Publisher:
         **kwargs,
     ) -> "Publisher":
         # We have to fill in some parts of this class using async
+        logger.info(f'attempting to create pub {topic=}')
         pub = cls(topic, graph_address, num_buffers, **kwargs)
 
         graph_service = GraphService(graph_address)
@@ -107,27 +108,33 @@ class Publisher:
 
         pub.id = UUID(await read_str(reader))
 
-        pub._graph_task = asyncio.create_task(pub._graph_connection(reader, writer))
+        pub._graph_task = asyncio.create_task(
+            pub._graph_connection(reader, writer),
+            name = f'pub-{pub.id}: _graph_connection'
+        )
 
-        async def serve() -> None:
-            try:
-                await server.serve_forever()
-            except asyncio.CancelledError:
-                logger.debug("{pub.log_name} cancelled")
-            finally:
-                await close_server(server)
+        pub._connection_task = asyncio.create_task(
+            pub._serve_channels(server), 
+            name = f'pub-{pub.id}: pub.log_name'
+        )
 
-        pub._connection_task = asyncio.create_task(serve(), name=pub.log_name)
+        pub._local_channel = await CHANNELS.register(
+            pub.id, pub.id, None, pub._graph_address
+        )
 
-        def on_done(_: asyncio.Future) -> None:
-            logger.debug("{pub.log_name} done")
-
-        pub._connection_task.add_done_callback(on_done)
-
-        # Create the local Channel (it shouldn't already exist)
-        pub._local_channel = await CHANNELS.get(pub.id, graph_address, create = True)
+        logger.info(f'created pub {topic=} {pub.id=}')
 
         return pub
+    
+    async def _serve_channels(self, server: asyncio.Server) -> None:
+        try:
+            await server.serve_forever()
+        except asyncio.CancelledError:
+            logger.debug(f"{self.log_name} cancelled")
+        finally:
+            await close_server(server)
+            await CHANNELS.unregister(self.id, self.id, self._graph_address)
+            logger.debug(f"{self.log_name} done")
 
     def __init__(
         self,
@@ -151,7 +158,6 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._force_tcp = force_tcp
         self._last_backpressure_event = -1
-
         self._graph_address = graph_address
 
     @property

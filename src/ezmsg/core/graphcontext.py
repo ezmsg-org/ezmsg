@@ -97,13 +97,16 @@ class GraphContext:
         return False
 
     async def revert(self) -> None:
+        logger.info('revert graphcontext: close clients')
         for client in self._clients:
             client.close()
+            await client.wait_closed()
 
-        wait = [c.wait_closed() for c in self._clients]
-        for future in asyncio.as_completed(wait):
-            await future
+        # wait = [c.wait_closed() for c in self._clients]
+        # for future in asyncio.as_completed(wait):
+        #     await future
 
+        logger.info('revert graphcontext: disconnect edges')
         for edge in self._edges:
             try:
                 await GraphService(self.graph_address).disconnect(*edge)

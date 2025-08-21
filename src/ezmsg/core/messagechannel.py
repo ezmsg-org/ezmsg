@@ -44,7 +44,7 @@ class _Channel:
     cache: typing.List[typing.Any]
     cache_id: typing.List[int | None]
     shm: SHMContext | None
-    subs: typing.Dict[UUID, NotificationQueue]
+    clients: typing.Dict[UUID, NotificationQueue | None]
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
@@ -68,7 +68,7 @@ class _Channel:
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
         self.backpressure = Backpressure(self.num_buffers)
-        self.subs = dict()
+        self.clients = dict()
         self._graph_address = graph_address
 
     @classmethod
@@ -77,6 +77,7 @@ class _Channel:
         pub_id: UUID,
         graph_address: AddressType,
     ) -> "_Channel":
+        logger.info(f'attempting to create channel {pub_id=}')
         graph_service = GraphService(graph_address)
 
         graph_reader, graph_writer = await graph_service.open_connection()
@@ -91,7 +92,6 @@ class _Channel:
         pub_address = await Address.from_stream(graph_reader)
 
         reader, writer = await asyncio.open_connection(*pub_address)
-
         writer.write(Command.CHANNEL.value)
         writer.write(encode_str(id_str))
 
@@ -113,13 +113,17 @@ class _Channel:
         chan = cls(UUID(id_str), pub_id, num_buffers, shm)
 
         chan._graph_task = asyncio.create_task(
-            chan._graph_connection(graph_reader, graph_writer)
+            chan._graph_connection(graph_reader, graph_writer),
+            name = f'chan-{chan.id}: _graph_connection'
         )
 
         chan._pub_writer = writer
         chan._pub_task = asyncio.create_task(
-            chan._publisher_connection(reader)
+            chan._publisher_connection(reader),
+            name = f'chan-{chan.id}: _publisher_connection'
         )
+
+        logger.info(f'created channel {pub_id=}')
 
         return chan
     
@@ -185,7 +189,7 @@ class _Channel:
                         self.cache[buf_idx] = obj
                     self.cache_id[buf_idx] = msg_id
 
-                self._notify_subs(msg_id)
+                self._notify_clients(msg_id)
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
@@ -194,9 +198,10 @@ class _Channel:
             await close_stream_writer(self._pub_writer)
             logger.debug(f"disconnected: channel:{self.id} -> pub:{id}")
 
-    def _notify_subs(self, msg_id: int) -> None:
-        for sub_id, queue in self.subs.items():
-            self.backpressure.lease(sub_id, msg_id % self.num_buffers)
+    def _notify_clients(self, msg_id: int) -> None:
+        for client_id, queue in self.clients.items():
+            if queue is None: continue
+            self.backpressure.lease(client_id, msg_id % self.num_buffers)
             queue.put_nowait((self.pub_id, msg_id))
 
     def put_local(self, msg_id: int, msg: typing.Any) -> None:
@@ -204,10 +209,10 @@ class _Channel:
         buf_idx = msg_id % self.num_buffers
         self.cache_id[buf_idx] = msg_id
         self.cache[buf_idx] = msg
-        self._notify_subs(msg_id)
+        self._notify_clients(msg_id)
 
     @contextmanager
-    def get(self, msg_id: int, sub_id: UUID) -> typing.Generator[typing.Any, None, None]:
+    def get(self, msg_id: int, client_id: UUID) -> typing.Generator[typing.Any, None, None]:
         """get object from cache; if not in cache and shm provided -- get from shm"""
 
         buf_idx = msg_id % self.num_buffers
@@ -223,13 +228,27 @@ class _Channel:
                     raise CacheMiss
 
                 with MessageMarshal.obj_from_mem(mem) as obj:
-                    # Could deepcopy and put in cache here, but 
-                    # profiling indicates its faster to repeatedly
-                    # reconstruct from memory for fanout <= 4 subs
+                    # Could deepcopy and put in cache here...
+                    # Profiling indicates its faster to repeatedly
+                    # reconstruct <=512kB msgs from memory for up to
+                    # about 4 subs -- deepcopy is about 4x slower
                     # which I suspect will be majority of cases
+                    # With more than 4 subs, one deepcopy may be faster
+                    # for <=512kB msgs, but becomes remarkably time
+                    # consuming for >= 512kB msgs.
+
+                    # TODO: Implement a tuning method that runs on
+                    # first ezmsg run that determines this tradeoff
+                    # and decides fastest behavior; then decide 
+                    # to cache or not cache depending on this profiling
+                    # for this particular machine
+
+                    # self.shm.buf_size # Buffer size
+                    # len(self.clients) # Channel fanout
+
                     yield obj
 
-        self.backpressure.free(sub_id, buf_idx)
+        self.backpressure.free(client_id, buf_idx)
         if self.backpressure.buffers[buf_idx].is_empty:
             try:
                 ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
@@ -237,21 +256,22 @@ class _Channel:
             except (BrokenPipeError, ConnectionResetError):
                 logger.debug(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
-    def subscribe(self, sub_id: UUID, sub_queue: NotificationQueue) -> None:
-        self.subs[sub_id] = sub_queue 
+    def register_client(self, client_id: UUID, queue: NotificationQueue | None = None) -> None:
+        self.clients[client_id] = queue 
 
-    def unsubscribe(self, sub_id: UUID) -> None:
-        queue = self.subs[sub_id]
+    def unregister_client(self, client_id: UUID) -> None:
+        queue = self.clients[client_id]
 
-        for _ in range(queue.qsize()):
-            pub_id, msg_id = queue.get_nowait()
-            if pub_id == self.pub_id:
-                continue
-            queue.put_nowait((pub_id, msg_id))
+        if queue is not None:
+            for _ in range(queue.qsize()):
+                pub_id, msg_id = queue.get_nowait()
+                if pub_id == self.pub_id:
+                    continue
+                queue.put_nowait((pub_id, msg_id))
 
-        self.backpressure.free(sub_id)
+            self.backpressure.free(client_id)
 
-        del self.subs[sub_id]
+        del self.clients[client_id]
 
     def clear_cache(self):
         self.cache_id = [None] * self.num_buffers
@@ -270,64 +290,52 @@ def _ensure_address(address: AddressType | None) -> Address:
 
 class _ChannelManager:
     
+    _lock: asyncio.Lock
     _registry: typing.Dict[Address, typing.Dict[UUID, _Channel]]
 
     def __init__(self):
         default_address = Address.from_string(GRAPHSERVER_ADDR)
         self._registry = {default_address: dict()}
+        self._lock = asyncio.Lock()
 
-    async def get(
-        self,
-        pub_id: UUID,
-        graph_address: AddressType | None = None,
-        create: bool = True
-    ) -> _Channel:
-        graph_address = _ensure_address(graph_address)
-        channels = self._registry.get(graph_address, dict())
-        channel = channels.get(pub_id, None)
-        if create and channel is None:
-            channel = await _Channel.create(pub_id, graph_address)
-            channels[pub_id] = channel
-            self._registry[graph_address] = channels
-        if channel is None:
-            raise ValueError("Channel does not exist")
-        return channel
-    
-    async def subscribe(
+    async def register(
         self, 
         pub_id: UUID, 
-        sub_id: UUID, 
-        sub_queue: NotificationQueue, 
+        client_id: UUID, 
+        queue: NotificationQueue | None = None, 
         graph_address: AddressType | None = None
     ) -> _Channel:
-        channel = await self.get(pub_id, graph_address, create = True)
-        channel.subscribe(sub_id, sub_queue)
-        return channel
-    
-    async def unsubscribe_all(
-        self,
-        sub_id: UUID,
-        graph_address: AddressType | None = None
-    ) -> None:
-        graph_address = _ensure_address(graph_address)
-        channels = self._registry.get(graph_address, dict())
-        for pub_id, channel in channels.items():
-            if sub_id in channel.subs:
-                await self.unsubscribe(pub_id, sub_id, graph_address)
+        async with self._lock:
+            logger.info(f'register ch {pub_id=} {client_id=}')
+            graph_address = _ensure_address(graph_address)
+            channels = self._registry.get(graph_address, dict())
+            channel = channels.get(pub_id, None)
+            if channel is None:
+                channel = await _Channel.create(pub_id, graph_address)
+                channels[pub_id] = channel
+                self._registry[graph_address] = channels
+            channel.register_client(client_id, queue)
+            logger.info(f'ch {pub_id=} {client_id=} reg DONE')
+            return channel
 
-    async def unsubscribe(
+    async def unregister(
         self, 
         pub_id: UUID, 
-        sub_id: UUID, 
+        client_id: UUID, 
         graph_address: AddressType | None = None
     ) -> None:
-        graph_address = _ensure_address(graph_address)
-        channel = self._registry[graph_address][pub_id]
-        channel.unsubscribe(sub_id)
-        if len(channel.subs) == 0:
-            channel.close()
-            await channel.wait_closed()
-            logger.debug(f'closed channel {channel.id}: no subs')
+        async with self._lock:
+            logger.info(f'unregister ch {pub_id=} {client_id=} unreg')
+            graph_address = _ensure_address(graph_address)
+            registry = self._registry[graph_address]
+            channel = registry[pub_id]
+            channel.unregister_client(client_id)
+            if len(channel.clients) == 0:
+                channel.close()
+                await channel.wait_closed()
+                del registry[pub_id]
+                logger.info(f'closed channel {pub_id}: no clients')
+            logger.info(f'ch {pub_id=} {client_id=} unreg DONE')
 
 
 CHANNELS = _ChannelManager()
