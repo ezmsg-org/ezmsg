@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
-from .messagechannel import CHANNELS
+from .messagechannel import CHANNELS, NotificationQueue, _Channel
 
 from .netprotocol import (
     AddressType,
@@ -28,7 +28,12 @@ class Subscriber:
     _graph_address: AddressType | None
     _graph_task: "asyncio.Task[None]"
     _cur_pubs: typing.Set[UUID]
-    _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
+    _incoming: NotificationQueue
+
+    # This is an optimization to retain a local handle to channels
+    # so that dict lookup and wrapper contextmanager aren't in 
+    # the hotpath - Griff
+    _channels: typing.Dict[UUID, _Channel]
 
     @classmethod
     async def create(
@@ -41,7 +46,7 @@ class Subscriber:
         writer.write(Command.SUBSCRIBE.value)
         writer.write(encode_str(topic))
 
-        result = await reader.readexactly(1)
+        result = await reader.read(1)
         if result != Command.COMPLETE.value:
             logger.warning(f'Could not create subscriber {topic=}')
 
@@ -65,6 +70,7 @@ class Subscriber:
 
         self._cur_pubs = set()
         self._incoming = asyncio.Queue()
+        self._channels = dict()
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -79,20 +85,21 @@ class Subscriber:
         try:
             while True:
                 cmd = await reader.read(1)
+
                 if not cmd:
                     break
 
                 elif cmd == Command.UPDATE.value:
                     update = await read_str(reader)
-                    pub_ids = set([UUID(id) for id in update.split(',')])
+                    pub_ids = set([UUID(id) for id in update.split(',')]) if update else set()
 
                     for pub_id in set(pub_ids - self._cur_pubs):
-                        channel = await CHANNELS.get(pub_id, self._graph_address)
-                        channel.subscribe(self.id, self._incoming)
+                        channel = await CHANNELS.subscribe(pub_id, self.id, self._incoming, self._graph_address)
+                        self._channels[pub_id] = channel
 
                     for pub_id in set(self._cur_pubs - pub_ids):
-                        channel = await CHANNELS.get(pub_id, self._graph_address)
-                        channel.unsubscribe(self.id)
+                        channel = await CHANNELS.unsubscribe(pub_id, self.id, self._graph_address)
+                        del self._channels[pub_id]
 
                     writer.write(Command.COMPLETE.value)
                     await writer.drain()
@@ -106,7 +113,7 @@ class Subscriber:
             logger.debug(f"Subscriber {self.id} lost connection to graph server")
 
         finally:
-            CHANNELS.unsubscribe_all(self.id, self._graph_address) # good idea?
+            await CHANNELS.unsubscribe_all(self.id, self._graph_address)
             await close_stream_writer(writer)
 
     async def recv(self) -> typing.Any:
@@ -117,10 +124,9 @@ class Subscriber:
 
     @asynccontextmanager
     async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
-        id, msg_id = await self._incoming.get()
+        pub_id, msg_id = await self._incoming.get()
 
-        channel = await CHANNELS.get(id, self._graph_address)
-        with channel.get(msg_id, self.id) as msg:
+        with self._channels[pub_id].get(msg_id, self.id) as msg:
             yield msg
 
   

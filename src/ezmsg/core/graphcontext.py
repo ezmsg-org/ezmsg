@@ -2,6 +2,7 @@ import asyncio
 import logging
 import typing
 
+from .netprotocol import AddressType, Address
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
@@ -23,53 +24,58 @@ class GraphContext:
     _clients: typing.Set[typing.Union[Publisher, Subscriber]]
     _edges: typing.Set[typing.Tuple[str, str]]
 
-    _graph_service: GraphService
+    _graph_address: AddressType | None
     _graph_server: typing.Optional[GraphServer]
 
     def __init__(
         self,
-        graph_service: typing.Optional[GraphService] = None,
+        graph_address: AddressType | None = None,
     ) -> None:
         self._clients = set()
         self._edges = set()
-        self._graph_service = (
-            graph_service if graph_service is not None else GraphService()
-        )
+        self._graph_address = graph_address
         self._graph_server = None
+
+    @property
+    def graph_address(self) -> AddressType | None:
+        if self._graph_server is not None:
+            return self._graph_server.address
+        else:
+            return self._graph_address
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
         pub = await Publisher.create(
-            topic, self._graph_service, **kwargs
+            topic, self.graph_address, **kwargs
         )
         self._clients.add(pub)
         return pub
 
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
         sub = await Subscriber.create(
-            topic, self._graph_service, **kwargs
+            topic, self.graph_address, **kwargs
         )
         self._clients.add(sub)
         return sub
 
     async def connect(self, from_topic: str, to_topic: str) -> None:
-        await self._graph_service.connect(from_topic, to_topic)
+        await GraphService(self.graph_address).connect(from_topic, to_topic)
         self._edges.add((from_topic, to_topic))
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
-        await self._graph_service.disconnect(from_topic, to_topic)
+        await GraphService(self.graph_address).disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
     async def sync(self, timeout: typing.Optional[float] = None) -> None:
-        await self._graph_service.sync(timeout)
+        await GraphService(self.graph_address).sync(timeout)
 
     async def pause(self) -> None:
-        await self._graph_service.pause()
+        await GraphService(self.graph_address).pause()
 
     async def resume(self) -> None:
-        await self._graph_service.resume()
+        await GraphService(self.graph_address).resume()
 
     async def _ensure_servers(self) -> None:
-        self._graph_server = await self._graph_service.ensure()
+        self._graph_server = await GraphService(self.graph_address).ensure()
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
@@ -100,6 +106,6 @@ class GraphContext:
 
         for edge in self._edges:
             try:
-                await self._graph_service.disconnect(*edge)
+                await GraphService(self.graph_address).disconnect(*edge)
             except (ConnectionRefusedError, BrokenPipeError, ConnectionResetError) as e:
                 logger.warn(f"Could not remove edge {edge} from GraphServer: {e}")

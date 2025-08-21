@@ -6,6 +6,7 @@ import time
 import traceback
 import threading
 
+from abc import abstractmethod
 from collections import defaultdict
 from functools import wraps, partial
 from copy import deepcopy
@@ -22,8 +23,7 @@ from .graphcontext import GraphContext
 from .graphserver import GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .messagechannel import CHANNELS
-from abc import abstractmethod
+from .netprotocol import AddressType
 
 from typing import (
     List,
@@ -63,7 +63,7 @@ class BackendProcess(Process):
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
-    graph_service: GraphService
+    graph_address: AddressType | None
 
     def __init__(
         self,
@@ -71,14 +71,14 @@ class BackendProcess(Process):
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
-        graph_service: GraphService,
+        graph_address: AddressType | None,
     ) -> None:
         super().__init__()
         self.units = units
         self.term_ev = term_ev
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
-        self.graph_service = graph_service
+        self.graph_address = graph_address
         self.task_finished_ev: Optional[threading.Event] = None
 
     def run(self) -> None:
@@ -99,7 +99,7 @@ class DefaultBackendProcess(BackendProcess):
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
-        context = GraphContext(self.graph_service)
+        context = GraphContext(self.graph_address)
         coro_callables: Dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
 
         try:

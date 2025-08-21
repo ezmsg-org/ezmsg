@@ -82,11 +82,11 @@ class GraphServer(ThreadedAsyncServer):
             await writer.drain()
 
             req = await reader.read(1)
-
-            # Empty bytes object means EOF; Client disconnected
-            # This happens frequently when future clients are just pinging
-            # GraphServer to check if server is up
+            
             if not req:
+                # Empty bytes object means EOF; Client disconnected
+                # This happens frequently when future clients are just pinging
+                # GraphServer to check if server is up
                 await close_stream_writer(writer)
                 return
 
@@ -393,7 +393,7 @@ class GraphService(ServiceManager[GraphServer]):
         writer.write(Command.DAG.value)
         await writer.drain()
         await asyncio.sleep(1.0)
-        await reader.readexactly(1)
+        await reader.read(1)
         dag_num_bytes = await read_int(reader)
         dag_bytes = await reader.readexactly(dag_num_bytes)
         dag: DAG = pickle.loads(dag_bytes)

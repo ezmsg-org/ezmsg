@@ -30,47 +30,56 @@ logger = logging.getLogger("ezmsg")
 
 
 class ExecutionContext:
-    processes: typing.List[BackendProcess]
+    _process_units: typing.List[typing.List[Unit]]
+    _processes: typing.List[BackendProcess] | None
     term_ev: EventType
     start_barrier: BarrierType
     connections: typing.List[typing.Tuple[str, str]]
 
     def __init__(
         self,
-        processes: typing.List[typing.List[Unit]],
-        graph_service: GraphService,
+        process_units: typing.List[typing.List[Unit]],
         connections: typing.List[typing.Tuple[str, str]] = [],
-        backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     ) -> None:
-        if not processes:
-            raise ValueError("Cannot create an execution context for zero processes")
-
         self.connections = connections
+        self._process_units = process_units
+        self._processes = None
 
         self.term_ev = Event()
-        self.start_barrier = Barrier(len(processes))
-        self.stop_barrier = Barrier(len(processes))
+        self.start_barrier = Barrier(len(process_units))
+        self.stop_barrier = Barrier(len(process_units))
 
-        self.processes = [
+    def create_processes(
+        self,
+        graph_address: AddressType | None,
+        backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
+    ) -> None:
+        
+        self._processes = [
             backend_process(
                 process_units,
                 self.term_ev,
                 self.start_barrier,
                 self.stop_barrier,
-                graph_service,
+                graph_address,
             )
-            for process_units in processes
+            for process_units in self._process_units
         ]
+
+    @property
+    def processes(self) -> typing.List[BackendProcess]:
+        if self._processes is None:
+            raise ValueError("ExecutionContext has not initialized processes")
+        else:
+            return self._processes
 
     @classmethod
     def setup(
         cls,
         components: typing.Mapping[str, Component],
-        graph_service: GraphService,
         root_name: typing.Optional[str] = None,
         connections: typing.Optional[NetworkDefinition] = None,
         process_components: typing.Optional[typing.Collection[Component]] = None,
-        backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
         force_single_process: bool = False,
     ) -> typing.Optional["ExecutionContext"]:
         graph_connections: typing.List[typing.Tuple[str, str]] = []
@@ -131,15 +140,13 @@ class ExecutionContext:
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]
 
-        try:
-            return cls(
-                processes,
-                graph_service,
-                graph_connections,
-                backend_process,
-            )
-        except ValueError:
+        if not processes:
             return None
+        
+        return cls(
+            processes,
+            graph_connections,
+        )
 
 
 def run_system(
@@ -171,21 +178,20 @@ def run(
         components: represents the nodes in the directed acyclic graph. It is a dictionary which contains the
             ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()``
             for each :obj:`Unit` and ``configure()`` for each :obj:`Collection`, if defined.
-        root_name:
+        root_name: gives a new root name to all nodes in this graph (e.g. [root_name]/COLLECTION/UNIT) 
         connections: represents the edges is a ``NetworkDefinition`` which connects
             ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph
             using the contents of this parameter.
         process_components: a list of ``Components`` which should live in their own process.
         backend_process: is currently under development.
         graph_address: the hostname and port of the graph server which ``ezmsg`` should connect to.
-            If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
+            If not defined, ``ezmsg`` will try 127.0.0.1:25978, or fallback to a new graph server on a random port
         force_single_process: run all ``Components`` in one process.
             This is necessary when running ``ezmsg`` in a notebook.
-        components_kwargs:
+        components_kwargs: see components
     """
     # FIXME: This function is the last major re-implementation needed to make this
     # codebase more maintainable.
-    graph_service = GraphService(graph_address)
 
     if components is not None and isinstance(components, Component):
         components = {"SYSTEM": components}
@@ -199,11 +205,9 @@ def run(
     with new_threaded_event_loop() as loop:
         execution_context = ExecutionContext.setup(
             components,
-            graph_service,
             root_name,
             connections,
             process_components,
-            backend_process,
             force_single_process,
         )
 
@@ -212,7 +216,7 @@ def run(
 
         # FIXME: When done this way, we don't exit the graph_context on exception
         async def create_graph_context() -> GraphContext:
-            return await GraphContext(graph_service).__aenter__()
+            return await GraphContext(graph_address).__aenter__()
 
         # FIXME: This sort of stuff should all be done in a separate async function...
         # Done this way, its ugly as hell and opens us up to a lot of issues with
@@ -220,6 +224,11 @@ def run(
         graph_context = asyncio.run_coroutine_threadsafe(
             create_graph_context(), loop
         ).result()
+
+        execution_context.create_processes(
+            graph_address=graph_context.graph_address,
+            backend_process=backend_process
+        )
 
         async def cleanup_graph() -> None:
             await graph_context.__aexit__(None, None, None)

@@ -48,18 +48,30 @@ async def host(host: str = '127.0.0.1'):
     graph_service = GraphService((host, PORT))
     await graph_service.ensure()
 
-    test_pub = await Publisher.create(TOPIC, (host, PORT), host=host)
-    test_sub1 = await Subscriber.create(TOPIC, (host, PORT))
-    test_sub2 = await Subscriber.create(TOPIC, (host, PORT))
-
-    await asyncio.sleep(1.0)
-
-    pub_task = asyncio.Task(handle_pub(test_pub))
-    sub_task_1 = asyncio.Task(handle_sub(test_sub1))
-    sub_task_2 = asyncio.Task(handle_sub(test_sub2))
-
     try:
+
+        test_pub = await Publisher.create(TOPIC, (host, PORT), host=host)
+        test_sub1 = await Subscriber.create(TOPIC, (host, PORT))
+        test_sub2 = await Subscriber.create(TOPIC, (host, PORT))
+
+        await asyncio.sleep(1.0)
+
+        pub_task = asyncio.Task(handle_pub(test_pub))
+        sub_task_1 = asyncio.Task(handle_sub(test_sub1))
+        sub_task_2 = asyncio.Task(handle_sub(test_sub2))
+
         await asyncio.wait([pub_task, sub_task_1, sub_task_2])
+        
+        test_pub.close()
+        test_sub1.close()
+        test_sub2.close()
+
+        for future in asyncio.as_completed([
+            test_pub.wait_closed(),
+            test_sub1.wait_closed(),
+            test_sub2.wait_closed(),
+        ]):
+            await future
 
     finally:
         server.stop()
@@ -76,10 +88,19 @@ async def attach_client(host: str = '127.0.0.1'):
 
     sub = await Subscriber.create(TOPIC, (host, PORT))
 
-    while True:
-        async with sub.recv_zero_copy() as msg:
-            await asyncio.sleep(1.0)
-            print(msg)
+    try:
+        while True:
+            async with sub.recv_zero_copy() as msg:
+                await asyncio.sleep(1.0)
+                print(msg)
+
+    except asyncio.CancelledError:
+        pass
+        
+    finally:
+        sub.close()
+        await sub.wait_closed()
+        print(f'Detached')
 
 
 if __name__ == '__main__':

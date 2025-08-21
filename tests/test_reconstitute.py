@@ -1,7 +1,11 @@
 import asyncio
 from copy import deepcopy
 import timeit
-import matplotlib.pyplot as plt
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 from ezmsg.core.graphserver import GraphServer, GraphService
 from ezmsg.util.messages.axisarray import AxisArray
@@ -84,31 +88,32 @@ def main():
         server.stop()
 
     # Plot results
-    plt.figure(figsize=(12, 8))
-    for msg_size_bytes in msg_size_bytes_list:
-        fanouts = results[msg_size_bytes]['fanouts']
-        plt.plot(
-            fanouts,
-            results[msg_size_bytes]['total_recon'],
-            label=f'Recon N times ({msg_size_bytes} bytes)',
-            marker='o', linestyle='--', alpha=0.7
-        )
-        plt.plot(
-            fanouts,
-            results[msg_size_bytes]['total_deepcopy'],
-            label=f'Recon 1 + deepcopy N-1 ({msg_size_bytes} bytes)',
-            marker='x', linestyle='-', alpha=0.7
-        )
-    plt.xscale('log', base=2)
-    plt.yscale('log')
-    plt.xlabel('Fanout (number of consumers)')
-    plt.ylabel('Total time (ns)')
-    plt.title('Fanout Tradeoff: Reconstitute N times vs Reconstitute+Deepcopy')
-    plt.legend(fontsize='small', ncol=2)
-    plt.grid(True, which='both', ls='--', alpha=0.5)
-    plt.tight_layout()
-    plt.savefig('fanout_tradeoff.png')
-    print('Plot saved as fanout_tradeoff.png')
+    if plt is not None:
+        plt.figure(figsize=(12, 8))
+        for msg_size_bytes in msg_size_bytes_list:
+            fanouts = results[msg_size_bytes]['fanouts']
+            plt.plot(
+                fanouts,
+                results[msg_size_bytes]['total_recon'],
+                label=f'Recon N times ({msg_size_bytes} bytes)',
+                marker='o', linestyle='--', alpha=0.7
+            )
+            plt.plot(
+                fanouts,
+                results[msg_size_bytes]['total_deepcopy'],
+                label=f'Recon 1 + deepcopy N-1 ({msg_size_bytes} bytes)',
+                marker='x', linestyle='-', alpha=0.7
+            )
+        plt.xscale('log', base=2)
+        plt.yscale('log')
+        plt.xlabel('Fanout (number of consumers)')
+        plt.ylabel('Total time (ns)')
+        plt.title('Fanout Tradeoff: Reconstitute N times vs Reconstitute+Deepcopy')
+        plt.legend(fontsize='small', ncol=2)
+        plt.grid(True, which='both', ls='--', alpha=0.5)
+        plt.tight_layout()
+        plt.savefig('fanout_tradeoff.png')
+        print('Plot saved as fanout_tradeoff.png')
 
 if __name__ == '__main__':
     main()

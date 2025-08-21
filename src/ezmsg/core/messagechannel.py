@@ -4,7 +4,7 @@ import typing
 import logging
 
 from uuid import UUID
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
@@ -26,6 +26,9 @@ from .netprotocol import (
 logger = logging.getLogger("ezmsg")
 
 
+NotificationQueue = asyncio.Queue[typing.Tuple[UUID, int]]
+
+
 class CacheMiss(Exception): ...
 
 
@@ -41,7 +44,7 @@ class _Channel:
     cache: typing.List[typing.Any]
     cache_id: typing.List[int | None]
     shm: SHMContext | None
-    sub_queues: typing.Dict[UUID, asyncio.Queue[typing.Tuple[UUID, int]]]
+    subs: typing.Dict[UUID, NotificationQueue]
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
@@ -65,7 +68,7 @@ class _Channel:
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
         self.backpressure = Backpressure(self.num_buffers)
-        self.sub_queues = dict()
+        self.subs = dict()
         self._graph_address = graph_address
 
     @classmethod
@@ -101,7 +104,7 @@ class _Channel:
             writer.write(Command.SHM_ATTACH_FAILED.value)
         writer.write(uint64_to_bytes(os.getpid()))
 
-        result = await reader.readexactly(1)
+        result = await reader.read(1)
         if result != Command.COMPLETE.value:
             raise ValueError(f'failed to create channel {pub_id=}')
         
@@ -119,6 +122,16 @@ class _Channel:
         )
 
         return chan
+    
+    def close(self) -> None:
+        self._graph_task.cancel()
+        self._pub_task.cancel()
+
+    async def wait_closed(self) -> None:
+        with suppress(asyncio.CancelledError):
+            await self._graph_task
+        with suppress(asyncio.CancelledError):
+            await self._pub_task
     
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -179,15 +192,14 @@ class _Channel:
 
         finally:
             await close_stream_writer(self._pub_writer)
-            # TODO: Remove this channel from CHANNELS ... ? maybe?
             logger.debug(f"disconnected: channel:{self.id} -> pub:{id}")
 
     def _notify_subs(self, msg_id: int) -> None:
-        for sub_id, queue in self.sub_queues.items():
+        for sub_id, queue in self.subs.items():
             self.backpressure.lease(sub_id, msg_id % self.num_buffers)
             queue.put_nowait((self.pub_id, msg_id))
 
-    def put(self, msg_id: int, msg: typing.Any) -> None:
+    def put_local(self, msg_id: int, msg: typing.Any) -> None:
         """put an object into cache (should only be used by Publishers)"""
         buf_idx = msg_id % self.num_buffers
         self.cache_id[buf_idx] = msg_id
@@ -225,28 +237,35 @@ class _Channel:
             except (BrokenPipeError, ConnectionResetError):
                 logger.debug(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
-    def subscribe(self, sub_id: UUID, sub_queue: asyncio.Queue[typing.Tuple[UUID, int]]) -> None:
-        self.sub_queues[sub_id] = sub_queue 
+    def subscribe(self, sub_id: UUID, sub_queue: NotificationQueue) -> None:
+        self.subs[sub_id] = sub_queue 
 
     def unsubscribe(self, sub_id: UUID) -> None:
-        queue = self.sub_queues.get(sub_id, None) 
-        
-        if queue is None:
-            return
-
-        del self.sub_queues[sub_id]
+        queue = self.subs[sub_id]
 
         for _ in range(queue.qsize()):
-            ch_id, msg_id = queue.get_nowait()
-            if ch_id == self.id:
+            pub_id, msg_id = queue.get_nowait()
+            if pub_id == self.pub_id:
                 continue
-            queue.put_nowait((ch_id, msg_id))
+            queue.put_nowait((pub_id, msg_id))
 
         self.backpressure.free(sub_id)
+
+        del self.subs[sub_id]
 
     def clear_cache(self):
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
+
+
+def _ensure_address(address: AddressType | None) -> Address:
+    if address is None:
+        return Address.from_string(GRAPHSERVER_ADDR)
+
+    elif not isinstance(address, Address):
+        return Address(*address)
+    
+    return address
 
 
 class _ChannelManager:
@@ -257,37 +276,58 @@ class _ChannelManager:
         default_address = Address.from_string(GRAPHSERVER_ADDR)
         self._registry = {default_address: dict()}
 
-    async def get(self, id: UUID, graph_address: AddressType | None = None) -> _Channel:
-        
-        if graph_address is None:
-            graph_address = Address.from_string(GRAPHSERVER_ADDR)
-
-        elif not isinstance(graph_address, Address):
-            graph_address = Address(*graph_address)
-
+    async def get(
+        self,
+        pub_id: UUID,
+        graph_address: AddressType | None = None,
+        create: bool = True
+    ) -> _Channel:
+        graph_address = _ensure_address(graph_address)
         channels = self._registry.get(graph_address, dict())
-        channel = channels.get(id, None)
-        if channel is None:
-            channel = await _Channel.create(id, graph_address)
-            channels[id] = channel
+        channel = channels.get(pub_id, None)
+        if create and channel is None:
+            channel = await _Channel.create(pub_id, graph_address)
+            channels[pub_id] = channel
             self._registry[graph_address] = channels
-
+        if channel is None:
+            raise ValueError("Channel does not exist")
         return channel
     
-    def unsubscribe_all(self, sub_id: UUID, graph_address: AddressType | None = None) -> None:
-        
-        if graph_address is None:
-            graph_address = Address.from_string(GRAPHSERVER_ADDR)
+    async def subscribe(
+        self, 
+        pub_id: UUID, 
+        sub_id: UUID, 
+        sub_queue: NotificationQueue, 
+        graph_address: AddressType | None = None
+    ) -> _Channel:
+        channel = await self.get(pub_id, graph_address, create = True)
+        channel.subscribe(sub_id, sub_queue)
+        return channel
+    
+    async def unsubscribe_all(
+        self,
+        sub_id: UUID,
+        graph_address: AddressType | None = None
+    ) -> None:
+        graph_address = _ensure_address(graph_address)
+        channels = self._registry.get(graph_address, dict())
+        for pub_id, channel in channels.items():
+            if sub_id in channel.subs:
+                await self.unsubscribe(pub_id, sub_id, graph_address)
 
-        elif not isinstance(graph_address, Address):
-            graph_address = Address(*graph_address)
-
-        channels = self._registry.get(graph_address, None)
-        if channels is None:
-            return
-        
-        for channel in channels.values():
-            channel.unsubscribe(sub_id)
+    async def unsubscribe(
+        self, 
+        pub_id: UUID, 
+        sub_id: UUID, 
+        graph_address: AddressType | None = None
+    ) -> None:
+        graph_address = _ensure_address(graph_address)
+        channel = self._registry[graph_address][pub_id]
+        channel.unsubscribe(sub_id)
+        if len(channel.subs) == 0:
+            channel.close()
+            await channel.wait_closed()
+            logger.debug(f'closed channel {channel.id}: no subs')
 
 
 CHANNELS = _ChannelManager()

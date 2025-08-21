@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
-from .messagechannel import CHANNELS
+from .messagechannel import CHANNELS, _Channel
 from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
@@ -55,6 +55,7 @@ class Publisher:
     _connection_task: "asyncio.Task[None]"
     _channels: Dict[UUID, PubChannelInfo]
     _channel_tasks: Dict[UUID, "asyncio.Task[None]"]
+    _local_channel: _Channel
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -100,7 +101,7 @@ class Publisher:
         writer.write(encode_str(topic))
         address.to_stream(writer)
 
-        result = await reader.readexactly(1)
+        result = await reader.read(1)
         if result != Command.COMPLETE.value:
             logger.warning(f'Could not create publisher {topic=}')
 
@@ -124,7 +125,7 @@ class Publisher:
         pub._connection_task.add_done_callback(on_done)
 
         # Create the local Channel (it shouldn't already exist)
-        await CHANNELS.get(pub.id, graph_address)
+        pub._local_channel = await CHANNELS.get(pub.id, graph_address, create = True)
 
         return pub
 
@@ -209,9 +210,7 @@ class Publisher:
     async def _channel_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        """ Only messagechannel._Channel will connect here """
-
-        cmd = await reader.readexactly(1)
+        cmd = await reader.read(1)
 
         if len(cmd) == 0:
             return
@@ -220,7 +219,7 @@ class Publisher:
             channel_id_str = await read_str(reader)
             channel_id = UUID(channel_id_str)
             writer.write(encode_str(self._shm.name))
-            shm_ok = await reader.readexactly(1) == Command.SHM_OK.value
+            shm_ok = await reader.read(1) == Command.SHM_OK.value
             pid = await read_int(reader)
             info = PubChannelInfo(channel_id, writer, self.id, pid, shm_ok)
             coro = self._handle_channel(info, reader)
@@ -283,9 +282,8 @@ class Publisher:
 
         # Get local channel and put variable there for local tx
         if not self._force_tcp:
-            channel = await CHANNELS.get(self.id, self._graph_address)
-            channel.put(self._msg_id, obj)
-            self._backpressure.lease(channel.id, buf_idx)
+            self._local_channel.put_local(self._msg_id, obj)
+            self._backpressure.lease(self._local_channel.id, buf_idx)
 
         if self._force_tcp or any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
             with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):
