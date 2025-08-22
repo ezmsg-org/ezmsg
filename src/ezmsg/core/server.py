@@ -3,15 +3,14 @@ import asyncio
 import logging
 import socket
 import typing
+import threading
 
 from contextlib import suppress
-from threading import Thread, Event
 
 from .netprotocol import (
     Address,
     AddressType,
     DEFAULT_HOST,
-    close_server,
     close_stream_writer,
     create_socket,
     SERVER_PORT_START_ENV,
@@ -21,19 +20,19 @@ from .netprotocol import (
 logger = logging.getLogger("ezmsg")
 
 
-class ThreadedAsyncServer(Thread):
+class ThreadedAsyncServer(threading.Thread):
     """An asyncio server that runs in a dedicated loop in a separate thread"""
 
-    _server_up: Event
-    _shutdown: Event
+    _server_up: threading.Event
+    _shutdown: threading.Event
 
     _sock: socket.socket
     _loop: asyncio.AbstractEventLoop
 
     def __init__(self) -> None:
         super().__init__(daemon=True)
-        self._server_up = Event()
-        self._shutdown = Event()
+        self._server_up = threading.Event()
+        self._shutdown = threading.Event()
 
     @property
     def address(self) -> Address:

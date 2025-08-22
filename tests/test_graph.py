@@ -30,7 +30,7 @@ async def test_pub_first():
         await asyncio.sleep(0.1)
         await context.connect("a", "b")
         await asyncio.sleep(0.1)
-        await context.publisher("b")
+        await context.subscriber("b")
         await asyncio.sleep(0.1)
 
 
@@ -81,6 +81,19 @@ async def test_graph():
 
         with pytest.raises(CyclicException):
             await context.connect("c", "a")
+
+
+@pytest.mark.asyncio
+async def test_comms_simple():
+    async with GraphContext() as context:
+        b_sub = await context.subscriber("b")
+        await context.connect("a", "b")
+        a_pub = await context.publisher("a")
+        await a_pub.broadcast("HELLO")
+        print('DONE BROADCASTING')
+        msg = await b_sub.recv()
+        assert msg == "HELLO"
+
 
 
 @pytest.mark.asyncio

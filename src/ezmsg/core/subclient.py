@@ -30,9 +30,14 @@ class Subscriber:
     _cur_pubs: typing.Set[UUID]
     _incoming: NotificationQueue
 
-    # This is an optimization to retain a local handle to channels
-    # so that dict lookup and wrapper contextmanager aren't in 
-    # the hotpath - Griff
+    # FIXME: This event allows Subscriber.create to block until
+    # incoming initial connections (UPDATE) has completed. The
+    # logic is confusing and difficult to follow, but this event
+    # serves an important purpose for the time being.
+    _initialized: asyncio.Event
+
+    # NOTE: This is an optimization to retain a local handle to channels
+    # so that dict lookup and wrapper contextmanager aren't in hotpath
     _channels: typing.Dict[UUID, _Channel]
 
     @classmethod
@@ -42,28 +47,30 @@ class Subscriber:
         graph_address: AddressType | None, 
         **kwargs
     ) -> "Subscriber":
-        logger.info(f'attempting to create sub {topic=}')
         reader, writer = await GraphService(graph_address).open_connection()
         writer.write(Command.SUBSCRIBE.value)
         writer.write(encode_str(topic))
+        sub_id_str = await read_str(reader)
+        sub_id = UUID(sub_id_str)
+        
+        sub = cls(sub_id, topic, graph_address, **kwargs)
 
-        result = await reader.read(1)
-        if result != Command.COMPLETE.value:
-            logger.warning(f'Could not create subscriber {topic=}')
-
-        id_str = await read_str(reader)
-
-        sub = cls(UUID(id_str), topic, graph_address, **kwargs)
         sub._graph_task = asyncio.create_task(
             sub._graph_connection(reader, writer),
             name = f'sub-{sub.id}: _graph_connection'
         )
 
-        logger.info(f'created sub {topic=} {sub.id=}')
+        # FIXME: We need to wait for _graph_task to service an UPDATE
+        # then receive a COMPLETE before we return a fully connected
+        # subscriber ready for recv.
+        await sub._initialized.wait()
+
+        logger.debug(f'created sub {sub.id=} {topic=}')
 
         return sub
 
-    def __init__(self, 
+    def __init__(
+        self, 
         id: UUID, 
         topic: str, 
         graph_address: AddressType | None,
@@ -77,6 +84,7 @@ class Subscriber:
         self._cur_pubs = set()
         self._incoming = asyncio.Queue()
         self._channels = dict()
+        self._initialized = asyncio.Event()
 
     def close(self) -> None:
         self._graph_task.cancel()
@@ -95,10 +103,33 @@ class Subscriber:
                 if not cmd:
                     break
 
+                if cmd == Command.COMPLETE.value:
+                    # FIXME: The only time GraphServer will send us a COMPLETE
+                    # is when it is done with Subscriber.create.  Unfortunately
+                    # part of creating the subscriber involves receiving an
+                    # UPDATE with all of the initial connections so that
+                    # messaging resolves as expected immediately after creation
+                    # is completed.  The only way we can service this UPDATE
+                    # is by passing control of the GraphServer's StreamReader
+                    # to this task, which can handle the UPDATE -- mid-creation
+                    # then we receive the COMPLETE in here, set the _initialized
+                    # event, which we wait on in Subscriber.create, releasing the
+                    # block and returning a fully connected/ready subscriber.
+                    # While this currently works, its non-obvious what this
+                    # accomplishes and why its implemented this way.  I just 
+                    # wasted 2 hours removing this seemingly un-necessary event
+                    # to introduce a bug that is only resolved by reintroducing 
+                    # the event.  Some thought should be put into replacing the
+                    # bespoke communication protocol with something a bit more
+                    # standard (JSON RPC?) with a more common/logical pattern
+                    # for creating/handling comms.  We will probably want to 
+                    # keep the bespoke comms for the publisher->channel link
+                    # as that is in the hot path.
+                    self._initialized.set()
+
                 elif cmd == Command.UPDATE.value:
                     update = await read_str(reader)
                     pub_ids = set([UUID(id) for id in update.split(',')]) if update else set()
-                    logger.info(f'{pub_ids=}')
 
                     for pub_id in set(pub_ids - self._cur_pubs):
                         channel = await CHANNELS.register(pub_id, self.id, self._incoming, self._graph_address)

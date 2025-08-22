@@ -77,7 +77,6 @@ class _Channel:
         pub_id: UUID,
         graph_address: AddressType,
     ) -> "_Channel":
-        logger.info(f'attempting to create channel {pub_id=}')
         graph_service = GraphService(graph_address)
 
         graph_reader, graph_writer = await graph_service.open_connection()
@@ -86,6 +85,9 @@ class _Channel:
 
         response = await graph_reader.read(1)
         if response != Command.COMPLETE.value:
+            # FIXME: This will happen if the channel requested connection
+            # to a non-existent (or non-publisher) UUID.  Ideally GraphServer
+            # would tell us what happened rather than drop connection
             raise ValueError(f'failed to create channel {pub_id=}')
         
         id_str = await read_str(graph_reader)
@@ -106,6 +108,8 @@ class _Channel:
 
         result = await reader.read(1)
         if result != Command.COMPLETE.value:
+            # NOTE: The only reason this would happen is if the 
+            # publisher's writer is closed due to a crash or shutdown
             raise ValueError(f'failed to create channel {pub_id=}')
         
         num_buffers = await read_int(reader)
@@ -123,15 +127,19 @@ class _Channel:
             name = f'chan-{chan.id}: _publisher_connection'
         )
 
-        logger.info(f'created channel {pub_id=}')
+        logger.debug(f'created channel {chan.id=} {pub_id=}')
 
         return chan
     
     def close(self) -> None:
+        if self.shm is not None:
+            self.shm.close()
         self._graph_task.cancel()
         self._pub_task.cancel()
 
     async def wait_closed(self) -> None:
+        if self.shm is not None:
+            await self.shm.wait_closed()
         with suppress(asyncio.CancelledError):
             await self._graph_task
         with suppress(asyncio.CancelledError):
@@ -173,6 +181,7 @@ class _Channel:
 
                     if self.shm is not None and self.shm.name != shm_name:
                         self.shm.close()
+                        await self.shm.wait_closed()
                         try:
                             self.shm = await GraphService(self._graph_address).attach_shm(shm_name)
                         except ValueError:
@@ -241,11 +250,12 @@ class _Channel:
                     # first ezmsg run that determines this tradeoff
                     # and decides fastest behavior; then decide 
                     # to cache or not cache depending on this profiling
-                    # for this particular machine
-
+                    # for this particular machine.
+                    # NOTE: We have information about the message size and
+                    # the current fanout at time of RX, so we could
+                    # intelligently copy here!
                     # self.shm.buf_size # Buffer size
                     # len(self.clients) # Channel fanout
-
                     yield obj
 
         self.backpressure.free(client_id, buf_idx)
@@ -254,7 +264,7 @@ class _Channel:
                 ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
                 self._pub_writer.write(ack)
             except (BrokenPipeError, ConnectionResetError):
-                logger.debug(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
+                logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
     def register_client(self, client_id: UUID, queue: NotificationQueue | None = None) -> None:
         self.clients[client_id] = queue 
@@ -306,7 +316,7 @@ class _ChannelManager:
         graph_address: AddressType | None = None
     ) -> _Channel:
         async with self._lock:
-            logger.info(f'register ch {pub_id=} {client_id=}')
+            logger.debug(f'ch {pub_id=} {client_id=} reg DONE')
             graph_address = _ensure_address(graph_address)
             channels = self._registry.get(graph_address, dict())
             channel = channels.get(pub_id, None)
@@ -315,7 +325,6 @@ class _ChannelManager:
                 channels[pub_id] = channel
                 self._registry[graph_address] = channels
             channel.register_client(client_id, queue)
-            logger.info(f'ch {pub_id=} {client_id=} reg DONE')
             return channel
 
     async def unregister(
@@ -325,7 +334,7 @@ class _ChannelManager:
         graph_address: AddressType | None = None
     ) -> None:
         async with self._lock:
-            logger.info(f'unregister ch {pub_id=} {client_id=} unreg')
+            logger.debug(f'ch {pub_id=} {client_id=} unreg')
             graph_address = _ensure_address(graph_address)
             registry = self._registry[graph_address]
             channel = registry[pub_id]
@@ -334,8 +343,7 @@ class _ChannelManager:
                 channel.close()
                 await channel.wait_closed()
                 del registry[pub_id]
-                logger.info(f'closed channel {pub_id}: no clients')
-            logger.info(f'ch {pub_id=} {client_id=} unreg DONE')
+                logger.debug(f'closed channel {pub_id}: no clients')
 
 
 CHANNELS = _ChannelManager()

@@ -82,47 +82,46 @@ class Publisher:
         num_buffers: int = 32,
         **kwargs,
     ) -> "Publisher":
-        # We have to fill in some parts of this class using async
-        logger.info(f'attempting to create pub {topic=}')
-        pub = cls(topic, graph_address, num_buffers, **kwargs)
-
         graph_service = GraphService(graph_address)
         reader, writer = await graph_service.open_connection()
-        pub._shm = await graph_service.create_shm(num_buffers, buf_size)
+        shm = await graph_service.create_shm(num_buffers, buf_size)
 
         start_port = int(
             os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
         )
-        sock = create_socket(host, port, start_port=start_port)
-        address = Address(*sock.getsockname())
 
-        server = await asyncio.start_server(pub._channel_connect, sock=sock)
-        
+        sock = create_socket(host, port, start_port=start_port)
+
         writer.write(Command.PUBLISH.value)
         writer.write(encode_str(topic))
-        address.to_stream(writer)
 
-        result = await reader.read(1)
+        pub_id = UUID(await read_str(reader))
+        pub = cls(pub_id, topic, shm, graph_address, num_buffers, **kwargs)
+
+        server = await asyncio.start_server(pub._channel_connect, sock=sock)
+        pub._connection_task = asyncio.create_task(
+            pub._serve_channels(server), 
+            name = f'pub-{pub.id}: {pub.topic}'
+        )
+
+        # Notify GraphServer that our server is up
+        channel_server_address = Address(*sock.getsockname())
+        channel_server_address.to_stream(writer)
+        result = await reader.read(1) # channels connect
         if result != Command.COMPLETE.value:
             logger.warning(f'Could not create publisher {topic=}')
 
-        pub.id = UUID(await read_str(reader))
-
+        # Pass off graph connection keep-alive to publisher task 
         pub._graph_task = asyncio.create_task(
             pub._graph_connection(reader, writer),
             name = f'pub-{pub.id}: _graph_connection'
-        )
-
-        pub._connection_task = asyncio.create_task(
-            pub._serve_channels(server), 
-            name = f'pub-{pub.id}: pub.log_name'
         )
 
         pub._local_channel = await CHANNELS.register(
             pub.id, pub.id, None, pub._graph_address
         )
 
-        logger.info(f'created pub {topic=} {pub.id=}')
+        logger.debug(f'created pub {pub.id=} {topic=}')
 
         return pub
     
@@ -138,16 +137,19 @@ class Publisher:
 
     def __init__(
         self,
+        id: UUID,
         topic: str,
+        shm: SHMContext,
         graph_address: AddressType | None = None,
         num_buffers: int = 32,
         start_paused: bool = False,
         force_tcp: bool = False,
     ) -> None:
         """DO NOT USE this constructor to make a Publisher; use `create` instead"""
+        self.id = id
         self.pid = os.getpid()
         self.topic = topic
-
+        self._shm = shm
         self._msg_id = 0
         self._channels = dict()
         self._channel_tasks = dict()

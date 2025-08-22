@@ -117,6 +117,14 @@ class GraphServer(ThreadedAsyncServer):
                 writer.write(Command.COMPLETE.value)
                 writer.write(encode_str(shm_info.shm.name))
 
+                # NOTE: SHMContexts are like GraphClients in that their
+                # lifetime is bound to the lifetime of this connection
+                # but rather than the early return that we have with 
+                # GraphClients, we just await the lease task.
+                # This may be a more readable pattern?
+                # NOTE: With the current shutdown pattern, we cancel
+                # the lease task then await it.  When we cancel the lease
+                # task this resolves then it gets awaited in shutdown.
                 with suppress(asyncio.CancelledError):
                     await shm_info.lease(reader, writer)
 
@@ -129,7 +137,7 @@ class GraphServer(ThreadedAsyncServer):
                 try:
                     pub_info = self.clients[pub_id]
                     if isinstance(pub_info, PublisherInfo):
-                        # assemble an address the channel should be able to resolve
+                        # Advertise an address the channel should be able to resolve
                         port = pub_info.address.port
                         iface = pub_info.writer.transport.get_extra_info("peername")[0]
                         pub_addr = Address(iface, port) 
@@ -139,21 +147,26 @@ class GraphServer(ThreadedAsyncServer):
                 except KeyError:
                     logger.warning(f"Connecting channel requested non-existent publisher {pub_id=}")
 
-                if pub_addr is not None:
-                    writer.write(Command.COMPLETE.value)
-                    writer.write(encode_str(str(channel_id)))
-                    pub_addr.to_stream(writer)
-
-                    info = ChannelInfo(channel_id, writer, pub_id)
-                    self.clients[channel_id] = info
-                    self._client_tasks[channel_id] = asyncio.create_task(
-                        self._handle_client(channel_id, reader, writer)
-                    )
-                else:
-                    # Error, drop connection
+                if pub_addr is None:
+                    # FIXME: Channel should not be created; but it feels like we should
+                    # have a better communication protocol to tell the channel what the 
+                    # error was and deliver a better experience from the client side.
+                    # for now, drop connection
                     await close_stream_writer(writer)
+                    return 
 
-                # Created a client; we must return early to avoid closing writer
+                writer.write(Command.COMPLETE.value)
+                writer.write(encode_str(str(channel_id)))
+                pub_addr.to_stream(writer)
+
+                info = ChannelInfo(channel_id, writer, pub_id)
+                self.clients[channel_id] = info
+                self._client_tasks[channel_id] = asyncio.create_task(
+                    self._handle_client(channel_id, reader, writer)
+                )
+
+                # NOTE: Created a client, must return early 
+                # to avoid closing writer
                 return
 
             else:
@@ -166,15 +179,14 @@ class GraphServer(ThreadedAsyncServer):
                         client_id = uuid1()
                         topic = await read_str(reader)
 
+                        writer.write(encode_str(str(client_id)))
+
                         if req == Command.SUBSCRIBE.value:
                             info = SubscriberInfo(client_id, writer, topic)
                             self.clients[client_id] = info
                             self._client_tasks[client_id] = asyncio.create_task(
                                 self._handle_client(client_id, reader, writer)
                             )
-
-                            writer.write(Command.COMPLETE.value)
-                            writer.write(encode_str(str(client_id)))
 
                             await self._notify_subscriber(info)
 
@@ -185,17 +197,14 @@ class GraphServer(ThreadedAsyncServer):
                             self._client_tasks[client_id] = asyncio.create_task(
                                 self._handle_client(client_id, reader, writer)
                             )
-                            
-                            writer.write(Command.COMPLETE.value)
-                            writer.write(encode_str(str(client_id)))
 
-                            # Wait until pub's channel server is up before
-                            # notifying subs
-                            
                             for sub in self._downstream_subs(info.topic):
                                 await self._notify_subscriber(sub)
 
-                        # Created a client, must return early to avoid closing writer
+                        writer.write(Command.COMPLETE.value)
+
+                        # NOTE: Created a client, must return early 
+                        # to avoid closing writer
                         return
 
                     elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
@@ -250,6 +259,11 @@ class GraphServer(ThreadedAsyncServer):
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("GraphServer connection fail mid-command")
 
+        # NOTE: This prevents code repetition for many graph server commands, but
+        # when we create GraphClients, their lifecycle is bound to the lifecycle of 
+        # this connection.  We do NOT want to close the stream writer if we have 
+        # created a GraphClient, which requires an early return.  Perhaps a different
+        # communication protocol could resolve this
         await close_stream_writer(writer)
 
     async def _handle_client(

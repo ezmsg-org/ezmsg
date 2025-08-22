@@ -126,7 +126,7 @@ class SHMContext:
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
             await self._graph_task
-
+            
     @property
     def name(self) -> str:
         return self._shm.name
