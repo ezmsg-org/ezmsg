@@ -300,7 +300,6 @@ def _ensure_address(address: AddressType | None) -> Address:
 
 class _ChannelManager:
     
-    _lock: asyncio.Lock
     _registry: typing.Dict[Address, typing.Dict[UUID, _Channel]]
 
     def __init__(self):
@@ -315,17 +314,16 @@ class _ChannelManager:
         queue: NotificationQueue | None = None, 
         graph_address: AddressType | None = None
     ) -> _Channel:
-        async with self._lock:
-            logger.debug(f'ch {pub_id=} {client_id=} reg DONE')
-            graph_address = _ensure_address(graph_address)
-            channels = self._registry.get(graph_address, dict())
-            channel = channels.get(pub_id, None)
-            if channel is None:
-                channel = await _Channel.create(pub_id, graph_address)
-                channels[pub_id] = channel
-                self._registry[graph_address] = channels
-            channel.register_client(client_id, queue)
-            return channel
+        logger.debug(f'ch {pub_id=} {client_id=} reg DONE')
+        graph_address = _ensure_address(graph_address)
+        channels = self._registry.get(graph_address, dict())
+        channel = channels.get(pub_id, None)
+        if channel is None:
+            channel = await _Channel.create(pub_id, graph_address)
+            channels[pub_id] = channel
+            self._registry[graph_address] = channels
+        channel.register_client(client_id, queue)
+        return channel
 
     async def unregister(
         self, 
@@ -333,17 +331,16 @@ class _ChannelManager:
         client_id: UUID, 
         graph_address: AddressType | None = None
     ) -> None:
-        async with self._lock:
-            logger.debug(f'ch {pub_id=} {client_id=} unreg')
-            graph_address = _ensure_address(graph_address)
-            registry = self._registry[graph_address]
-            channel = registry[pub_id]
-            channel.unregister_client(client_id)
-            if len(channel.clients) == 0:
-                channel.close()
-                await channel.wait_closed()
-                del registry[pub_id]
-                logger.debug(f'closed channel {pub_id}: no clients')
+        logger.debug(f'ch {pub_id=} {client_id=} unreg')
+        graph_address = _ensure_address(graph_address)
+        registry = self._registry[graph_address]
+        channel = registry[pub_id]
+        channel.unregister_client(client_id)
+        if len(channel.clients) == 0:
+            channel.close()
+            await channel.wait_closed()
+            del registry[pub_id]
+            logger.debug(f'closed channel {pub_id}: no clients')
 
 
 CHANNELS = _ChannelManager()
