@@ -11,3 +11,6 @@ For a more in-depth exploration of each aspect, please consult the `reference do
     ezmsg
     axisarray
     sigproc
+    about-original
+
+don't forget to delete about-original.rst after you create ezmsg.rst

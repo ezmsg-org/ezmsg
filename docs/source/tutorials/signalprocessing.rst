@@ -3,7 +3,7 @@ Leveraging ezmsg For Signal Processing
 
 `ezmsg` is a powerful framework for building signal processing applications. It provides a flexible and extensible architecture that allows users to create custom signal processors, integrate with ezmsg Units, and build complex processing pipelines.
 
-We will explore how to do this by recreating the `downsample` signal processor unit. It will demonstrate how to create a signal processor, convert it to an ezmsg Unit, and use it in a processing pipeline.
+We will explore how to do this by recreating the `DownSample` signal processor unit. It will demonstrate how to create a signal processor, convert it to an ezmsg Unit, and use it in a processing pipeline.
 
 .. tip:: downsampling is a common signal processing operation that reduces the sampling rate of a signal by keeping only every nth sample. This is useful for reducing the amount of data to be processed, especially in real-time applications.
 
@@ -13,7 +13,77 @@ We will explore how to do this by recreating the `downsample` signal processor u
 
 We make use of the following decision tree to choose the appropriate signal processing class:
 
-include decision tree here
+.. graphviz:: signal_processor_decision_tree
+
+    digraph signal_processor_decision_tree {
+        node [shape=box, style="rounded,filled", fillcolor="#f0f0f0", fontname="Arial"];
+        edge [fontname="Arial"];
+
+        AMP [label="Multiple Processors?"];
+        ARI [label="Receives Input?"];
+        ACB [label="Single Chain / Branching?"];
+        P [label="Producer"];
+        APO [label="Produces Output?"];
+        NBC [label="no base class"];
+        ACRI [label="Receives Input?"];
+        C [label="Consumer"];
+        T [label="Transformer"];
+        PS [label="Stateful?"];
+        CS [label="Stateful?"];
+        TS [label="Stateful?"];
+        TSA [label="Adaptive?"];
+        TSAF [label="Async First?"];
+
+        AMP -> ARI [label="no"];
+        AMP -> ACB [label="yes"];
+        ARI -> P [label="no"];
+        ARI -> APO [label="yes"];
+        ACB -> NBC [label="branching"];
+        ACB -> ACRI [label="single chain"];
+        P -> PS;
+        APO -> C [label="no"];
+        APO -> T [label="yes"];
+        ACRI -> CompositeProducer [label="no"];
+        ACRI -> CompositeProcessor [label="yes"];
+        PS -> BaseProducer [label="no"];
+        PS -> BaseStatefulProducer [label="yes"];
+        C -> CS;
+        T -> TS;
+        CS -> BaseConsumer [label="no"];
+        CS -> BaseStatefulConsumer [label="yes"];
+        TS -> BaseTransformer [label="no"];
+        TS -> TSA [label="yes"];
+        TSA -> TSAF [label="no"];
+        TSA -> BaseAdaptiveTransformer [label="yes"];
+        TSAF -> BaseStatefulTransformer [label="no"];
+        TSAF -> BaseAsyncTransformer [label="yes"];
+    }
+.. flowchart TD
+..     AMP{Multiple Processors?};
+..     AMP -->|no| ARI{Receives Input?};
+..     AMP -->|yes| ACB{Single Chain / Branching?}
+..     ARI -->|no| P(Producer);
+..     ARI -->|yes| APO{Produces Output?};
+..     ACB -->|branching| NBC[no base class];
+..     ACB -->|single chain| ACRI{Receives Input?};
+..     P --> PS{Stateful?};
+..     APO -->|no| C(Consumer);
+..     APO -->|yes| T(Transformer);
+..     ACRI -->|no| CompositeProducer;
+..     ACRI -->|yes| CompositeProcessor;
+..     PS -->|no| BaseProducer;
+..     PS -->|yes| BaseStatefulProducer;
+..     C --> CS{Stateful?};
+..     T --> TS{Stateful?};
+..     CS -->|no| BaseConsumer;
+..     CS -->|yes| BaseStatefulConsumer;
+..     TS -->|no| BaseTransformer;
+..     TS -->|yes| TSA{Adaptive?};
+..     TSA -->|no| TSAF{Async First?};
+..     TSA -->|yes| BaseAdaptiveTransformer;
+..     TSAF -->|no| BaseStatefulTransformer;
+..     TSAF -->|yes| BaseAsyncTransformer;
+
 
 downsample is a bla bla, so we will create a . 
 
