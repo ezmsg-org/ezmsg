@@ -9,11 +9,11 @@ The message's data are expected to be a numpy array.
 Note for offline processing: some generators might yield valid :class:`AxisArray` messages with ``.data`` size of 0.
 This may occur when the generator receives inadequate data to produce a valid output, such as when windowing or buffering.
 
-.. ezmsg.sigproc.activation
-.. -----------------------------
+ezmsg.sigproc.activation
+-----------------------------
 
-.. .. automodule:: ezmsg.sigproc.activation
-..     :members:
+.. automodule:: ezmsg.sigproc.activation
+    :members:
 
 
 .. ezmsg.sigproc.affinetransform

@@ -13,7 +13,8 @@ We will explore how to do this by recreating the `DownSample` signal processor u
 
 We make use of the following decision tree to choose the appropriate signal processing class:
 
-.. graphviz:: signal_processor_decision_tree
+.. graphviz::
+    :align: center
 
     digraph signal_processor_decision_tree {
         node [shape=box, style="rounded,filled", fillcolor="#f0f0f0", fontname="Arial"];
@@ -84,8 +85,9 @@ We make use of the following decision tree to choose the appropriate signal proc
 ..     TSAF -->|no| BaseStatefulTransformer;
 ..     TSAF -->|yes| BaseAsyncTransformer;
 
+In our case, we are creating a single signal processor that receives input and produces output. The decision tree indicates that we will be using a transformer-type base class. To continue, we need to determine if the processor is stateful, adaptive and async first or not. For this we need to identify what we consider the settings (configuration) for the transformer and what we consider the state. 
+Moreover it is stateful as we need to keep track of the downsampling factor and the index of the next message's first sample. It is not adaptive Therefore, we will use the `BaseTransformer` class as our base class for the `DownSample` signal processor.
 
-downsample is a bla bla, so we will create a . 
 
 
 |ezmsg_logo_small| Creating the downsample signal processor

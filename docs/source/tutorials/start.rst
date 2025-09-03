@@ -128,6 +128,7 @@ Running the tests ensures everything is working correctly.
   python -m pytest -v tests
 
 .. _updating-ezmsg:
+
 |ezmsg_logo_small| How to update ezmsg
 ***************************************
 
@@ -183,7 +184,7 @@ To install an extension, you can use pip:
 
    pip install ezmsg[extension_name]
 
-For more information on available extensions, please refer to the :doc:`Extensions page <../extensions>`.
+For more information on available extensions, please refer to the :doc:`Extensions page <../extensions/content-extensions>`.
 
 
 |ezmsg_logo_small| Ready to build your first ezmsg pipeline?

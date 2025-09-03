@@ -169,6 +169,7 @@ First, define the member Units. Then use ``configure()`` to apply settings to th
 .. note:: The ``configure()`` method is optional. If you do not need to apply settings to the member Units, you can omit it. The ``network()`` method is also optional, but it is required if you want to connect the Units together in a specific way. If you do not provide a ``network()`` method, the Units will not be connected and will not communicate with each other.
 
 .. _creating-pipeline:
+
 |ezmsg_logo_small| Creating a pipeline
 ***************************************
 

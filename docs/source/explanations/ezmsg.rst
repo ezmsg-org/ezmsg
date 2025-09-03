@@ -53,6 +53,7 @@ Command Line Interface
 The ``ezmsg`` command line interface exposes extra tools to manage a pipeline that is running in the background on a machine. Run 
 
 .. code-block:: python
+
     ezmsg -h 
 
 to see all the available options.

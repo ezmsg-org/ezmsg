@@ -37,6 +37,10 @@ master_doc = "index"
 # When set to True, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
 
+# -- Autodoc configuration ------------------------------
+autodoc_mock_imports = ["scipy.special"]
+
+
 # -- Intersphinx configuration --------------------------
 
 intersphinx_mapping = {
@@ -46,8 +50,6 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy/reference", None),
 }
 intersphinx_disabled_domains = ["std"]
-
-
 
 # -- Options for HTML output -----------------------------
 

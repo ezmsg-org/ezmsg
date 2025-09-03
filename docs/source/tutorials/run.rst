@@ -9,7 +9,7 @@ The `GraphServer` is coupled with a **`SharedMemoryServer`** that allows for eff
 
 The reverse is true too: you can run ezmsg instance (start a `GraphServer`) without a pipeline, but until you attach an ezmsg pipeline nothing interesting will happen.
 
-.. note:: For this tutorial, you will need to have :doc:`ezmsg installed <start>` and have an :doc:`ezmsg pipeline` ready to run.
+.. note:: For this tutorial, you will need to have :doc:`ezmsg installed <start>` and have an :doc:`ezmsg pipeline <pipeline>` ready to run.
 
 For the sake of this tutorial, we recreate the script from the :doc:`pipeline` tutorial here. Copy it into a file called `tutorial_pipeline.py` in the root of the ezmsg repository.
 
@@ -148,11 +148,6 @@ Now you can run your pipeline script from a **new** terminal window.
    python3 tutorial_pipeline.py
 
 
-
-
-.. note: Run the script from a separate terminal window to keep the ezmsg server running in the background.
-
-
 Step 3. Shutdown ezmsg instance
 =================================
 
@@ -186,9 +181,10 @@ then ezmsg will output a **Graphviz** representation of the pipeline to the term
 
 .. note:: You can copy this output and paste it into a Graphviz live editor, such as `<https://dreampuf.github.io/GraphvizOnline/>`_, to view the pipeline graphically.
 
-.. warning:: This command and the ones described in the :ref:`mermaid-section` below will only output the pipeline graph if the ezmsg system is running and has a pipeline connected to it. If you run this command when the pipeline is finished or not running, you will not get any output. Our example is so simple that it will finish very quickly, so in order to visualise the graph maybe change the `iterations` in the `CountSettings` to a larger number, e.g. 100000, so that you have time to run the command and see the output. 
+.. warning:: This command and the ones described in the :ref:`mermaid-section` section below will only output the pipeline graph if the ezmsg system is running and has a pipeline connected to it. If you run this command when the pipeline is finished or not running, you will not get any output. Our example is so simple that it will finish very quickly, so in order to visualise the graph maybe change the `iterations` in the `CountSettings` to a larger number, e.g. 100000, so that you have time to run the command and see the output.
 
 .. _mermaid-section:
+
 Mermaid visualisation
 ===========================
 
