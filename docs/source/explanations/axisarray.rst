@@ -69,3 +69,7 @@ See Also
 #. :doc: `../tutorials/start`
 #. :doc: `../how-tos/basics/main`
 #. :doc: `../how-tos/pipeline/main`
+
+.. |ezmsg_logo_small| image:: ../_static/_images/ezmsg_logo.png
+  :width: 40
+  :alt: ezmsg logo

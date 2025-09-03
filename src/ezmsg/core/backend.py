@@ -193,19 +193,19 @@ def run(
       will create a directed acyclic graph using the contents of ``connections``.
 
     :param components: Dictionary mapping component names to Component objects. The components
-    are the nodes in the ezmsg (directed acyclic) graph.
+        are the nodes in the ezmsg (directed acyclic) graph.
     :type components: typing.Optional[typing.Mapping[str, Component]]
     :param root_name: Optional root name for the component hierarchy
     :type root_name: typing.Optional[str]
     :param connections: Network definition specifying stream connections between components. These
-    are the edges in the ezmsg graph, connecting OutputStreams to InputStreams.
+        are the edges in the ezmsg graph, connecting OutputStreams to InputStreams.
     :type connections: typing.Optional[NetworkDefinition]
     :param process_components: Collection of components that should run in separate processes
     :type process_components: typing.Optional[typing.Collection[Component]]
     :param backend_process: Backend process class to use for execution. Currently under development.
     :type backend_process: typing.Type[BackendProcess]
     :param graph_address: Address (hostname and port) of graph server which ezmsg should connect to.
-    If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
+        If not defined, ``ezmsg`` will start a new graph server at 127.0.0.1:25978.
     :type graph_address: typing.Optional[AddressType]
     :param force_single_process: Whether to force all components into a single process
     :type force_single_process: bool

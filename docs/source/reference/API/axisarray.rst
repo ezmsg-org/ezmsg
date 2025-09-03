@@ -3,6 +3,6 @@ AxisArray module
 
 (under construction)
 
-.. autoclass:: AxisArray
+.. automodule:: ezmsg.util.messages.axisarray
    :show-inheritance:
    :members:

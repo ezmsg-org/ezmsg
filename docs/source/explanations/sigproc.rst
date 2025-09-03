@@ -44,3 +44,7 @@ See Also
 1. `Signal Processor Documentation <sigproc_processor_documentation>`_
 #. `Signal Processing Tutorial <../../tutorials/signalprocessing.html>`_
 #. `Signal Processing HOW TOs <../../how-tos/signalprocessing/main.html>`_
+
+.. |ezmsg_logo_small| image:: ../_static/_images/ezmsg_logo.png
+  :width: 40
+  :alt: ezmsg logo
