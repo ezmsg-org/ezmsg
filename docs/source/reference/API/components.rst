@@ -49,3 +49,9 @@ Facilitates a flow of ``Messages`` into or out of a ``Component``.
 
 .. autoclass:: OutputStream
 
+Custom Exceptions
+-----------------
+
+.. autoclass:: Complete
+
+.. autoclass:: NormalTermination

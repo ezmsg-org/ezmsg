@@ -19,9 +19,3 @@ Terminate
    :show-inheritance:
    :members:
 
-Custom Exceptions
------------------
-
-.. autoclass:: Complete
-
-.. autoclass:: NormalTermination
