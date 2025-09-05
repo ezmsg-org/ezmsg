@@ -13,21 +13,21 @@ Inspiration for the design of ``AxisArray`` comes from various sources, includin
 (include list here)
 
 
-****************************
-Description
-****************************
+|ezmsg_logo_small| Description
+*********************************
 
-providing a flexible and extensible framework for signal processing tasks makes it 
+providing a flexible and extensible framework for signal processing tasks makes it
+
 - easier for users to create custom signal processors
 - easier for users to integrate with ezmsg and create ezmsg Units 
 - easier to create processing pipelines in the ``ezmsg`` ecosystem
 - allows standalone use outside of an ezmsg context
 
-**********************************************
-Recommended Use
+
+|ezmsg_logo_small| Recommended Use
 **********************************************
 
-=======================
+
 When to use AxisArray
 =======================
 
@@ -39,12 +39,13 @@ Can also be used as a trigger for changing state or settings by sending specific
 
 Not necessary if sending simple data types like integers, floats, or strings. In such cases, using the python formats is more efficient and likely easier to use.
 
-==========================
-methods
-==========================
+
+`AxisArray` utility methods
+=============================
 
 there are many built in methods for manipulating AxisArray objects, such as:
 (replace with actual methods from AxisArray class)
+
 - `replace`: Modify the data within the AxisArray.
 - `filter`: Apply a filter to the data.
 - `transform`: Apply a transformation to the data.
@@ -52,15 +53,15 @@ there are many built in methods for manipulating AxisArray objects, such as:
 
 
 
-=================================
+
 How to return an AxisArray object
 =================================
-To return an ``AxisArray`` object, you can create an instance of the ``AxisArray`` class and populate it with your data. Here is a simple example:
 
-use `replace` to modify the data as needed before returning the ``AxisArray`` object.
+To return an ``AxisArray`` object, you can create an instance of the ``AxisArray`` class and populate it with your data. The preferred way is to use ``replace`` to modify the data as needed before returning the ``AxisArray`` object.
 
-********************************
-See Also
+(include code block here)
+
+|ezmsg_logo_small| See Also
 ********************************
 
 1. `Ezmsg Documentation <ezmsg_documentation>`_

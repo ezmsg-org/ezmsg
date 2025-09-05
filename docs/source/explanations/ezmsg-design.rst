@@ -66,6 +66,12 @@ Once we have created the individual `Unit`\ s, we can connect them together to f
     )
     ez.run(components = components, connections = connections)
 
+What we have done is:
+
+- created a dictionary of components, where the keys are the names of the components and the values are instances of the `Unit`\ s (in this case, `Count`, `AddOne` and `PrintValue`)
+- created a tuple of connections, where each connection is a tuple of the output stream of one component and the input stream of another component
+- called ``ez.run()`` with the components and connections to start the pipeline
+
 
 |ezmsg_logo_small| Backend Implementation
 ******************************************
@@ -234,7 +240,7 @@ These are the available decorators and their function:
 |ezmsg_logo_small| AxisArray
 *********************************
 
-Our preferred Message format is `AxisArray`. See `:doc:`AxisArray <axisarray>` for more information.
+Our preferred Message format is `AxisArray`. See :doc:`axisarray` for more information.
 
 
 
