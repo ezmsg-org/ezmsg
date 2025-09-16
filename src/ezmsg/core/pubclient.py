@@ -290,8 +290,8 @@ class Publisher:
 
         # Get local channel and put variable there for local tx
         if not self._force_tcp:
-            self._local_channel.put_local(self._msg_id, obj)
-            self._backpressure.lease(self._local_channel.id, buf_idx)
+            if self._local_channel.put_local(self._msg_id, obj):
+                self._backpressure.lease(self._local_channel.id, buf_idx)
 
         if self._force_tcp or any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
             with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):

@@ -209,16 +209,25 @@ class _Channel:
 
     def _notify_clients(self, msg_id: int) -> None:
         for client_id, queue in self.clients.items():
-            if queue is None: continue
+            if queue is None: continue # queue is none if this is the pub
             self.backpressure.lease(client_id, msg_id % self.num_buffers)
             queue.put_nowait((self.pub_id, msg_id))
 
-    def put_local(self, msg_id: int, msg: typing.Any) -> None:
-        """put an object into cache (should only be used by Publishers)"""
+    def put_local(self, msg_id: int, msg: typing.Any) -> bool:
+        """
+        put an object into cache (should only be used by Publishers)
+        returns true if any clients were notified
+        """
+        self._notify_clients(msg_id)
+
+        # if buffer is still available after notify, no subs were notified here
         buf_idx = msg_id % self.num_buffers
+        if self.backpressure.available(buf_idx):
+            return False
+        
         self.cache_id[buf_idx] = msg_id
         self.cache[buf_idx] = msg
-        self._notify_clients(msg_id)
+        return True
 
     @contextmanager
     def get(self, msg_id: int, client_id: UUID) -> typing.Generator[typing.Any, None, None]:
@@ -307,6 +316,23 @@ class _ChannelManager:
         self._registry = {default_address: dict()}
         self._lock = asyncio.Lock()
 
+    async def get(
+        self,
+        pub_id: UUID,
+        graph_address: AddressType | None = None,
+        create: bool = False
+    ) -> _Channel:
+        graph_address = _ensure_address(graph_address)
+        channels = self._registry.get(graph_address, dict())
+        channel = channels.get(pub_id, None)
+        if create and channel is None:
+            channel = await _Channel.create(pub_id, graph_address)
+            channels[pub_id] = channel
+            self._registry[graph_address] = channels
+        if channel is None:
+            raise KeyError("channel does not exist")
+        return channel
+
     async def register(
         self, 
         pub_id: UUID, 
@@ -314,14 +340,7 @@ class _ChannelManager:
         queue: NotificationQueue | None = None, 
         graph_address: AddressType | None = None
     ) -> _Channel:
-        logger.debug(f'ch {pub_id=} {client_id=} reg DONE')
-        graph_address = _ensure_address(graph_address)
-        channels = self._registry.get(graph_address, dict())
-        channel = channels.get(pub_id, None)
-        if channel is None:
-            channel = await _Channel.create(pub_id, graph_address)
-            channels[pub_id] = channel
-            self._registry[graph_address] = channels
+        channel = await self.get(pub_id, graph_address, create = True)
         channel.register_client(client_id, queue)
         return channel
 
@@ -331,14 +350,14 @@ class _ChannelManager:
         client_id: UUID, 
         graph_address: AddressType | None = None
     ) -> None:
-        logger.debug(f'ch {pub_id=} {client_id=} unreg')
-        graph_address = _ensure_address(graph_address)
-        registry = self._registry[graph_address]
-        channel = registry[pub_id]
+        channel = await self.get(pub_id, graph_address)
         channel.unregister_client(client_id)
+
         if len(channel.clients) == 0:
             channel.close()
             await channel.wait_closed()
+            graph_address = _ensure_address(graph_address)
+            registry = self._registry[graph_address]
             del registry[pub_id]
             logger.debug(f'closed channel {pub_id}: no clients')
 
