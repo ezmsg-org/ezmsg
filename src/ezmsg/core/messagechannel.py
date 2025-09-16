@@ -58,7 +58,7 @@ class _Channel:
         pub_id: UUID, 
         num_buffers: int, 
         shm: SHMContext | None,
-        graph_address: AddressType | None = None
+        graph_address: AddressType | None
     ) -> None:
         self.id = id
         self.pub_id = pub_id
@@ -114,7 +114,7 @@ class _Channel:
         
         num_buffers = await read_int(reader)
         
-        chan = cls(UUID(id_str), pub_id, num_buffers, shm)
+        chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
 
         chan._graph_task = asyncio.create_task(
             chan._graph_connection(graph_reader, graph_writer),

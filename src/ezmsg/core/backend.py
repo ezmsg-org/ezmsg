@@ -225,6 +225,11 @@ def run(
             create_graph_context(), loop
         ).result()
 
+        if graph_context._graph_server is None:
+            logger.info(f'Connected to GraphServer @ {graph_context.graph_address}')
+        else:
+            logger.info(f'Spawned LOCAL GraphServer @ {graph_context.graph_address}')
+
         execution_context.create_processes(
             graph_address=graph_context.graph_address,
             backend_process=backend_process
