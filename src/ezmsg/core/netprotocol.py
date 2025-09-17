@@ -204,13 +204,14 @@ def create_socket(
         port = start_port
         while port <= max_port:
             if port not in ignore_ports:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     # setting REUSEADDR during portscan can lead to race conditions during bind on Linux
                     sock.bind((host, port))
                     bound = True
                     break
                 except OSError:
+                    sock.close()
                     pass
 
             port += 1
