@@ -197,6 +197,7 @@ def create_socket(
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # set REUSEADDR if a port is explicitly requested; leads to quick server restart on same port
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock.bind((host, port))
 
     else:
@@ -207,6 +208,7 @@ def create_socket(
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 try:
                     # setting REUSEADDR during portscan can lead to race conditions during bind on Linux
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     sock.bind((host, port))
                     bound = True
                     break
