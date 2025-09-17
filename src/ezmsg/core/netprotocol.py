@@ -309,6 +309,7 @@ def create_socket(
     :raises IOError: If no available ports can be found in the specified range.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     if host is None:
         host = DEFAULT_HOST
