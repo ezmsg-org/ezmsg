@@ -20,7 +20,6 @@ _std_register = resource_tracker.register
 
 """    
     ezmsg shared memory format:
-    TODO: [UUID]
     [ UINT64 -- n_buffers ]
     [ UINT64 -- buf_size ]
     [ buf_size - 16 -- buf0 data_block ]
@@ -74,7 +73,7 @@ class SHMContext:
         with self._shm.buf[8:16] as buf_size_mem:
             self.buf_size = bytes_to_uint(buf_size_mem)
 
-        buf_starts = [buf_idx * (self.buf_size + 16) for buf_idx in range(self.num_buffers)]
+        buf_starts = [buf_idx * self.buf_size for buf_idx in range(self.num_buffers)]
         buf_stops = [buf_start + self.buf_size for buf_start in buf_starts]
         buf_data_block_starts = [buf_start + 16 for buf_start in buf_starts]
 
