@@ -189,12 +189,13 @@ def create_socket(
     max_port: int = 65535,
     ignore_ports: typing.List[int] = RESERVED_PORTS,
 ) -> socket.socket:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     if host is None:
         host = DEFAULT_HOST
 
     if port is not None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # set REUSEADDR if a port is explicitly requested; leads to quick server restart on same port
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
 
@@ -204,6 +205,8 @@ def create_socket(
         while port <= max_port:
             if port not in ignore_ports:
                 try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    # setting REUSEADDR during portscan can lead to race conditions during bind on Linux
                     sock.bind((host, port))
                     bound = True
                     break
