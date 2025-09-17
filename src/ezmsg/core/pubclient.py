@@ -121,7 +121,7 @@ class Publisher:
             pub.id, pub.id, None, pub._graph_address
         )
 
-        logger.debug(f'created pub {pub.id=} {topic=}')
+        logger.debug(f'created pub {pub.id=} {topic=} {channel_server_address=}')
 
         return pub
     

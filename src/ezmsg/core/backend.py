@@ -226,7 +226,10 @@ def run(
         ).result()
 
         if graph_context._graph_server is None:
-            logger.info(f'Connected to GraphServer @ {graph_context.graph_address}')
+            address = graph_context.graph_address
+            if address is None:
+                address = GraphService.default_address()
+            logger.info(f'Connected to GraphServer @ {address}')
         else:
             logger.info(f'Spawned LOCAL GraphServer @ {graph_context.graph_address}')
 

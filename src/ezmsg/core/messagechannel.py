@@ -127,7 +127,7 @@ class _Channel:
             name = f'chan-{chan.id}: _publisher_connection'
         )
 
-        logger.debug(f'created channel {chan.id=} {pub_id=}')
+        logger.debug(f'created channel {chan.id=} {pub_id=} {pub_address=}')
 
         return chan
     
