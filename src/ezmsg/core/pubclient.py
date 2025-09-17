@@ -86,18 +86,16 @@ class Publisher:
         reader, writer = await graph_service.open_connection()
         shm = await graph_service.create_shm(num_buffers, buf_size)
 
-        start_port = int(
-            os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
-        )
-
-        sock = create_socket(host, port, start_port=start_port)
-
         writer.write(Command.PUBLISH.value)
         writer.write(encode_str(topic))
 
         pub_id = UUID(await read_str(reader))
         pub = cls(pub_id, topic, shm, graph_address, num_buffers, **kwargs)
 
+        start_port = int(
+            os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
+        )
+        sock = create_socket(host, port, start_port=start_port)
         server = await asyncio.start_server(pub._channel_connect, sock=sock)
         pub._connection_task = asyncio.create_task(
             pub._serve_channels(server), 
