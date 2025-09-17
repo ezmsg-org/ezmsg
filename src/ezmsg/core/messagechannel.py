@@ -281,12 +281,12 @@ class _Channel:
     def unregister_client(self, client_id: UUID) -> None:
         queue = self.clients[client_id]
 
+        # queue is only 'None' if this client is a local publisher
         if queue is not None:
             for _ in range(queue.qsize()):
                 pub_id, msg_id = queue.get_nowait()
-                if pub_id == self.pub_id:
-                    continue
-                queue.put_nowait((pub_id, msg_id))
+                if pub_id != self.pub_id:
+                    queue.put_nowait((pub_id, msg_id))
 
             self.backpressure.free(client_id)
 
@@ -323,14 +323,14 @@ class _ChannelManager:
         create: bool = False
     ) -> _Channel:
         graph_address = _ensure_address(graph_address)
-        channels = self._registry.get(graph_address, dict())
-        channel = channels.get(pub_id, None)
+        channel = self._registry.get(graph_address, dict()).get(pub_id, None)
         if create and channel is None:
             channel = await _Channel.create(pub_id, graph_address)
+            channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels
         if channel is None:
-            raise KeyError("channel does not exist")
+            raise KeyError(f"channel {pub_id=} {graph_address=} does not exist")
         return channel
 
     async def register(

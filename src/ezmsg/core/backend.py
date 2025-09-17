@@ -231,7 +231,7 @@ def run(
                 address = GraphService.default_address()
             logger.info(f'Connected to GraphServer @ {address}')
         else:
-            logger.info(f'Spawned LOCAL GraphServer @ {graph_context.graph_address}')
+            logger.info(f'Spawned GraphServer @ {graph_context.graph_address}')
 
         execution_context.create_processes(
             graph_address=graph_context.graph_address,
