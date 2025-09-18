@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
-from .messagechannel import CHANNELS, _Channel
+from .messagechannel import CHANNELS, Channel
 from .messagemarshal import MessageMarshal
 
 from .netprotocol import (
@@ -55,7 +55,7 @@ class Publisher:
     _connection_task: "asyncio.Task[None]"
     _channels: Dict[UUID, PubChannelInfo]
     _channel_tasks: Dict[UUID, "asyncio.Task[None]"]
-    _local_channel: _Channel
+    _local_channel: Channel
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -80,7 +80,8 @@ class Publisher:
         port: Optional[int] = None,
         buf_size: int = DEFAULT_SHM_SIZE,
         num_buffers: int = 32,
-        **kwargs,
+        start_paused: bool = False,
+        force_tcp: bool = False,
     ) -> "Publisher":
         graph_service = GraphService(graph_address)
         reader, writer = await graph_service.open_connection()
@@ -90,7 +91,15 @@ class Publisher:
         writer.write(encode_str(topic))
 
         pub_id = UUID(await read_str(reader))
-        pub = cls(pub_id, topic, shm, graph_address, num_buffers, **kwargs)
+        pub = cls(
+            id = pub_id,
+            topic = topic, 
+            shm = shm, 
+            graph_address = graph_address, 
+            num_buffers = num_buffers, 
+            start_paused = start_paused, 
+            force_tcp = force_tcp
+        )
 
         start_port = int(
             os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
@@ -115,8 +124,10 @@ class Publisher:
             name = f'pub-{pub.id}: _graph_connection'
         )
 
-        pub._local_channel = await CHANNELS.register(
-            pub.id, pub.id, None, pub._graph_address
+        pub._local_channel = await CHANNELS.register_local_pub(
+            pub_id = pub.id, 
+            local_backpressure = None if force_tcp else pub._backpressure,
+            graph_address = pub._graph_address, 
         )
 
         logger.debug(f'created pub {pub.id=} {topic=} {channel_server_address=}')
@@ -249,6 +260,7 @@ class Publisher:
                 elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
+                    logger.info('TCP_ACK')
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
@@ -288,8 +300,7 @@ class Publisher:
 
         # Get local channel and put variable there for local tx
         if not self._force_tcp:
-            if self._local_channel.put_local(self._msg_id, obj):
-                self._backpressure.lease(self._local_channel.id, buf_idx)
+            self._local_channel.put_local(self._msg_id, obj)
 
         if self._force_tcp or any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
             with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):
