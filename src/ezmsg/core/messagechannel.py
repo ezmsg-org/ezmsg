@@ -51,7 +51,7 @@ class Channel:
     _pub_task: asyncio.Task[None]
     _pub_writer: asyncio.StreamWriter
     _graph_address: AddressType | None
-    _local_backpressure: Backpressure | None = None
+    _local_backpressure: Backpressure | None
 
     def __init__(
         self, 
@@ -60,7 +60,6 @@ class Channel:
         num_buffers: int, 
         shm: SHMContext | None,
         graph_address: AddressType | None,
-        local_backpressure: Backpressure | None = None,
     ) -> None:
         self.id = id
         self.pub_id = pub_id
@@ -72,15 +71,14 @@ class Channel:
         self.backpressure = Backpressure(self.num_buffers)
         self.clients = dict()
         self._graph_address = graph_address
-        self._local_backpressure = local_backpressure
+        self._local_backpressure = None
 
     @classmethod
     async def create(
         cls,
         pub_id: UUID,
         graph_address: AddressType,
-        local_backpressure: Backpressure | None = None
-    ) -> "":
+    ) -> "Channel":
         graph_service = GraphService(graph_address)
 
         graph_reader, graph_writer = await graph_service.open_connection()
@@ -118,7 +116,7 @@ class Channel:
         
         num_buffers = await read_int(reader)
         
-        chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address, local_backpressure)
+        chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
 
         chan._graph_task = asyncio.create_task(
             chan._graph_connection(graph_reader, graph_writer),
@@ -226,12 +224,12 @@ class Channel:
             raise ValueError('cannot put_local without access to publisher backpressure (is publisher in same process?)')
         
         buf_idx = msg_id % self.num_buffers
-        self.cache_id[buf_idx] = msg_id
-        self.cache[buf_idx] = msg
         self._notify_clients(msg_id)
 
         # if buffer is not available after notify, subs were notified
         if not self.backpressure.available(buf_idx):
+            self.cache_id[buf_idx] = msg_id
+            self.cache[buf_idx] = msg
             self._local_backpressure.lease(self.id, buf_idx)
 
     @contextmanager
@@ -286,8 +284,15 @@ class Channel:
             except (BrokenPipeError, ConnectionResetError):
                 logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
-    def register_client(self, client_id: UUID, queue: NotificationQueue | None = None) -> None:
-        self.clients[client_id] = queue 
+    def register_client(
+        self, 
+        client_id: UUID, 
+        queue: NotificationQueue | None = None, 
+        local_backpressure: Backpressure | None = None,
+    ) -> None:
+        self.clients[client_id] = queue
+        if client_id == self.pub_id:
+            self._local_backpressure = local_backpressure 
 
     def unregister_client(self, client_id: UUID) -> None:
         queue = self.clients[client_id]
@@ -335,13 +340,12 @@ class ChannelManager:
         self,
         pub_id: UUID,
         graph_address: AddressType | None = None,
-        local_backpressure: Backpressure | None = None,
         create: bool = False
     ) -> Channel:
         graph_address = _ensure_address(graph_address)
         channel = self._registry.get(graph_address, dict()).get(pub_id, None)
         if create and channel is None:
-            channel = await Channel.create(pub_id, graph_address, local_backpressure)
+            channel = await Channel.create(pub_id, graph_address)
             channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels
@@ -374,8 +378,8 @@ class ChannelManager:
         graph_address: AddressType | None = None,
         local_backpressure: Backpressure | None = None
     ) -> Channel:
-        channel = await self.get(pub_id, graph_address, create = True, local_backpressure = local_backpressure)
-        channel.register_client(client_id, queue)
+        channel = await self.get(pub_id, graph_address, create = True)
+        channel.register_client(client_id, queue, local_backpressure)
         return channel
 
     async def unregister(
