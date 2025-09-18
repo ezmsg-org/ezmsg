@@ -260,7 +260,6 @@ class Publisher:
                 elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
-                    logger.info('TCP_ACK')
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
