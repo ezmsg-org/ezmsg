@@ -25,6 +25,29 @@ class PerfRunArgs:
     num_buffers: int
 
 def perf_run(args: PerfRunArgs) -> None:
+    """
+    Configurations (config):
+    - fanin: Many publishers to one subscriber
+    - fanout: one publisher to many subscribers
+    - relay: one publisher to one subscriber through many relays
+
+    Communication strategies (comms):
+    - local: all subs, relays, and pubs are in the SAME process
+    - shm / tcp: some clients move to a second process; comms via shared memory / TCP
+        * fanin: all publishers moved
+        * fanout: all subscribers moved
+        * relay: the publisher and all relay nodes moved
+    - shm_spread / tcp_spread: each client in its own process; comms via SHM / TCP respectively
+
+    Variables:
+    - n_clients: pubs (fanin), subs (fanout), or relays (relay)  
+    - msg_size: nominal message size (bytes)
+
+    Metrics:
+    - sample_rate: messages/sec at the sink (higher = better)
+    - data_rate: bytes/sec at the sink (higher = better)
+    - latency_mean: average send -> receive latency in seconds (lower = better)
+    """
     
     msg_sizes = [2 ** exp for exp in range(4, 25, 8)]
     n_clients = [2 ** exp for exp in range(0, 6, 2)]
