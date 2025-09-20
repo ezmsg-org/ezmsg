@@ -5,7 +5,6 @@ import argparse
 import html
 import math
 import webbrowser
-import tempfile
 
 from pathlib import Path
 
@@ -31,6 +30,30 @@ try:
 except ImportError:
     ez.logger.error('ezmsg perf analysis requires numpy')
     raise
+
+TEST_DESCRIPTION = """
+Configurations (config):
+- fanin: many publishers to one subscriber
+- fanout: one publisher to many subscribers
+- relay: one publisher to one subscriber through many relays
+
+Communication strategies (comms):
+- local: all subs, relays, and pubs are in the SAME process
+- shm / tcp: some clients move to a second process; comms via shared memory / TCP
+    * fanin: all publishers moved
+    * fanout: all subscribers moved
+    * relay: the publisher and all relay nodes moved
+- shm_spread / tcp_spread: each client in its own process; comms via SHM / TCP respectively
+
+Variables:
+- n_clients: pubs (fanin), subs (fanout), or relays (relay)  
+- msg_size: nominal message size (bytes)
+
+Metrics:
+- sample_rate: messages/sec at the sink (higher = better)
+- data_rate: bytes/sec at the sink (higher = better)
+- latency_mean: average send -> receive latency in seconds (lower = better)
+"""
 
 
 def load_perf(perf: Path) -> xr.Dataset:
@@ -320,6 +343,8 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
 
         if info is not None:
             parts.append(_env_block("Test Environment", str(info)))
+
+        parts.append(_env_block("Test Details", TEST_DESCRIPTION))
 
         if env_diff is not None:
             # Show diffs using your helper
