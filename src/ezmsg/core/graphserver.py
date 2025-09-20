@@ -92,7 +92,7 @@ class GraphServer(ThreadedAsyncServer):
                 self._shutdown.set()
                 await close_stream_writer(writer)
                 return
-            
+
             elif req in [Command.SHM_CREATE.value, Command.SHM_ATTACH.value]:
                 shm_info: Optional[SHMInfo] = None
 

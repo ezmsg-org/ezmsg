@@ -67,7 +67,8 @@ def test_local_system(toy_system_fixture, num_messages):
     system = toy_system_fixture(
         ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
     )
-    ez.run(SYSTEM=system)
+    ez.run(SYSTEM=system, profiler_log_name="test_profiler.log")
+    assert os.environ.get("EZMSG_PROFILER") == "test_profiler.log"
 
     results = []
     with open(test_filename, "r") as file:

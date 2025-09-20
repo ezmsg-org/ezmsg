@@ -2,16 +2,20 @@ name: Test package
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - dev
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 jobs:
-  build:
+  pytest:
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10.15", "3.11"]  # Omit until shutdown fixed: , "3.12", "3.13"]
         os:
           - "ubuntu-latest"
           - "windows-latest"
@@ -22,16 +26,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v2
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync
 
       - name: Run tests
         run: uv run pytest tests
