@@ -1,12 +1,13 @@
 import json
 import datetime
 import itertools
+import argparse
 
 from dataclasses import dataclass
 
 from ..messagecodec import MessageEncoder
-from .util import (
-    TestEnvironmentInfo, 
+from .envinfo import TestEnvironmentInfo
+from .impl import (
     TestParameters, 
     perform_test, 
     Communication,
@@ -19,11 +20,11 @@ def get_datestamp() -> str:
     return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 @dataclass
-class PerfEvalArgs:
+class PerfRunArgs:
     duration: float
     num_buffers: int
 
-def perf_eval(args: PerfEvalArgs) -> None:
+def perf_run(args: PerfRunArgs) -> None:
     
     msg_sizes = [2 ** exp for exp in range(4, 25, 8)]
     n_clients = [2 ** exp for exp in range(0, 6, 2)]
@@ -64,28 +65,25 @@ def perf_eval(args: PerfEvalArgs) -> None:
 
             out_f.write(json.dumps(output, cls = MessageEncoder) + "\n")
 
+def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
 
-def command() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
+    p_run = subparsers.add_parser("run", help="run performance test")
+    p_run.add_argument(
         "--duration",
         type=float,
         default=2.0,
-        help="How long to run each load test (seconds) (default = 2.0)",
+        help="individual test duration in seconds (default = 2.0)",
+    )
+    p_run.add_argument(
+        "--num-buffers",
+        type=int,
+        default=32,
+        help="shared memory buffers (default = 32)",
     )
 
-    parser.add_argument(
-        "--num-buffers", 
-        type=int, 
-        default=32, 
-        help="shared memory buffers (default = 32)"
-    )
-
-    args = parser.parse_args(namespace=PerfEvalArgs)
-
-    perf_eval(args)
-
-
+    p_run.set_defaults(_handler=lambda ns: perf_run(
+        PerfRunArgs(
+            duration = ns.duration, 
+            num_buffers = ns.num_buffers
+        )
+    ))

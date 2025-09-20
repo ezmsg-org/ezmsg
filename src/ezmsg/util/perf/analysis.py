@@ -1,12 +1,13 @@
 import json
 import typing
 import dataclasses
+import argparse
 
 from pathlib import Path
 
 from ..messagecodec import MessageDecoder
-from .util import (
-    TestEnvironmentInfo, 
+from .envinfo import TestEnvironmentInfo
+from .impl import (
     TestParameters, 
     Metrics,
 )
@@ -72,42 +73,41 @@ def load_perf(perf: Path) -> xr.Dataset:
     dataset = xr.Dataset(data_vars, attrs = dict(info = info))
     return dataset
 
-@dataclasses.dataclass
-class SummaryArgs:
-    perf: Path
-    baseline: Path | None
 
-def summary(args: SummaryArgs):
+def summary(perf_path: Path, baseline_path: Path | None) -> None:
+    """ print perf test results and comparisons to the console """
 
-    perf_dataset = load_perf(args.perf)
+    perf = load_perf(perf_path)
+    info = perf.attrs['info']
+    if baseline_path is not None:
+        baseline = load_perf(baseline_path)
+        perf = (perf / baseline) * 100.0
 
-    for config, config_ds in perf_dataset.groupby('config'):
-        for comms, comms_ds in config_ds.groupby('comms'):
-            print(f'{config}: {comms}')
-            print(comms_ds.sample_rate.data)
+    print(info)
 
-    if args.baseline is not None:
-        baseline_dataset = load_perf(args.baseline)
+    for _, config_ds in perf.groupby('config'):
+        for _, comms_ds in config_ds.groupby('comms'):
+            print(comms_ds.squeeze().to_dataframe())
+            print("\n")
+        print("\n")
 
 
-def command() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
+def setup_summary_cmdline(subparsers: argparse._SubParsersAction) -> None:
+    p_summary = subparsers.add_parser("summary", help = "summarize performance results")
+    p_summary.add_argument(
         "perf",
-        type=lambda x: Path(x),
+        type=Path,
         help="perf test",
     )
-
-    parser.add_argument(
-        "--baseline", "-b",
-        type=lambda x: Path(x),
-        default = None,
-        help="baseline perf test for comparison"
+    p_summary.add_argument(
+        "--baseline",
+        "-b",
+        type=Path,
+        default=None,
+        help="baseline perf test for comparison",
     )
 
-    args = parser.parse_args(namespace=SummaryArgs)
-
-    summary(args)
+    p_summary.set_defaults(_handler=lambda ns: summary(
+        perf_path = ns.perf,
+        baseline_path = ns.baseline
+    ))
