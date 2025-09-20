@@ -298,7 +298,7 @@ class DefaultBackendProcess(BackendProcess):
             await publish(stream, obj)
             stop = time.perf_counter()
             logger.info(
-                f"{task_address} send duration = " + f"{(stop-start)*1e3:0.4f}ms"
+                f"{task_address} send duration = " + f"{(stop - start) * 1e3:0.4f}ms"
             )
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish

@@ -29,7 +29,7 @@ class MessageLoggerSettings(ez.Settings):
     """
 
     output: typing.Optional[Path] = None
-    write_period: float = 0.0 # sec
+    write_period: float = 0.0  # sec
 
 
 class MessageLoggerState(ez.State):
@@ -138,7 +138,7 @@ class MessageLogger(ez.Unit):
     async def buffered_write(self) -> None:
         if self.SETTINGS.write_period <= 0:
             return
-        
+
         rate = Rate(1.0 / self.SETTINGS.write_period)
         while True:
             for output_f in self.STATE.output_files.values():

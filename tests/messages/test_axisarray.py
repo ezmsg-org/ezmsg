@@ -112,6 +112,45 @@ def test_concat() -> None:
     )
 
 
+def test_concat_with_coordinate_axis():
+    # Create two AxisArray objects with a CoordinateAxis
+    n_a = 2
+    n_b1 = 3
+    aa1 = AxisArray(
+        np.arange(n_a * n_b1).reshape(n_a, n_b1),
+        dims=["a", "b"],
+        axes={"b": AxisArray.CoordinateAxis(data=np.arange(1, 1 + n_b1), dims=["b"])},
+    )
+
+    n_b2 = 4
+    aa2 = AxisArray(
+        np.arange(n_a * n_b1, n_a * (n_b1 + n_b2)).reshape(n_a, n_b2),
+        dims=["a", "b"],
+        axes={
+            "b": AxisArray.CoordinateAxis(
+                data=np.arange(1 + n_b1, 1 + n_b1 + n_b2), dims=["b"]
+            )
+        },
+    )
+
+    # Concatenate along the CoordinateAxis
+    concatenated = AxisArray.concatenate(aa1, aa2, dim="b")
+
+    # Check the shape of the concatenated array
+    assert concatenated.shape == (n_a, n_b1 + n_b2)
+
+    # Check the data of the concatenated CoordinateAxis
+    expected_axis_data = np.arange(1, 1 + n_b1 + n_b2)
+    assert np.array_equal(concatenated.axes["b"].data, expected_axis_data)
+
+    # Check that the other axes are preserved
+    assert "a" in concatenated.dims
+
+    # Check that the concatenated data is correct
+    expected_data = np.hstack((aa1.data, aa2.data))
+    assert np.array_equal(concatenated.data, expected_data)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -234,17 +273,23 @@ def test_sliding_win_oneaxis(nwin: int, axis: int, step: int):
     assert np.array_equal(res, expected)
     assert np.shares_memory(res, expected)
 
+
 def xarray_available():
     try:
         import xarray
-        return True 
+
+        return True
     except ImportError:
         return False
 
-@pytest.mark.skipif(not xarray_available(), reason = "Optional dependency 'xarray' not installed")
+
+@pytest.mark.skipif(
+    not xarray_available(), reason="Optional dependency 'xarray' not installed"
+)
 def test_to_xr_dataarray():
-    
-    quality = ((np.arange(np.prod(DATA.shape[-2:])) % 3).reshape(DATA.shape[-2:]) + 1) / 3
+    quality = (
+        (np.arange(np.prod(DATA.shape[-2:])) % 3).reshape(DATA.shape[-2:]) + 1
+    ) / 3
     aa = MultiChannelData(
         DATA,
         dims=["ch", "time", "x", "y"],
@@ -252,17 +297,23 @@ def test_to_xr_dataarray():
             "time": AxisArray.TimeAxis(fs=5.0),
             "x": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
             "y": AxisArray.LinearAxis(unit="mm", gain=0.2, offset=-13.0),
-            "quality": AxisArray.CoordinateAxis(unit = '%', data = quality, dims = ['x', 'y'])
+            "quality": AxisArray.CoordinateAxis(
+                unit="%", data=quality, dims=["x", "y"]
+            ),
         },
         key="spatial_sensor_array_with_sensor_quality_metric",
         ch_names=["a", "b"],
     )
-        
+
     da = aa.to_xr_dataarray()
     assert da.shape == aa.shape
-    assert da.dims == ('ch', 'time', 'x', 'y')
+    assert da.dims == ("ch", "time", "x", "y")
     assert np.allclose(da.time.data, np.array([0.0, 0.2, 0.4, 0.6, 0.8]))
 
-    quality_data = da.where(da.quality == 1.0).stack(pixel = ['x', 'y']).dropna('pixel')
-    assert np.allclose(quality_data.x.data, np.array([-13.0, -12.8, -12.6, -12.6, -12.4]))
-    assert np.allclose(quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6]))
+    quality_data = da.where(da.quality == 1.0).stack(pixel=["x", "y"]).dropna("pixel")
+    assert np.allclose(
+        quality_data.x.data, np.array([-13.0, -12.8, -12.6, -12.6, -12.4])
+    )
+    assert np.allclose(
+        quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6])
+    )

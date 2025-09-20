@@ -192,7 +192,7 @@ def timeit(func: Callable):
         stop = time.perf_counter()
         _, task_info = self._tasks[func.__name__]
         address = task_info.address
-        logger.info(f"{address} task duration = {(stop-start)*1e3:0.4f}ms")
+        logger.info(f"{address} task duration = {(stop - start) * 1e3:0.4f}ms")
         return res
 
     return wrapper
