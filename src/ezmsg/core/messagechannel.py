@@ -32,7 +32,7 @@ NotificationQueue = asyncio.Queue[typing.Tuple[UUID, int]]
 class CacheMiss(Exception): ...
 
 
-class _Channel:
+class Channel:
     """cache-backed message channel for a particular publisher"""
 
     id: UUID
@@ -51,6 +51,7 @@ class _Channel:
     _pub_task: asyncio.Task[None]
     _pub_writer: asyncio.StreamWriter
     _graph_address: AddressType | None
+    _local_backpressure: Backpressure | None
 
     def __init__(
         self, 
@@ -58,7 +59,7 @@ class _Channel:
         pub_id: UUID, 
         num_buffers: int, 
         shm: SHMContext | None,
-        graph_address: AddressType | None
+        graph_address: AddressType | None,
     ) -> None:
         self.id = id
         self.pub_id = pub_id
@@ -70,13 +71,14 @@ class _Channel:
         self.backpressure = Backpressure(self.num_buffers)
         self.clients = dict()
         self._graph_address = graph_address
+        self._local_backpressure = None
 
     @classmethod
     async def create(
         cls,
         pub_id: UUID,
         graph_address: AddressType,
-    ) -> "_Channel":
+    ) -> "Channel":
         graph_service = GraphService(graph_address)
 
         graph_reader, graph_writer = await graph_service.open_connection()
@@ -213,21 +215,22 @@ class _Channel:
             self.backpressure.lease(client_id, msg_id % self.num_buffers)
             queue.put_nowait((self.pub_id, msg_id))
 
-    def put_local(self, msg_id: int, msg: typing.Any) -> bool:
+    def put_local(self, msg_id: int, msg: typing.Any) -> None:
         """
         put an object into cache (should only be used by Publishers)
         returns true if any clients were notified
         """
+        if self._local_backpressure is None:
+            raise ValueError('cannot put_local without access to publisher backpressure (is publisher in same process?)')
+        
+        buf_idx = msg_id % self.num_buffers
         self._notify_clients(msg_id)
 
-        # if buffer is still available after notify, no subs were notified here
-        buf_idx = msg_id % self.num_buffers
-        if self.backpressure.available(buf_idx):
-            return False
-        
-        self.cache_id[buf_idx] = msg_id
-        self.cache[buf_idx] = msg
-        return True
+        # if buffer is not available after notify, subs were notified
+        if not self.backpressure.available(buf_idx):
+            self.cache_id[buf_idx] = msg_id
+            self.cache[buf_idx] = msg
+            self._local_backpressure.lease(self.id, buf_idx)
 
     @contextmanager
     def get(self, msg_id: int, client_id: UUID) -> typing.Generator[typing.Any, None, None]:
@@ -269,14 +272,27 @@ class _Channel:
 
         self.backpressure.free(client_id, buf_idx)
         if self.backpressure.buffers[buf_idx].is_empty:
+
+            # If pub is in same process as this channel, avoid TCP
+            if self._local_backpressure is not None:
+                self._local_backpressure.free(self.id, buf_idx)
+                return
+            
             try:
                 ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
                 self._pub_writer.write(ack)
             except (BrokenPipeError, ConnectionResetError):
                 logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
-    def register_client(self, client_id: UUID, queue: NotificationQueue | None = None) -> None:
-        self.clients[client_id] = queue 
+    def register_client(
+        self, 
+        client_id: UUID, 
+        queue: NotificationQueue | None = None, 
+        local_backpressure: Backpressure | None = None,
+    ) -> None:
+        self.clients[client_id] = queue
+        if client_id == self.pub_id:
+            self._local_backpressure = local_backpressure 
 
     def unregister_client(self, client_id: UUID) -> None:
         queue = self.clients[client_id]
@@ -289,6 +305,10 @@ class _Channel:
                     queue.put_nowait((pub_id, msg_id))
 
             self.backpressure.free(client_id)
+
+        elif client_id == self.pub_id and self._local_backpressure is not None:
+            self._local_backpressure.free(self.id)
+            self._local_backpressure = None
 
         del self.clients[client_id]
 
@@ -307,9 +327,9 @@ def _ensure_address(address: AddressType | None) -> Address:
     return address
 
 
-class _ChannelManager:
+class ChannelManager:
     
-    _registry: typing.Dict[Address, typing.Dict[UUID, _Channel]]
+    _registry: typing.Dict[Address, typing.Dict[UUID, Channel]]
 
     def __init__(self):
         default_address = Address.from_string(GRAPHSERVER_ADDR)
@@ -321,27 +341,45 @@ class _ChannelManager:
         pub_id: UUID,
         graph_address: AddressType | None = None,
         create: bool = False
-    ) -> _Channel:
+    ) -> Channel:
         graph_address = _ensure_address(graph_address)
         channel = self._registry.get(graph_address, dict()).get(pub_id, None)
         if create and channel is None:
-            channel = await _Channel.create(pub_id, graph_address)
+            channel = await Channel.create(pub_id, graph_address)
             channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels
         if channel is None:
             raise KeyError(f"channel {pub_id=} {graph_address=} does not exist")
         return channel
-
+    
     async def register(
+        self,
+        pub_id: UUID,
+        client_id: UUID,
+        queue: NotificationQueue,
+        graph_address: AddressType | None = None,
+    ) -> Channel:
+        return await self._register(pub_id, client_id, queue, graph_address, None)
+
+    async def register_local_pub(
+        self,
+        pub_id: UUID,
+        local_backpressure: Backpressure | None = None,
+        graph_address: AddressType | None = None,
+    ) -> Channel:
+        return await self._register(pub_id, pub_id, None, graph_address, local_backpressure)
+
+    async def _register(
         self, 
         pub_id: UUID, 
         client_id: UUID, 
         queue: NotificationQueue | None = None, 
-        graph_address: AddressType | None = None
-    ) -> _Channel:
+        graph_address: AddressType | None = None,
+        local_backpressure: Backpressure | None = None
+    ) -> Channel:
         channel = await self.get(pub_id, graph_address, create = True)
-        channel.register_client(client_id, queue)
+        channel.register_client(client_id, queue, local_backpressure)
         return channel
 
     async def unregister(
@@ -362,4 +400,4 @@ class _ChannelManager:
             logger.debug(f'closed channel {pub_id}: no clients')
 
 
-CHANNELS = _ChannelManager()
+CHANNELS = ChannelManager()

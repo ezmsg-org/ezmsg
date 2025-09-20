@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
-from .messagechannel import CHANNELS, NotificationQueue, _Channel
+from .messagechannel import CHANNELS, NotificationQueue, Channel
 
 from .netprotocol import (
     AddressType,
@@ -38,7 +38,7 @@ class Subscriber:
 
     # NOTE: This is an optimization to retain a local handle to channels
     # so that dict lookup and wrapper contextmanager aren't in hotpath
-    _channels: typing.Dict[UUID, _Channel]
+    _channels: typing.Dict[UUID, Channel]
 
     @classmethod
     async def create(
