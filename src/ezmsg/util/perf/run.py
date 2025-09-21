@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from ..messagecodec import MessageEncoder
 from .envinfo import TestEnvironmentInfo
 from .impl import (
-    TestParameters, 
+    TestParameters,
+    TestLogEntry, 
     perform_test, 
     Communication,
     CONFIGS,
@@ -19,12 +20,12 @@ import ezmsg.core as ez
 def get_datestamp() -> str:
     return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-@dataclass
-class PerfRunArgs:
-    duration: float
-    num_buffers: int
 
-def perf_run(args: PerfRunArgs) -> None:
+def perf_run(    
+    duration: float,
+    num_buffers: int,
+    iters: int,
+) -> None:
     msg_sizes = [2 ** exp for exp in range(4, 25, 8)]
     n_clients = [2 ** exp for exp in range(0, 6, 2)]
     comms = [c for c in Communication]
@@ -44,20 +45,22 @@ def perf_run(args: PerfRunArgs) -> None:
                 n_clients = n_clients,
                 config = config.__name__,
                 comms = comms.value,
-                duration = args.duration,
-                num_buffers = args.num_buffers
+                duration = duration,
+                num_buffers = num_buffers
             )
             
-            results = perform_test(
-                n_clients = n_clients,
-                duration = args.duration, 
-                msg_size = msg_size, 
-                buffers = args.num_buffers,
-                comms = comms,
-                config = config,
-            )
+            results = [
+                perform_test(
+                    n_clients = n_clients,
+                    duration = duration, 
+                    msg_size = msg_size, 
+                    buffers = num_buffers,
+                    comms = comms,
+                    config = config,
+                ) for _ in range(iters)
+            ]
 
-            output = dict(
+            output = TestLogEntry(
                 params = params,
                 results = results
             )
@@ -79,10 +82,15 @@ def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
         default=32,
         help="shared memory buffers (default = 32)",
     )
+    p_run.add_argument(
+        "--iters", "-i",
+        type = int,
+        default = 3,
+        help = "number of times to run each test"
+    )
 
     p_run.set_defaults(_handler=lambda ns: perf_run(
-        PerfRunArgs(
-            duration = ns.duration, 
-            num_buffers = ns.num_buffers
-        )
+        duration = ns.duration, 
+        num_buffers = ns.num_buffers,
+        iters = ns.iters
     ))
