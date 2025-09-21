@@ -313,3 +313,8 @@ class TestParameters:
     duration: float
     num_buffers: int
 
+
+@dataclasses.dataclass
+class TestLogEntry:
+    params: TestParameters
+    results: typing.List[Metrics]

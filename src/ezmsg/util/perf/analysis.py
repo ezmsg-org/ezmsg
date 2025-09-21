@@ -14,6 +14,7 @@ from .run import get_datestamp
 from .impl import (
     TestParameters, 
     Metrics,
+    TestLogEntry,
 )
 
 import ezmsg.core as ez
@@ -59,15 +60,15 @@ Metrics:
 def load_perf(perf: Path) -> xr.Dataset:
 
     params: typing.List[TestParameters] = []
-    results: typing.List[Metrics] = []
+    results: typing.List[typing.List[Metrics]] = []
 
     with open(perf, 'r') as perf_f:
         info: TestEnvironmentInfo = json.loads(next(perf_f), cls = MessageDecoder)
 
         for line in perf_f:
-            obj = json.loads(line, cls = MessageDecoder)
-            params.append(obj['params'])
-            results.append(obj['results'])
+            obj: TestLogEntry = json.loads(line, cls = MessageDecoder)
+            params.append(obj.params)
+            results.append(obj.results)
 
     n_clients_axis = list(sorted(set([p.n_clients for p in params])))
     msg_size_axis = list(sorted(set([p.msg_size for p in params])))
@@ -91,18 +92,19 @@ def load_perf(perf: Path) -> xr.Dataset:
             len(config_axis)
         )) * np.nan
         for p, r in zip(params, results):
+            # tests are run multiple times; get the median value for each metric
+            values = list(sorted([getattr(v, field.name) for v in r]))
+            value = values[len(values)//2]
             m[
                 n_clients_axis.index(p.n_clients),
                 msg_size_axis.index(p.msg_size),
                 comms_axis.index(p.comms),
                 config_axis.index(p.config)
-            ] = getattr(r, field.name)
+            ] = value
         data_vars[field.name] = xr.DataArray(m, dims = dims, coords = coords)
 
     dataset = xr.Dataset(data_vars, attrs = dict(info = info))
     return dataset
-
-NOISE_BAND_PCT = 5.0  # +/-5% is "in the noise" for comparisons
 
 def _escape(s: str) -> str:
     return html.escape(str(s), quote=True)
@@ -121,7 +123,6 @@ def _legend_block() -> str:
       <h3>Legend</h3>
       <ul>
         <li><b>Comparison mode:</b> values are percentages (100 = no change).</li>
-        <li><b>Noise band:</b> ±5% considered negligible (no color).</li>
         <li><b>Green:</b> improvement (↑ sample/data rate, ↓ latency).</li>
         <li><b>Red:</b> regression (↓ sample/data rate, ↑ latency).</li>
       </ul>
@@ -232,7 +233,7 @@ def _base_css() -> str:
     </style>
     """
 
-def _color_for_comparison(value: float, metric: str) -> str:
+def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 5.0) -> str:
     """
     Returns inline CSS background for a comparison % value.
     value: e.g., 97.3, 104.8, etc.
@@ -257,11 +258,11 @@ def _color_for_comparison(value: float, metric: str) -> str:
         return ""
 
     # Noise band: keep neutral
-    if magnitude <= NOISE_BAND_PCT:
+    if magnitude <= noise_band_pct:
         return ""
 
     # Scale 5%..50% across 0..1; clamp
-    scale = max(0.0, min(1.0, (magnitude - NOISE_BAND_PCT) / 45.0))
+    scale = max(0.0, min(1.0, (magnitude - noise_band_pct) / 45.0))
 
     # Choose hue and lightness; use HSL with gentle saturation
     hue = "var(--green)" if sign_good else "var(--red)"
