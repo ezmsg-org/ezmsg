@@ -42,8 +42,8 @@ def perf_run(
 
     if msg_sizes is None:
         msg_sizes = DEFAULT_MSG_SIZES
-    if any(s <= 0 for s in msg_sizes):
-        ez.logger.error('All msg_sizes must be >0 bytes')
+    if any(s < 0 for s in msg_sizes):
+        ez.logger.error('All msg_sizes must be >=0 bytes')
 
     try:
         communications = DEFAULT_COMMS if comms is None else [Communication(c) for c in comms]

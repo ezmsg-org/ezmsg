@@ -183,10 +183,12 @@ def relay(config: ConfigSettings) -> Configuration:
     connections: ez.NetworkDefinition = []
 
     relays = [LoadTestRelay(config.settings) for _ in range(config.n_clients)]
-    connections.append((config.source.OUTPUT, relays[0].INPUT))
-    for from_relay, to_relay in zip(relays[:-1], relays[1:]):
-        connections.append((from_relay.OUTPUT, to_relay.INPUT))
-    connections.append((relays[-1].OUTPUT, config.sink.INPUT))
+    if len(relays):
+        connections.append((config.source.OUTPUT, relays[0].INPUT))
+        for from_relay, to_relay in zip(relays[:-1], relays[1:]):
+            connections.append((from_relay.OUTPUT, to_relay.INPUT))
+        connections.append((relays[-1].OUTPUT, config.sink.INPUT))
+    else: connections.append((config.source.OUTPUT, config.sink.INPUT))
 
     return relays, connections
 
