@@ -190,7 +190,13 @@ def relay(config: ConfigSettings) -> Configuration:
 
     return relays, connections
 
-CONFIGS: typing.Iterable[Configurator] = [fanin, fanout, relay]
+CONFIGS: typing.Mapping[str, Configurator] = {
+    c.__name__: c for c in [
+        fanin, 
+        fanout, 
+        relay
+    ]
+}
 
 class Communication(enum.StrEnum):
     LOCAL = "local"
@@ -258,10 +264,10 @@ def perform_test(
         process_components = process_components,
     )
 
-    return calculate_metrics(sink)
+    return calculate_metrics(sink, duration)
 
 
-def calculate_metrics(sink: LoadTestSink) -> Metrics:
+def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
 
     # Log some useful summary statistics
     min_timestamp = min(timestamp for timestamp, _, _ in sink.STATE.received_data)
@@ -280,7 +286,7 @@ def calculate_metrics(sink: LoadTestSink) -> Metrics:
 
     num_samples = len(sink.STATE.received_data)
     ez.logger.info(f"Samples received: {num_samples}")
-    sample_rate = num_samples / (max_timestamp - min_timestamp)
+    sample_rate = num_samples / duration
     ez.logger.info(f"Sample rate: {sample_rate} Hz")
     latency_mean = total_latency / num_samples
     ez.logger.info(f"Mean latency: {latency_mean} s")
