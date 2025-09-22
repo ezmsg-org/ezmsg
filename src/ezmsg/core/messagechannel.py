@@ -200,20 +200,25 @@ class Channel:
                         self.cache[buf_idx] = obj
                     self.cache_id[buf_idx] = msg_id
 
-                self._notify_clients(msg_id)
+                if not self._notify_clients(msg_id):
+                    # Nobody is listening; need to ack!
+                    self._acknowledge(msg_id)
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
 
         finally:
             await close_stream_writer(self._pub_writer)
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{id}")
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
-    def _notify_clients(self, msg_id: int) -> None:
+    def _notify_clients(self, msg_id: int) -> bool:
+        """ notify interested clients and return true if any were notified """
+        buf_idx = msg_id % self.num_buffers
         for client_id, queue in self.clients.items():
             if queue is None: continue # queue is none if this is the pub
-            self.backpressure.lease(client_id, msg_id % self.num_buffers)
+            self.backpressure.lease(client_id, buf_idx)
             queue.put_nowait((self.pub_id, msg_id))
+        return not self.backpressure.available(buf_idx)
 
     def put_local(self, msg_id: int, msg: typing.Any) -> None:
         """
@@ -224,10 +229,7 @@ class Channel:
             raise ValueError('cannot put_local without access to publisher backpressure (is publisher in same process?)')
         
         buf_idx = msg_id % self.num_buffers
-        self._notify_clients(msg_id)
-
-        # if buffer is not available after notify, subs were notified
-        if not self.backpressure.available(buf_idx):
+        if self._notify_clients(msg_id):
             self.cache_id[buf_idx] = msg_id
             self.cache[buf_idx] = msg
             self._local_backpressure.lease(self.id, buf_idx)
@@ -278,11 +280,14 @@ class Channel:
                 self._local_backpressure.free(self.id, buf_idx)
                 return
             
-            try:
-                ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
-                self._pub_writer.write(ack)
-            except (BrokenPipeError, ConnectionResetError):
-                logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
+            self._acknowledge(msg_id)
+
+    def _acknowledge(self, msg_id: int) -> None:
+        try:
+            ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
+            self._pub_writer.write(ack)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
     def register_client(
         self, 
