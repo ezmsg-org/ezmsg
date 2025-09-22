@@ -220,7 +220,7 @@ def perform_test(
         dynamic_size = int(msg_size), 
         duration = duration, 
         buffers = buffers, 
-        force_tcp = (comms == Communication.TCP),
+        force_tcp = (comms in (Communication.TCP, Communication.TCP_SPREAD)),
     )
 
     source = LoadTestSource(settings)
