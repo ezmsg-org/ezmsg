@@ -36,8 +36,8 @@ def perf_run(
     
     if n_clients is None:
         n_clients = DEFAULT_N_CLIENTS
-    if any(c <= 0 for c in n_clients):
-        ez.logger.error('All tests must have >0 clients')
+    if any(c < 0 for c in n_clients):
+        ez.logger.error('All tests must have >=0 clients')
         return
 
     if msg_sizes is None:
