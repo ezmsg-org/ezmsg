@@ -75,16 +75,16 @@ class LoadTestSender(ez.Unit):
     @ez.publisher(OUTPUT)
     async def publish(self) -> typing.AsyncGenerator:
         ez.logger.info(f"Load test publisher started. (PID: {os.getpid()})")
-        start_time = time.perf_counter()
+        start_time = time.time()
         while self.running:
-            current_time = time.perf_counter()
+            current_time = time.time()
             if current_time - start_time >= self.SETTINGS.duration:
                 break
 
             yield (
                 self.OUTPUT,
                 LoadTestSample(
-                    _timestamp=time.perf_counter(),
+                    _timestamp=time.time(),
                     counter=self.counter,
                     dynamic_data=np.zeros(
                         int(self.SETTINGS.dynamic_size // 8), dtype=np.float32
@@ -133,7 +133,7 @@ class LoadTestReceiver(ez.Unit):
                 f"{sample.counter - counter - 1} samples skipped!"
             )
         self.STATE.received_data.append(
-            (sample._timestamp, time.perf_counter(), sample.counter)
+            (sample._timestamp, time.time(), sample.counter)
         )
         self.STATE.counters[sample.key] = sample.counter
 

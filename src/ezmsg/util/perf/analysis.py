@@ -246,11 +246,11 @@ def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 5.0
 
     delta = value - 100.0
     # Determine direction: + is good for sample/data; - is good for latency
-    if metric in ("sample_rate", "data_rate"):
+    if 'rate' in metric:
         # positive delta good, negative bad
         magnitude = abs(delta)
         sign_good = delta > 0
-    elif metric == "latency_mean":
+    elif 'latency' in metric:
         # negative delta good (lower latency)
         magnitude = abs(delta)
         sign_good = delta < 0
@@ -316,7 +316,7 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
 
     if html:
         # Ensure expected columns exist
-        expected_cols = {"sample_rate", "data_rate", "latency_mean"}
+        expected_cols = {"sample_rate", "data_rate", "latency_mean", "latency_median"}
         missing = expected_cols - set(df.columns)
         if missing:
             raise ValueError(f"Missing expected columns in dataset: {missing}")
@@ -358,7 +358,7 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         # Render each group
         for (config, comms), g in groups:
             # Keep only expected columns in order
-            cols = ["n_clients", "msg_size", "sample_rate", "data_rate", "latency_mean"]
+            cols = ["n_clients", "msg_size", "sample_rate", "data_rate", "latency_mean", "latency_median"]
             g = g[cols].copy()
 
             # String format some columns (msg_size with separators)
@@ -374,17 +374,20 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
                 <th>sample_rate {'' if relative else '(msgs/s)'}</th>
                 <th>data_rate {'' if relative else '(MB/s)'}</th>
                 <th>latency_mean {'' if relative else '(us)'}</th>
+                <th>latency_median {'' if relative else '(us)'}<th>
             </tr>
             </thead>
             """
             body_rows: list[str] = []
             for _, row in g.iterrows():
-                sr, dr, lt = row["sample_rate"], row["data_rate"], row["latency_mean"]
+                sr, dr, lt, lm = row["sample_rate"], row["data_rate"], row["latency_mean"], row["latency_median"]
                 dr = dr if relative else dr / 2**20
                 lt = lt if relative else lt * 1e6
+                lm = lm if relative else lm * 1e6
                 sr_style = _color_for_comparison(sr, "sample_rate") if relative else ""
                 dr_style = _color_for_comparison(dr, "data_rate") if relative else ""
                 lt_style = _color_for_comparison(lt, "latency_mean") if relative else ""
+                lm_style = _color_for_comparison(lm, "latency_median") if relative else ""
 
                 body_rows.append(
                     "<tr>"
@@ -393,6 +396,7 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
                     f"<td class='metric-cell' style='{sr_style}'>{_format_number(sr)}</td>"
                     f"<td class='metric-cell' style='{dr_style}'>{_format_number(dr)}</td>"
                     f"<td class='metric-cell' style='{lt_style}'>{_format_number(lt)}</td>"
+                    f"<td class='metric-cell' style='{lm_style}'>{_format_number(lm)}</td>"
                     "</tr>"
                 )
             table_html = f"<table>{header}<tbody>{''.join(body_rows)}</tbody></table>"
