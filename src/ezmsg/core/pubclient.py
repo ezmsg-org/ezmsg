@@ -126,7 +126,7 @@ class Publisher:
 
         pub._local_channel = await CHANNELS.register_local_pub(
             pub_id = pub.id, 
-            local_backpressure = None if force_tcp else pub._backpressure,
+            local_backpressure = pub._backpressure,
             graph_address = pub._graph_address, 
         )
 
