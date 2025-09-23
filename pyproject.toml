@@ -24,6 +24,7 @@ dev = [
   {include-group = "lint"},
   {include-group = "test"},
   "pre-commit>=4.3.0",
+  "viztracer>=1.0.4",
 ]
 lint = [
     "flake8>=7.3.0",
