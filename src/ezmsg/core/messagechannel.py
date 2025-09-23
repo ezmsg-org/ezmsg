@@ -7,7 +7,7 @@ from uuid import UUID
 from contextlib import contextmanager, suppress
 
 from .shm import SHMContext
-from .messagemarshal import MessageMarshal
+from .messagemarshal import MessageMarshal, NO_MESSAGE
 from .backpressure import Backpressure
 
 from .graphserver import GraphService
@@ -41,6 +41,7 @@ class Channel:
     topic: str
 
     num_buffers: int
+    tcp_cache: typing.List[memoryview]
     cache: typing.List[typing.Any]
     cache_id: typing.List[int | None]
     shm: SHMContext | None
@@ -66,6 +67,7 @@ class Channel:
         self.num_buffers = num_buffers
         self.shm = shm
 
+        self.tcp_cache = [memoryview(NO_MESSAGE)] * self.num_buffers
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
         self.backpressure = Backpressure(self.num_buffers)
@@ -178,6 +180,15 @@ class Channel:
                 msg_id = await read_int(reader)
                 buf_idx = msg_id % self.num_buffers
 
+                # # Profiling indicates its faster to repeatedly
+                # # reconstruct <=512kB msgs from memory for up to
+                # # about 4 subs -- deepcopy is about 4x slower
+                # # which I suspect will be majority of cases
+                # # With more than 4 subs, one deepcopy may be faster
+                # # for <=512kB msgs, but becomes remarkably time
+                # # consuming for >= 512kB msgs.
+                # cache_msg = len(self.clients) > 4
+
                 if msg == Command.TX_SHM.value:
                     shm_name = await read_str(reader)
 
@@ -191,14 +202,17 @@ class Channel:
                                 "Invalid SHM received from publisher; may be dead"
                             )
                             raise
+                    
+                    # if cache_msg:
+                    #     ...
 
                 elif msg == Command.TX_TCP.value:
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
+                    self.tcp_cache[buf_idx] = memoryview(obj_bytes).toreadonly()
 
-                    with MessageMarshal.obj_from_mem(memoryview(obj_bytes)) as obj:
-                        self.cache[buf_idx] = obj
-                    self.cache_id[buf_idx] = msg_id
+                    # if cache_msg:
+                    #     ...
 
                 if not self._notify_clients(msg_id):
                     # Nobody is listening; need to ack!
@@ -238,39 +252,28 @@ class Channel:
     def get(self, msg_id: int, client_id: UUID) -> typing.Generator[typing.Any, None, None]:
         """get object from cache; if not in cache and shm provided -- get from shm"""
 
+        dispatched = False
+
         buf_idx = msg_id % self.num_buffers
         if self.cache_id[buf_idx] == msg_id:
+            dispatched = True
             yield self.cache[buf_idx]
 
-        else:
-            if self.shm is None:
-                raise CacheMiss
-
+        elif self.shm is not None:
             with self.shm.buffer(buf_idx, readonly=True) as mem:
-                if MessageMarshal.msg_id(mem) != msg_id:
-                    raise CacheMiss
+                if MessageMarshal.msg_id(mem) == msg_id:
+                    with MessageMarshal.obj_from_mem(mem) as obj:
+                        dispatched = True
+                        yield obj
 
-                with MessageMarshal.obj_from_mem(mem) as obj:
-                    # Could deepcopy and put in cache here...
-                    # Profiling indicates its faster to repeatedly
-                    # reconstruct <=512kB msgs from memory for up to
-                    # about 4 subs -- deepcopy is about 4x slower
-                    # which I suspect will be majority of cases
-                    # With more than 4 subs, one deepcopy may be faster
-                    # for <=512kB msgs, but becomes remarkably time
-                    # consuming for >= 512kB msgs.
-
-                    # TODO: Implement a tuning method that runs on
-                    # first ezmsg run that determines this tradeoff
-                    # and decides fastest behavior; then decide 
-                    # to cache or not cache depending on this profiling
-                    # for this particular machine.
-                    # NOTE: We have information about the message size and
-                    # the current fanout at time of RX, so we could
-                    # intelligently copy here!
-                    # self.shm.buf_size # Buffer size
-                    # len(self.clients) # Channel fanout
+        if not dispatched:
+            tcp_mem = self.tcp_cache[buf_idx]
+            if MessageMarshal.msg_id(tcp_mem) == msg_id:
+                with MessageMarshal.obj_from_mem(tcp_mem) as obj:
+                    dispatched = True
                     yield obj
+            else: 
+                raise CacheMiss
 
         self.backpressure.free(client_id, buf_idx)
         if self.backpressure.buffers[buf_idx].is_empty:

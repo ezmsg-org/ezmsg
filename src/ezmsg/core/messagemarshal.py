@@ -7,6 +7,7 @@ from typing import Any, List, Tuple, Generator, Optional
 
 _PREAMBLE = b"EZ"
 _PREAMBLE_LEN = len(_PREAMBLE)
+NO_MESSAGE = _PREAMBLE + (b'\xFF' * 8) + (b'\x00' * 8)
 
 
 class UndersizedMemory(Exception):
@@ -71,6 +72,9 @@ class Marshal:
 
         sidx = _PREAMBLE_LEN + UINT64_SIZE
         num_buffers = bytes_to_uint(mem[sidx : sidx + UINT64_SIZE])
+        if num_buffers == 0:
+            raise ValueError("invalid message in memory")
+        
         sidx += UINT64_SIZE
         buf_sizes = [0] * num_buffers
         for i in range(num_buffers):
