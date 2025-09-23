@@ -204,7 +204,7 @@ class Channel:
                     # Nobody is listening; need to ack!
                     self._acknowledge(msg_id)
 
-        except (ConnectionResetError, BrokenPipeError):
+        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
 
         finally:
