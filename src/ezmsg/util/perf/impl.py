@@ -41,6 +41,7 @@ class Metrics:
     num_msgs: int
     sample_rate: float
     latency_mean: float
+    latency_median: float
     latency_total: float
     data_rate: float
 
@@ -274,12 +275,11 @@ def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
     # Log some useful summary statistics
     min_timestamp = min(timestamp for timestamp, _, _ in sink.STATE.received_data)
     max_timestamp = max(timestamp for timestamp, _, _ in sink.STATE.received_data)
-    total_latency = abs(
-        sum(
-            receive_timestamp - send_timestamp
-            for send_timestamp, receive_timestamp, _ in sink.STATE.received_data
-        )
-    )
+    latency = [
+        receive_timestamp - send_timestamp
+        for send_timestamp, receive_timestamp, _ in sink.STATE.received_data
+    ]
+    total_latency = abs(sum(latency))
 
     counters = list(sorted(t[2] for t in sink.STATE.received_data))
     dropped_samples = sum(
@@ -291,7 +291,9 @@ def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
     sample_rate = num_samples / duration
     ez.logger.info(f"Sample rate: {sample_rate} Hz")
     latency_mean = total_latency / num_samples
+    latency_median = list(sorted(latency))[len(latency) // 2]
     ez.logger.info(f"Mean latency: {latency_mean} s")
+    ez.logger.info(f"Median latency: {latency_median} s")
     ez.logger.info(f"Total latency: {total_latency} s")
 
     total_data = num_samples * sink.SETTINGS.dynamic_size
@@ -307,6 +309,7 @@ def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
         num_msgs = num_samples,
         sample_rate = sample_rate,
         latency_mean = latency_mean,
+        latency_median = latency_median,
         latency_total = total_latency,
         data_rate = data_rate
     )
