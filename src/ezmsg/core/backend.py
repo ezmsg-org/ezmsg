@@ -55,7 +55,6 @@ class ExecutionContext:
         graph_address: AddressType | None,
         backend_process: typing.Type[BackendProcess] = DefaultBackendProcess,
     ) -> None:
-        
         self._processes = [
             backend_process(
                 process_units,
@@ -143,7 +142,7 @@ class ExecutionContext:
 
         if not processes:
             return None
-        
+
         return cls(
             processes,
             graph_connections,
@@ -180,7 +179,7 @@ def run(
         components: represents the nodes in the directed acyclic graph. It is a dictionary which contains the
             ``Components`` to be run mapped to string names. On initialization, ``ezmsg`` will call ``initialize()``
             for each :obj:`Unit` and ``configure()`` for each :obj:`Collection`, if defined.
-        root_name: gives a new root name to all nodes in this graph (e.g. [root_name]/COLLECTION/UNIT) 
+        root_name: gives a new root name to all nodes in this graph (e.g. [root_name]/COLLECTION/UNIT)
         connections: represents the edges is a ``NetworkDefinition`` which connects
             ``OutputStreams`` to ``InputStreams``. On initialization, ``ezmsg`` will create a directed acyclic graph
             using the contents of this parameter.
@@ -232,13 +231,12 @@ def run(
             address = graph_context.graph_address
             if address is None:
                 address = GraphService.default_address()
-            logger.info(f'Connected to GraphServer @ {address}')
+            logger.info(f"Connected to GraphServer @ {address}")
         else:
-            logger.info(f'Spawned GraphServer @ {graph_context.graph_address}')
+            logger.info(f"Spawned GraphServer @ {graph_context.graph_address}")
 
         execution_context.create_processes(
-            graph_address=graph_context.graph_address,
-            backend_process=backend_process
+            graph_address=graph_context.graph_address, backend_process=backend_process
         )
 
         async def cleanup_graph() -> None:

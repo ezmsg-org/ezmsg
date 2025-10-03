@@ -7,7 +7,7 @@ from typing import Any, List, Tuple, Generator, Optional
 
 _PREAMBLE = b"EZ"
 _PREAMBLE_LEN = len(_PREAMBLE)
-NO_MESSAGE = _PREAMBLE + (b'\xFF' * 8) + (b'\x00' * 8)
+NO_MESSAGE = _PREAMBLE + (b"\xff" * 8) + (b"\x00" * 8)
 
 
 class UndersizedMemory(Exception):
@@ -39,7 +39,7 @@ class Marshal:
 
             if total_size >= len(mem):
                 raise UndersizedMemory(req_size=total_size)
-            
+
             cls._write(mem, header, buffers)
 
     @classmethod
@@ -74,7 +74,7 @@ class Marshal:
         num_buffers = bytes_to_uint(mem[sidx : sidx + UINT64_SIZE])
         if num_buffers == 0:
             raise ValueError("invalid message in memory")
-        
+
         sidx += UINT64_SIZE
         buf_sizes = [0] * num_buffers
         for i in range(num_buffers):
@@ -134,7 +134,7 @@ class Marshal:
                 MessageMarshal.to_mem(msg_id, obj, to_mem)
 
 
-# If some other byte-level representation is desired, you can just 
-# monkeypatch the module at runtime with a different Marhsal subclass 
+# If some other byte-level representation is desired, you can just
+# monkeypatch the module at runtime with a different Marhsal subclass
 # TODO: This could also be done with environment variables
 MessageMarshal = Marshal

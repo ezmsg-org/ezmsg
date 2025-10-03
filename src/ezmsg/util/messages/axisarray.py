@@ -120,7 +120,7 @@ class AxisArray(ArrayWithNamedDims):
         # returns NotImplemented if classes aren't equal.  Unintuitively,
         # NotImplemented seems to evaluate as 'True' in an if statement.
         equal = super().__eq__(other)
-        if equal != True:
+        if not equal:
             return equal
 
         # checks for AxisArray fields

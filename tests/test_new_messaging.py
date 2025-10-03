@@ -7,23 +7,26 @@ from ezmsg.core.pubclient import Publisher
 
 PORT = 12345
 MAX_COUNT = 100
-TOPIC = '/TEST'
+TOPIC = "/TEST"
+
 
 async def handle_pub(pub: Publisher) -> None:
-    print('Publisher Task Launched')
+    print("Publisher Task Launched")
 
     count = 0
 
     while True:
-        await pub.broadcast(f'{count=}')
+        await pub.broadcast(f"{count=}")
         await asyncio.sleep(0.1)
         count += 1
-        if count >= MAX_COUNT: break
+        if count >= MAX_COUNT:
+            break
 
-    print('Publisher Task Concluded')
+    print("Publisher Task Concluded")
+
 
 async def handle_sub(sub: Subscriber) -> None:
-    print('Subscriber Task Launched')
+    print("Subscriber Task Launched")
 
     rx_count = 0
     while True:
@@ -32,24 +35,24 @@ async def handle_sub(sub: Subscriber) -> None:
             print(msg)
 
         rx_count += 1
-        if rx_count >= MAX_COUNT: break
-    
-    print('Subscriber Task Concluded')
+        if rx_count >= MAX_COUNT:
+            break
+
+    print("Subscriber Task Concluded")
 
 
-async def host(host: str = '127.0.0.1'):
+async def host(host: str = "127.0.0.1"):
     # Manually create a GraphServer
     server = GraphServer()
     server.start((host, PORT))
 
-    print(f'Created GraphServer @ {server.address}')
+    print(f"Created GraphServer @ {server.address}")
 
     # Create a graph_service that will interact with this GraphServer
     graph_service = GraphService((host, PORT))
     await graph_service.ensure()
 
     try:
-
         test_pub = await Publisher.create(TOPIC, (host, PORT), host=host)
         test_sub1 = await Subscriber.create(TOPIC, (host, PORT))
         test_sub2 = await Subscriber.create(TOPIC, (host, PORT))
@@ -61,30 +64,32 @@ async def host(host: str = '127.0.0.1'):
         sub_task_2 = asyncio.Task(handle_sub(test_sub2))
 
         await asyncio.wait([pub_task, sub_task_1, sub_task_2])
-        
+
         test_pub.close()
         test_sub1.close()
         test_sub2.close()
 
-        for future in asyncio.as_completed([
-            test_pub.wait_closed(),
-            test_sub1.wait_closed(),
-            test_sub2.wait_closed(),
-        ]):
+        for future in asyncio.as_completed(
+            [
+                test_pub.wait_closed(),
+                test_sub1.wait_closed(),
+                test_sub2.wait_closed(),
+            ]
+        ):
             await future
 
     finally:
         server.stop()
 
-    print('Done')
+    print("Done")
 
 
-async def attach_client(host: str = '127.0.0.1'):
+async def attach_client(host: str = "127.0.0.1"):
     # Attach to a running GraphServer
     graph_service = GraphService((host, PORT))
     await graph_service.ensure()
 
-    print(f'Connected to GraphServer @ {graph_service.address}')
+    print(f"Connected to GraphServer @ {graph_service.address}")
 
     sub = await Subscriber.create(TOPIC, (host, PORT))
 
@@ -96,20 +101,20 @@ async def attach_client(host: str = '127.0.0.1'):
 
     except asyncio.CancelledError:
         pass
-        
+
     finally:
         sub.close()
         await sub.wait_closed()
-        print(f'Detached')
+        print("Detached")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from dataclasses import dataclass
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
-    parser.add_argument('--attach', action = 'store_true', help = 'attach to running graph')
-    parser.add_argument('--host', default = "0.0.0.0", help = 'hostname for graphserver')
+    parser.add_argument("--attach", action="store_true", help="attach to running graph")
+    parser.add_argument("--host", default="0.0.0.0", help="hostname for graphserver")
 
     @dataclass
     class Args:
@@ -119,6 +124,6 @@ if __name__ == '__main__':
     args = Args(**vars(parser.parse_args()))
 
     if args.attach:
-        asyncio.run(attach_client(host = args.host))
+        asyncio.run(attach_client(host=args.host))
     else:
-        asyncio.run(host(host = args.host))
+        asyncio.run(host(host=args.host))

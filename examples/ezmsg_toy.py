@@ -192,8 +192,8 @@ if __name__ == "__main__":
 
     ez.run(
         SYSTEM=system,
-        connections = [
+        connections=[
             # Make PING.OUTPUT available on a topic ezmsg_attach.py
-            ( system.PING.OUTPUT, 'GLOBAL_PING_TOPIC' ),
-        ]
+            (system.PING.OUTPUT, "GLOBAL_PING_TOPIC"),
+        ],
     )

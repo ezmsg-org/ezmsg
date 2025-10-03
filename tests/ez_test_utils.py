@@ -23,7 +23,9 @@ def get_test_fn(test_name: typing.Optional[str] = None, extension: str = "txt") 
     # full test suite in parallel or when other tests use the same test name.
     # Use NamedTemporaryFile with delete=False so callers can open/remove it.
     prefix = f"{test_name}-" if test_name else "test-"
-    tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=f".{extension}", delete=False)
+    tmp = tempfile.NamedTemporaryFile(
+        prefix=prefix, suffix=f".{extension}", delete=False
+    )
     tmp.close()
     return Path(tmp.name)
 

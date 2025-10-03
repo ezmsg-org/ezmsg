@@ -100,6 +100,7 @@ T = typing.TypeVar("T", bound=ThreadedAsyncServer)
 
 # TODO: Get rid of Service Manager and drop this in its own file
 
+
 class ServiceManager(typing.Generic[T]):
     _address: typing.Optional[Address] = None
     _factory: typing.Callable[[], T]

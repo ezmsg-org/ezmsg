@@ -2,7 +2,7 @@ import asyncio
 import logging
 import typing
 
-from .netprotocol import AddressType, Address
+from .netprotocol import AddressType
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
@@ -44,16 +44,12 @@ class GraphContext:
             return self._graph_address
 
     async def publisher(self, topic: str, **kwargs) -> Publisher:
-        pub = await Publisher.create(
-            topic, self.graph_address, **kwargs
-        )
+        pub = await Publisher.create(topic, self.graph_address, **kwargs)
         self._clients.add(pub)
         return pub
 
     async def subscriber(self, topic: str, **kwargs) -> Subscriber:
-        sub = await Subscriber.create(
-            topic, self.graph_address, **kwargs
-        )
+        sub = await Subscriber.create(topic, self.graph_address, **kwargs)
         self._clients.add(sub)
         return sub
 
