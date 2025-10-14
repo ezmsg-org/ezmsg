@@ -24,7 +24,8 @@ Overall, this pattern enables developers to write units in ezmsg that are portab
 import asyncio
 import ezmsg.core as ez
 import numpy as np
-from typing import Any, Generator
+from typing import Any
+from collections.abc import Generator
 from ezmsg.util.messages.axisarray import AxisArray, replace
 from ezmsg.util.debuglog import DebugLog
 from ezmsg.util.gen_to_unit import gen_to_unit

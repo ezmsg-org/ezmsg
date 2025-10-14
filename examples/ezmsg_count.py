@@ -1,13 +1,12 @@
 import asyncio
 import time
 import array
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 import ezmsg.core as ez
 
 from ezmsg.util.debuglog import DebugLog, DebugLogSettings
 from ezmsg.util.terminate import TerminateOnTimeout as TerminateTest
-
-from typing import AsyncGenerator
 
 
 @dataclass

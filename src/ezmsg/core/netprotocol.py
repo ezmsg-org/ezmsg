@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncGenerator
 import socket
 import typing
 import enum
@@ -86,7 +87,7 @@ class Address(typing.NamedTuple):
         return f"{self.host}:{self.port}"
 
 
-AddressType = typing.Union[typing.Tuple[str, int], Address]
+AddressType = tuple[str, int] | Address
 
 
 @dataclass
@@ -111,7 +112,7 @@ class ClientInfo:
         self._pending.set()
 
     @asynccontextmanager
-    async def sync_writer(self) -> typing.AsyncGenerator[asyncio.StreamWriter, None]:
+    async def sync_writer(self) -> AsyncGenerator[asyncio.StreamWriter, None]:
         """
         Get synchronized access to the writer.
         
@@ -119,7 +120,7 @@ class ClientInfo:
         access through an asyncio Event mechanism.
         
         :return: Context manager yielding the synchronized writer.
-        :rtype: typing.AsyncGenerator[asyncio.StreamWriter, None]
+        :rtype: collections.abc.AsyncGenerator[asyncio.StreamWriter, None]
         """
         await self._pending.wait()
         try:
@@ -279,11 +280,11 @@ class Command(enum.Enum):
 
 
 def create_socket(
-    host: typing.Optional[str] = None,
-    port: typing.Optional[int] = None,
+    host: str | None = None,
+    port: int | None = None,
     start_port: int = 0,
     max_port: int = 65535,
-    ignore_ports: typing.List[int] = RESERVED_PORTS,
+    ignore_ports: list[int] = RESERVED_PORTS,
 ) -> socket.socket:
     """
     Create a socket bound to an available port.
@@ -292,15 +293,15 @@ def create_socket(
     port within the given range if no specific port is provided.
     
     :param host: Host address to bind to (defaults to DEFAULT_HOST).
-    :type host: typing.Optional[str]
+    :type host: str | None
     :param port: Specific port to bind to (if None, searches for available port).
-    :type port: typing.Optional[int]
+    :type port: int | None
     :param start_port: Starting port for search range.
     :type start_port: int
     :param max_port: Maximum port for search range.
     :type max_port: int
     :param ignore_ports: List of ports to skip during search.
-    :type ignore_ports: typing.List[int]
+    :type ignore_ports: list[int]
     :return: Bound socket ready for use.
     :rtype: socket.socket
     :raises IOError: If no available ports can be found in the specified range.

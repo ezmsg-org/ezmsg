@@ -5,7 +5,8 @@ from .stream import InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
-from typing import Any, Dict, List, Tuple, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import logging
 
@@ -23,7 +24,7 @@ PROCESS_ATTR = "__ez_process__"
 
 class UnitMeta(ComponentMeta):
     def __init__(
-        cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
+        cls, name: str, bases: tuple[type, ...], fields: dict[str, Any], **kwargs: Any
     ) -> None:
         super(UnitMeta, cls).__init__(name, bases, fields)
 
@@ -67,10 +68,10 @@ class Unit(Component, metaclass=UnitMeta):
     To create a Unit, inherit from the Unit class.
     
     :param settings: Optional settings object for unit configuration
-    :type settings: Optional[Settings]
+    :type settings: Settings | None
     """
 
-    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
+    def __init__(self, *args, settings: Settings | None = None, **kwargs):
         super(Unit, self).__init__(*args, settings=settings, **kwargs)
 
         for task_name, task in self.__class__.__tasks__.items():
@@ -135,7 +136,7 @@ def publisher(stream: OutputStream):
 
     .. code-block:: python
 
-      from typing import AsyncGenerator
+      from collections.abc import AsyncGenerator
 
       OUTPUT = OutputStream(ez.Message)
 
@@ -149,7 +150,7 @@ def publisher(stream: OutputStream):
         raise ValueError(f"Cannot publish to object of type {type(stream)}")
 
     def pub_factory(func):
-        published_streams: List[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
+        published_streams: list[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
         published_streams.append(stream)
         setattr(func, PUBLISHES_ATTR, published_streams)
         return task(func)
@@ -185,7 +186,7 @@ def subscriber(stream: InputStream, zero_copy: bool = False):
         raise ValueError(f"Cannot subscribe to object of type {type(stream)}")
 
     def sub_factory(func):
-        subscribed_streams: Optional[InputStream] = getattr(func, SUBSCRIBES_ATTR, None)
+        subscribed_streams: InputStream | None = getattr(func, SUBSCRIBES_ATTR, None)
         if subscribed_streams is not None:
             raise Exception(f"{func} cannot subscribe to more than one stream")
         setattr(func, SUBSCRIBES_ATTR, stream)

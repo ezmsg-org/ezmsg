@@ -1,5 +1,6 @@
 import os
 import asyncio
+from collections.abc import AsyncGenerator
 import logging
 import typing
 
@@ -43,10 +44,10 @@ class Subscriber:
 
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
-    _publishers: typing.Dict[UUID, PublisherInfo]
-    _publisher_tasks: typing.Dict[UUID, "asyncio.Task[None]"]
-    _shms: typing.Dict[UUID, SHMContext]
-    _incoming: "asyncio.Queue[typing.Tuple[UUID, int]]"
+    _publishers: dict[UUID, PublisherInfo]
+    _publisher_tasks: dict[UUID, "asyncio.Task[None]"]
+    _shms: dict[UUID, SHMContext]
+    _incoming: "asyncio.Queue[tuple[UUID, int]]"
 
     _graph_service: GraphService
 
@@ -155,7 +156,7 @@ class Subscriber:
                     self._initialized.set()
 
                 elif cmd == Command.UPDATE.value:
-                    pub_addresses: typing.Dict[UUID, Address] = {}
+                    pub_addresses: dict[UUID, Address] = {}
                     connections = await read_str(reader)
                     connections = connections.strip(",")
                     if len(connections):
@@ -302,7 +303,7 @@ class Subscriber:
         return out_msg
 
     @asynccontextmanager
-    async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
+    async def recv_zero_copy(self) -> AsyncGenerator[typing.Any, None]:
         """
         Receive the next message with zero-copy access.
         
@@ -311,7 +312,7 @@ class Subscriber:
         the context manager's scope.
         
         :return: Context manager yielding the received message.
-        :rtype: typing.AsyncGenerator[typing.Any, None]
+        :rtype: collections.abc.AsyncGenerator[typing.Any, None]
         """
         id, msg_id = await self._incoming.get()
         msg_id_bytes = uint64_to_bytes(msg_id)

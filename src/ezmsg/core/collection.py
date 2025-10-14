@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+from collections.abc import Collection as AbstractCollection
 import typing
 from copy import deepcopy
 
@@ -7,8 +9,8 @@ from .settings import Settings
 
 
 # Iterable of (output_stream, input_stream) pairs defining the network connections
-NetworkDefinition = typing.Iterable[
-    typing.Tuple[typing.Union[Stream, str], typing.Union[Stream, str]]
+NetworkDefinition = Iterable[
+    tuple[Stream | str, Stream | str]
 ]
 
 
@@ -16,8 +18,8 @@ class CollectionMeta(ComponentMeta):
     def __init__(
         cls,
         name: str,
-        bases: typing.Tuple[type, ...],
-        fields: typing.Dict[str, typing.Any],
+        bases: tuple[type, ...],
+        fields: dict[str, typing.Any],
         **kwargs: typing.Any,
     ) -> None:
         super(CollectionMeta, cls).__init__(name, bases, fields)
@@ -38,16 +40,16 @@ class CollectionMeta(ComponentMeta):
 
 class Collection(Component, metaclass=CollectionMeta):
     """
-    Connects :obj:`Unit`s together by defining a graph which connects OutputStreams to InputStreams.
+    Connects :obj:`Unit`\ s together by defining a graph which connects OutputStreams to InputStreams.
     
     Collections are composite components that contain and coordinate multiple Units,
     defining how they communicate through stream connections.
 
     :param settings: Optional settings object for collection configuration
-    :type settings: typing.Optional[Settings]
+    :type settings: Settings | None
     """
 
-    def __init__(self, *args, settings: typing.Optional[Settings] = None, **kwargs):
+    def __init__(self, *args, settings: Settings | None = None, **kwargs):
         super(Collection, self).__init__(*args, settings=settings, **kwargs)
 
         self._components = deepcopy(self.__class__.__components__)
@@ -77,7 +79,7 @@ class Collection(Component, metaclass=CollectionMeta):
         """
         return ()
 
-    def process_components(self) -> typing.Collection[Component]:
+    def process_components(self) -> AbstractCollection[Component]:
         """
         Override this method and have the definition return a tuple which contains 
         Units and Collections which should run in their own processes.
@@ -86,6 +88,6 @@ class Collection(Component, metaclass=CollectionMeta):
         in separate processes for performance or isolation requirements.
 
         :return: Collection of components that should run in separate processes
-        :rtype: typing.Collection[Component]
+        :rtype: collections.abc.Collection[Component]
         """
         return (self,)

@@ -6,7 +6,8 @@ from contextlib import contextmanager
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal, UninitializedMemory
 
-from typing import Dict, Any, Optional, List, Generator
+from collections.abc import Generator
+from typing import Any
 
 logger = logging.getLogger("ezmsg")
 
@@ -31,8 +32,8 @@ class Cache:
     """
 
     num_buffers: int
-    cache: List[Any]
-    cache_id: List[Optional[int]]
+    cache: list[Any]
+    cache_id: list[int | None]
 
     def __init__(self, num_buffers: int) -> None:
         """
@@ -83,7 +84,7 @@ class Cache:
 
     @contextmanager
     def get(
-        self, msg_id: int, shm: Optional[SHMContext] = None
+        self, msg_id: int, shm: SHMContext | None = None
     ) -> Generator[Any, None, None]:
         """
         Get object from cache; if not in cache and shm provided -- get from shm.
@@ -94,7 +95,7 @@ class Cache:
         :param msg_id: Message identifier to retrieve.
         :type msg_id: int
         :param shm: Optional shared memory context as fallback.
-        :type shm: Optional[SHMContext]
+        :type shm: SHMContext | None
         :return: Context manager yielding the requested message.
         :rtype: Generator[Any, None, None]
         :raises CacheMiss: If message not found in cache or shared memory.
@@ -129,4 +130,4 @@ class Cache:
 
 
 # FIXME: This should be made thread-safe in the future
-MessageCache: Dict[UUID, Cache] = dict()
+MessageCache: dict[UUID, Cache] = dict()

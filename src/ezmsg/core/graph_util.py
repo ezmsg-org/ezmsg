@@ -1,16 +1,16 @@
 from collections import defaultdict
 from textwrap import indent
-from typing import Set, DefaultDict, Optional, Tuple, List
+from collections import defaultdict
 from uuid import uuid4
 
 
-GraphType = DefaultDict[str, Set[str]]
+GraphType = defaultdict[str, set[str]]
 IND = "  "
 
 
 def prune_graph_connections(
     graph_connections: GraphType,
-) -> Tuple[Optional[GraphType], Optional[List[str]]]:
+) -> tuple[GraphType | None, list[str] | None]:
     """
     Remove nodes from the graph that are proxy_topics.
     
@@ -21,7 +21,7 @@ def prune_graph_connections(
     :param graph_connections: Graph representing topic connections.
     :type graph_connections: GraphType
     :return: Tuple of (pruned_graph, proxy_topics_list).
-    :rtype: tuple[GraphType | None, List[str] | None]
+    :rtype: tuple[GraphType | None, list[str] | None]
     """
     graph_conns = graph_connections.copy()
     source_nodes = []
@@ -228,7 +228,7 @@ def graph_string(
         ]
         footer = ["}"]
 
-        def node_string(graph: defaultdict, node: str) -> Optional[list[str]]:
+        def node_string(graph: defaultdict, node: str) -> list[str] | None:
             out = None
             if isinstance(graph[node], defaultdict):
                 out = [
@@ -245,7 +245,7 @@ def graph_string(
         header = [f"flowchart {direction}"]
         footer = []
 
-        def node_string(graph: defaultdict, node: str) -> Optional[list[str]]:
+        def node_string(graph: defaultdict, node: str) -> list[str] | None:
             out = None
             if isinstance(graph[node], defaultdict):
                 out = [

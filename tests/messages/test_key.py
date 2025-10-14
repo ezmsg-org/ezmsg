@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 import copy
 import json
 import os
@@ -46,7 +47,7 @@ class KeyedAxarrGenerator(ez.Unit):
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.publisher(OUTPUT_SIGNAL)
-    async def spawn(self) -> typing.AsyncGenerator:
+    async def spawn(self) -> AsyncGenerator:
         for i in range(self.SETTINGS.num_msgs):
             yield (
                 self.OUTPUT_SIGNAL,

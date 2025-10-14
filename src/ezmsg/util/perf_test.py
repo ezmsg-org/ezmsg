@@ -5,7 +5,7 @@ import os
 import platform
 import time
 
-from typing import List, Tuple, AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import ezmsg.core as ez
 
@@ -85,7 +85,7 @@ class LoadTestPublisher(ez.Unit):
 
 class LoadTestSubscriberState(ez.State):
     # Tuples of sent timestamp, received timestamp, counter, dynamic size
-    received_data: List[Tuple[float, float, int]] = dataclasses.field(
+    received_data: list[tuple[float, float, int]] = dataclasses.field(
         default_factory=list
     )
     counter: int = -1
