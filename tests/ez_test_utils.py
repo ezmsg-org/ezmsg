@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass
+from collections.abc import AsyncGenerator
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import typing
 import ezmsg.core as ez
 
 
-def get_test_fn(test_name: typing.Optional[str] = None, extension: str = "txt") -> Path:
+def get_test_fn(test_name: str | None = None, extension: str = "txt") -> Path:
     """PYTEST compatible temporary test file creator"""
 
     # Get current test name if we can..
@@ -46,7 +47,7 @@ class MessageGenerator(ez.Unit):
     OUTPUT = ez.OutputStream(SimpleMessage)
 
     @ez.publisher(OUTPUT)
-    async def spawn(self) -> typing.AsyncGenerator:
+    async def spawn(self) -> AsyncGenerator:
         for i in range(self.SETTINGS.num_msgs):
             yield self.OUTPUT, SimpleMessage(i)
         raise ez.Complete

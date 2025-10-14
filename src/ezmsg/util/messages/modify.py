@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator, Generator
 import traceback
 import typing
 
@@ -10,8 +11,8 @@ from ..generator import consumer, GenState
 
 @consumer
 def modify_axis(
-    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None,
-) -> typing.Generator[AxisArray, AxisArray, None]:
+    name_map: dict[str, str | None] | None = None,
+) -> Generator[AxisArray, AxisArray, None]:
     """
     Modify an AxisArray's axes and dims according to a name_map.
 
@@ -19,7 +20,7 @@ def modify_axis(
         Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
     :type name_map: dict[str, str | None] | None
     :return: A primed generator object ready to yield an AxisArray with modified axes for each .send(axis_array).
-    :rtype: typing.Generator[AxisArray, AxisArray, None]
+    :rtype: collections.abc.Generator[AxisArray, AxisArray, None]
     """
     # State variables
     axis_arr_in = AxisArray(np.array([]), dims=[""])
@@ -66,7 +67,7 @@ class ModifyAxisSettings(ez.Settings):
         Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
     :type name_map: dict[str, str | None] | None
     """
-    name_map: typing.Optional[typing.Dict[str, typing.Optional[str]]] = None
+    name_map: dict[str, str | None] | None = None
 
 
 class ModifyAxis(ez.Unit):
@@ -112,7 +113,7 @@ class ModifyAxis(ez.Unit):
 
     @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SIGNAL)
-    async def on_message(self, message: AxisArray) -> typing.AsyncGenerator:
+    async def on_message(self, message: AxisArray) -> AsyncGenerator:
         """
         Process incoming AxisArray messages and modify their axes.
         
@@ -122,7 +123,7 @@ class ModifyAxis(ez.Unit):
         :param message: Input AxisArray to modify.
         :type message: AxisArray
         :return: Async generator yielding AxisArray with modified axes.
-        :rtype: typing.AsyncGenerator
+        :rtype: collections.abc.AsyncGenerator
         """
         try:
             ret = self.STATE.gen.send(message)

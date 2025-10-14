@@ -24,27 +24,27 @@ class GraphContext:
     It also maintains a context manager that ensures the graphserver and SHMServer are running.
 
     :param graph_service: Optional graph service instance to use
-    :type graph_service: typing.Optional[GraphService]
-    :param shm_service: Optional shared memory service instance to use  
-    :type shm_service: typing.Optional[SHMService]
+    :type graph_service: GraphService | None
+    :param shm_service: Optional shared memory service instance to use
+    :type shm_service: SHMService | None
 
     .. note::
     The GraphContext is typically managed automatically by the ezmsg runtime
     and doesn't need to be instantiated directly by user code.
     """
 
-    _clients: typing.Set[typing.Union[Publisher, Subscriber]]
-    _edges: typing.Set[typing.Tuple[str, str]]
+    _clients: set[Publisher | Subscriber]
+    _edges: set[tuple[str, str]]
 
     _shm_service: SHMService
-    _shm_server: typing.Optional[SHMServer]
+    _shm_server: SHMServer | None
     _graph_service: GraphService
-    _graph_server: typing.Optional[GraphServer]
+    _graph_server: GraphServer | None
 
     def __init__(
         self,
-        graph_service: typing.Optional[GraphService] = None,
-        shm_service: typing.Optional[SHMService] = None,
+        graph_service: GraphService | None = None,
+        shm_service: SHMService | None = None,
     ) -> None:
         self._clients = set()
         self._edges = set()
@@ -111,12 +111,12 @@ class GraphContext:
         await self._graph_service.disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
-    async def sync(self, timeout: typing.Optional[float] = None) -> None:
+    async def sync(self, timeout: float | None = None) -> None:
         """
         Synchronize with the graph server.
         
         :param timeout: Optional timeout for the sync operation
-        :type timeout: typing.Optional[float]
+        :type timeout: float | None
         """
         await self._graph_service.sync(timeout)
 
@@ -153,9 +153,9 @@ class GraphContext:
 
     async def __aexit__(
         self,
-        exc_t: typing.Optional[typing.Type[Exception]],
-        exc_v: typing.Optional[typing.Any],
-        exc_tb: typing.Optional[TracebackType],
+        exc_t: type[Exception] | None,
+        exc_v: typing.Any | None,
+        exc_tb: TracebackType | None,
     ) -> bool:
         await self.revert()
         await self._shutdown_servers()

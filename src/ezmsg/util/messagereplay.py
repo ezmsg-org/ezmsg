@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncGenerator
 import json
 import typing
 import time
@@ -42,8 +43,8 @@ class FileReplayMessage:
             If not specified, messages will publish as fast as possible.
     """
 
-    filename: typing.Optional[Path] = None
-    rate: typing.Optional[float] = None  # Hz
+    filename: Path | None = None
+    rate: float | None = None  # Hz
 
 
 class MessageReplaySettings(ez.Settings, FileReplayMessage):
@@ -126,13 +127,13 @@ class MessageReplay(ez.Unit):
     @ez.publisher(OUTPUT_MESSAGE)
     @ez.publisher(OUTPUT_TOTAL)
     @ez.publisher(OUTPUT_REPLAY_STATUS)
-    async def replay(self) -> typing.AsyncGenerator:
+    async def replay(self) -> AsyncGenerator:
         while True:
             replay_file = await self.STATE.replay_files.get()
             if replay_file.filename is None:
                 continue
 
-            last_msg_t: typing.Optional[float] = None
+            last_msg_t: float | None = None
             num_msgs = sum(1 for _ in open(replay_file.filename, "r"))
             replay_msg = ReplayStatusMessage(replay_file.filename, 0, num_msgs)
             yield self.OUTPUT_REPLAY_STATUS, replay_msg
@@ -209,7 +210,7 @@ class MessageReplay(ez.Unit):
 
 
 class MessageCollectorState(ez.State):
-    messages: typing.List[typing.Any] = field(default_factory=list)
+    messages: list[typing.Any] = field(default_factory=list)
 
 
 class MessageCollector(ez.Unit):
@@ -227,12 +228,12 @@ class MessageCollector(ez.Unit):
 
     @ez.subscriber(INPUT_MESSAGE)
     @ez.publisher(OUTPUT_MESSAGE)
-    async def on_message(self, msg: typing.Any) -> typing.AsyncGenerator:
+    async def on_message(self, msg: typing.Any) -> AsyncGenerator:
         self.STATE.messages.append(msg)
         yield self.OUTPUT_MESSAGE, msg
 
     @property
-    def messages(self) -> typing.List[typing.Any]:
+    def messages(self) -> list[typing.Any]:
         """
         Access the list of messages.
 

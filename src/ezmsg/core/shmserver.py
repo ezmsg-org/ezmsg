@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Generator
 import logging
 import typing
 
@@ -35,7 +36,7 @@ def _ignore_shm(name, rtype):
 
 
 @contextmanager
-def _untracked_shm() -> typing.Generator[None, None, None]:
+def _untracked_shm() -> Generator[None, None, None]:
     """
     Disable SHM tracking within context - https://bugs.python.org/issue38119.
     
@@ -43,7 +44,7 @@ def _untracked_shm() -> typing.Generator[None, None, None]:
     around a Python bug where shared memory segments are not properly cleaned up.
     
     :return: Context manager generator.
-    :rtype: typing.Generator[None, None, None]
+    :rtype: collections.abc.Generator[None, None, None]
     """
     resource_tracker.register = _ignore_shm
     yield
@@ -72,7 +73,7 @@ class SHMContext:
     """
 
     _shm: SharedMemory
-    _data_block_segs: typing.List[slice]
+    _data_block_segs: list[slice]
 
     num_buffers: int
     buf_size: int
@@ -141,7 +142,7 @@ class SHMContext:
     @contextmanager
     def buffer(
         self, idx: int, readonly: bool = False
-    ) -> typing.Generator[memoryview, None, None]:
+    ) -> Generator[memoryview, None, None]:
         """
         Get a memory view of a specific buffer in the shared memory segment.
         
@@ -150,7 +151,7 @@ class SHMContext:
         :param readonly: Whether to provide read-only access to the buffer.
         :type readonly: bool
         :return: Context manager yielding a memoryview of the buffer.
-        :rtype: typing.Generator[memoryview, None, None]
+        :rtype: collections.abc.Generator[memoryview, None, None]
         :raises BufferError: If shared memory is no longer accessible.
         """
         if self._shm.buf is None:
@@ -230,7 +231,7 @@ class SHMInfo:
     When all leases are released, the shared memory is automatically cleaned up.
     """
     shm: SharedMemory
-    leases: typing.Set["asyncio.Task[None]"] = field(default_factory=set)
+    leases: set["asyncio.Task[None]"] = field(default_factory=set)
 
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -276,7 +277,7 @@ class SHMServer(ThreadedAsyncServer):
     when no longer needed.
     """
     node: int
-    shms: typing.Dict[str, SHMInfo]
+    shms: dict[str, SHMInfo]
 
     def __init__(self) -> None:
         """
@@ -322,7 +323,7 @@ class SHMServer(ThreadedAsyncServer):
             if len(cmd) == 0:
                 return
 
-            info: typing.Optional[SHMInfo] = None
+            info: SHMInfo | None = None
 
             if cmd == Command.SHM_CREATE.value:
                 num_buffers = await read_int(reader)
@@ -363,12 +364,12 @@ class SHMService(ServiceManager[SHMServer]):
     ADDR_ENV = SHMSERVER_ADDR_ENV
     PORT_DEFAULT = SHMSERVER_PORT_DEFAULT
 
-    def __init__(self, address: typing.Optional[AddressType] = None) -> None:
+    def __init__(self, address: AddressType | None = None) -> None:
         """
         Initialize the SHM service manager.
         
         :param address: Optional address tuple (host, port) for the server.
-        :type address: typing.Optional[AddressType]
+        :type address: AddressType | None
         """
         super().__init__(SHMServer, address)
 
