@@ -81,8 +81,7 @@ Why use ezmsg over a comparable tool? ezmsg is extremely fast and uses Python's 
 |ezmsg_logo_small| Table of Contents
 ***************************************
 
-The rest of the documentation on this site covers major use-cases of the Jupyter ecosystem, as well as topics that will help you navigate the various parts of the Jupyter community.
-For more in-depth documentation about a specific tool, we recommend checking out that tool's documentation (see the list above).
+Below is a breakdown of all the documentation available on this site.
 
 
 

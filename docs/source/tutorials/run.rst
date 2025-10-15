@@ -18,7 +18,7 @@ For the sake of this tutorial, we recreate the script from the :doc:`pipeline` t
    # tutorial_pipeline.py
    import ezmsg.core as ez
    from dataclasses import dataclass
-   from typing import AsyncGenerator
+   from collections.abc import AsyncGenerator
 
    class CountSettings(ez.Settings):
        iterations: int
@@ -180,6 +180,8 @@ then ezmsg will output a **Graphviz** representation of the pipeline to the term
    :alt: Graphviz pipeline visualisation text output
 
 .. note:: You can copy this output and paste it into a Graphviz live editor, such as `<https://dreampuf.github.io/GraphvizOnline/>`_, to view the pipeline graphically.
+
+.. note:: The really long numerical node identifiers are simply randomly generated unique identifiers for each connection point (since the names may be the same like `INPUT_SIGNAL`). These identifiers have no special meaning.
 
 .. warning:: This command and the ones described in the :ref:`mermaid-section` section below will only output the pipeline graph if the ezmsg system is running and has a pipeline connected to it. If you run this command when the pipeline is finished or not running, you will not get any output. Our example is so simple that it will finish very quickly, so in order to visualise the graph maybe change the `iterations` in the `CountSettings` to a larger number, e.g. 100000, so that you have time to run the command and see the output.
 

@@ -56,7 +56,7 @@ class Settings(ABC, metaclass=SettingsMeta):
           setting1: int
           setting2: float
 
-    To use, declare the ``Settings`` object for a ``Component`` as a member variable called (all-caps!) ``SETTINGS``. ``ezmsg`` will monitor the variable called ``SETTINGS`` in the background, so it is important to name it correctly.
+    To use, declare the ``Settings`` object for a ``Component`` as a member variable called (all-caps!) ``SETTINGS``. ezmsg will monitor the variable called ``SETTINGS`` in the background, so it is important to name it correctly.
 
     .. code-block:: python
 

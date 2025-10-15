@@ -7,7 +7,7 @@ This page contains information about installing ezmsg and its extensions. It als
 |ezmsg_logo_small| System Requirements
 ***************************************
 
-ezmsg is written in and for **Python**, so it requires a Python interpreter to run. Due to reliance on the in-built ``multiprocessing.shared_memory`` module, ezmsg requires at minimum Python 3.8. Beyond that, ezmsg is a pure Python library with no external dependencies.
+ezmsg is written in and for **Python**, so it requires a Python interpreter to run. Currently, ezmsg requires at minimum Python 3.10. Beyond that, ezmsg is a pure Python library with no external dependencies.
 
 This also means that ezmsg is cross-platform and should run on any operating system that supports Python, including Windows, macOS, and Linux.
 
@@ -166,7 +166,7 @@ You can also run a simple test script:
 
    print("ezmsg is installed and working correctly!")
 
-with the following code to check if ezmsg is functioning as expected:
+with the following code (in the terminal) to check if ezmsg is functioning as expected:
 
 .. code-block:: bash
 

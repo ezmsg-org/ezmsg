@@ -8,5 +8,6 @@ ezmsg Basics HOW TOs
     update
     commandline
     sandbox
+    jupyter
     visualisation
 

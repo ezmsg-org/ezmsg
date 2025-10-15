@@ -28,7 +28,7 @@ Next, ensure we have all the necessary imports:
 
     import ezmsg.core as ez
     from dataclasses import dataclass
-    from typing import AsyncGenerator
+    from collections.abc import AsyncGenerator
 
 
 |ezmsg_logo_small| Building a basic ezmsg Unit
@@ -50,7 +50,7 @@ Our very basic counting Unit will simply produce integers starting at 0. We don'
     class CountSettings(ez.Settings):
         iterations: int
 
-.. note:: We inherited from ``ez.Settings`` which is a frozen dataclass. This means that the settings are immutable after they are set, which is a good practice for configuration data.
+.. note:: We inherited from ``ez.Settings`` which is a frozen dataclass. This means that the settings are immutable after they are set, which is good practice for configuration data.
 
 Next, we need to create a message type that the Unit will produce. This message will be sent to the next Unit in the pipeline. In this case, we will create a simple dataclass that contains an integer value. (In such a simple case, we could simply avoid creating a new class and use a simple integer, but this is a good practice for more complex messages.)
 

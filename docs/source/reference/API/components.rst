@@ -1,5 +1,5 @@
-Components
-===========
+Components - Units and Collections
+===================================
 
 An ``ezmsg`` pipeline is created from a few basic components.
 ``ezmsg`` provides a framework for you to define your own graphs using its building blocks.
@@ -15,21 +15,35 @@ It is convention to ``import ezmsg.core as ez`` and then use this shorthand in y
    class MyUnit(ez.Unit):
        ...
 
-Components
-----------
+The two types of nodes in an ezmsg pipeline are ``Unit`` and ``Collection``.
 
-.. autoclass:: Component
-
-.. autoclass:: Collection
-   :show-inheritance:
-   :members:
-
-.. autoclass:: NetworkDefinition
+Unit
+---------
 
 .. autoclass:: Unit
    :show-inheritance:
    :members:
    :inherited-members:
+
+
+Collection
+------------
+
+.. autoclass:: Collection
+   :show-inheritance:
+   :members:
+
+
+Both ``Unit`` and ``Collection`` inherit from the base class ``Component``.
+
+Base Classes
+--------------
+
+.. autoclass:: Component
+
+.. autoclass:: NetworkDefinition
+
+
 
 
 Component Interaction
