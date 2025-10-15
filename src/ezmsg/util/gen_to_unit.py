@@ -11,17 +11,8 @@ import asyncio
 import sys
 import inspect
 from dataclasses import asdict, fields
-from typing import (
-    Callable,
-    get_args,
-    Any,
-    Generator,
-    Dict,
-    Tuple,
-    cast,
-    Type,
-    TypeVar,
-)
+from collections.abc import Callable, Generator
+from typing import cast, get_args, Any, TypeVar
 from ezmsg.util.messages.axisarray import AxisArray
 
 if sys.version_info < (3, 12):
@@ -39,7 +30,7 @@ def gen_to_unit(
     sleep_time: float = 0.0,
     output_stream_kwargs: dict = {},
     msg_to_state: dict = {},
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     sig = inspect.signature(func)
 
     # Parse the generator type hint in the return annotation
@@ -155,7 +146,7 @@ def gen_to_unit(
         )
 
     unit = cast(
-        Type[ez.Unit],
+        type[ez.Unit],
         type(
             f"{func.__name__.capitalize()}Unit",
             (ez.Unit,),
@@ -174,10 +165,10 @@ def gen_to_unit(
 
 
 def args_to_settings(
-    func_name: str, args: Dict[str, Any], defaults: dict
-) -> Type[ez.Settings]:
+    func_name: str, args: dict[str, Any], defaults: dict
+) -> type[ez.Settings]:
     return cast(
-        Type[ez.Settings],
+        type[ez.Settings],
         type(
             f"{func_name.capitalize()}Settings",
             (ez.Settings,),
@@ -187,11 +178,11 @@ def args_to_settings(
 
 
 def args_to_state(
-    func_name: str, args: Dict[str, Any], yield_type: Any, send_type: Any
-) -> Type[ez.State]:
+    func_name: str, args: dict[str, Any], yield_type: Any, send_type: Any
+) -> type[ez.State]:
     args["gen"] = Generator[yield_type, send_type, None]
     return cast(
-        Type[ez.State],
+        type[ez.State],
         type(
             f"{func_name.capitalize()}State",
             (ez.State,),

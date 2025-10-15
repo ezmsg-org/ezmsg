@@ -4,7 +4,7 @@ import ezmsg.core as ez
 
 from multiprocessing import Process
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 
 class TransmitReceiveSettings(ez.Settings):

@@ -1,6 +1,7 @@
 import ezmsg.core as ez
 
-from typing import AsyncGenerator, Optional, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 
 
 class DebugLogSettings(ez.Settings):
@@ -15,7 +16,7 @@ class DebugLogSettings(ez.Settings):
     """
 
     name: str = "DEBUG"
-    max_length: Optional[int] = 400
+    max_length: int | None = 400
 
 
 class DebugLog(ez.Unit):

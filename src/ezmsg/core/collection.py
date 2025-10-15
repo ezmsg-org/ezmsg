@@ -40,7 +40,7 @@ class CollectionMeta(ComponentMeta):
 
 class Collection(Component, metaclass=CollectionMeta):
     """
-    Connects :obj:`Unit`s together by defining a graph which connects OutputStreams to InputStreams.
+    Connects :obj:`Unit`\ s together by defining a graph which connects OutputStreams to InputStreams.
     
     Collections are composite components that contain and coordinate multiple Units,
     defining how they communicate through stream connections.

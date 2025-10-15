@@ -1,7 +1,7 @@
 import ezmsg.core as ez
 import traceback
-from typing import Any, AsyncGenerator, Generator, Callable, TypeVar
-from typing_extensions import ParamSpec
+from collections.abc import AsyncGenerator, Callable, Generator
+from typing import Any, ParamSpec, TypeVar
 from functools import wraps, reduce
 
 # Define type variables for the decorators

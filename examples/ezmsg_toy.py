@@ -4,7 +4,7 @@ import math
 
 from dataclasses import dataclass
 
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
 import ezmsg.core as ez
 
@@ -65,7 +65,7 @@ class MessageGenerator(ez.Unit):
 
 # DEBUG OUTPUT
 class DebugOutputSettings(ez.Settings):
-    name: Optional[str] = "Default"
+    name: str | None = "Default"
 
 
 class DebugOutput(ez.Unit):

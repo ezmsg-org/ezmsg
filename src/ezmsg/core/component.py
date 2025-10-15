@@ -7,7 +7,8 @@ from .state import State
 from .addressable import Addressable
 from .stream import Stream
 
-from typing import List, Optional, Dict, Tuple, Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import logging
 
@@ -16,7 +17,7 @@ logger = logging.getLogger("ezmsg")
 
 class ComponentMeta(ABCMeta):
     def __init__(
-        cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
+        cls, name: str, bases: tuple[type, ...], fields: dict[str, Any], **kwargs: Any
     ) -> None:
         super(ComponentMeta, cls).__init__(name, bases, fields)
 
@@ -103,19 +104,19 @@ class Component(Addressable, metaclass=ComponentMeta):
     the basic infrastructure for message-passing components.
     
     :param settings: Optional settings object for component configuration
-    :type settings: Optional[Settings]
+    :type settings: Settings | None
 
     .. note::
     When creating ezmsg nodes, inherit directly from :obj:`Unit` or :obj:`Collection`.
     """
 
-    _tasks: Dict[str, Callable]  # Only Units will have tasks
-    _streams: Dict[str, Stream]  # All Components can have streams
-    _components: Dict[str, "Component"]  # Only Collections will have components
-    _main: Optional[Callable[..., None]]
-    _threads: Dict[str, Callable]
+    _tasks: dict[str, Callable]  # Only Units will have tasks
+    _streams: dict[str, Stream]  # All Components can have streams
+    _components: dict[str, "Component"]  # Only Collections will have components
+    _main: Callable[..., None] | None
+    _threads: dict[str, Callable]
 
-    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
+    def __init__(self, *args, settings: Settings | None = None, **kwargs):
         super(Component, self).__init__()
 
         self.SETTINGS = None
@@ -178,7 +179,7 @@ class Component(Addressable, metaclass=ComponentMeta):
         self.SETTINGS = settings
         self._settings_applied = True
 
-    def _set_location(self, location: Optional[List[str]] = None):
+    def _set_location(self, location: list[str] | None = None):
         super(Component, self)._set_location(location)
 
         # Percolate the location down to submodules and streams
@@ -188,51 +189,51 @@ class Component(Addressable, metaclass=ComponentMeta):
             stream._set_location(self.location + [self.name])
 
     @property
-    def tasks(self) -> Dict[str, Callable]:
+    def tasks(self) -> dict[str, Callable]:
         """
         Get the dictionary of tasks for this component.
         
         :return: Dictionary mapping task names to their callable functions
-        :rtype: Dict[str, Callable]
+        :rtype: dict[str, Callable]
         """
         return self._tasks
 
     @property
-    def streams(self) -> Dict[str, Stream]:
+    def streams(self) -> dict[str, Stream]:
         """
         Get the dictionary of streams for this component.
         
         :return: Dictionary mapping stream names to their Stream objects
-        :rtype: Dict[str, Stream]
+        :rtype: dict[str, Stream]
         """
         return self._streams
 
     @property
-    def components(self) -> Dict[str, "Component"]:
+    def components(self) -> dict[str, "Component"]:
         """
         Get the dictionary of child components for this component.
         
         :return: Dictionary mapping component names to their Component objects
-        :rtype: Dict[str, Component]
+        :rtype: dict[str, Component]
         """
         return self._components
 
     @property
-    def main(self) -> Optional[Callable[..., None]]:
+    def main(self) -> Callable[..., None] | None:
         """
         Get the main function for this component.
         
         :return: The main callable function, or None if not set
-        :rtype: Optional[Callable[..., None]]
+        :rtype: Callable[..., None] | None
         """
         return self._main
 
     @property
-    def threads(self) -> Dict[str, Callable]:
+    def threads(self) -> dict[str, Callable]:
         """
         Get the dictionary of thread functions for this component.
         
         :return: Dictionary mapping thread names to their callable functions
-        :rtype: Dict[str, Callable]
+        :rtype: dict[str, Callable]
         """
         return self._threads

@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from .netprotocol import DEFAULT_SHM_SIZE
 from .addressable import Addressable
@@ -51,9 +51,9 @@ class OutputStream(Stream):
     :param msg_type: The type of messages this output stream will send
     :type msg_type: Any
     :param host: Optional host address for network publishing
-    :type host: Optional[str]
-    :param port: Optional port number for network publishing  
-    :type port: Optional[int]
+    :type host: str | None
+    :param port: Optional port number for network publishing
+    :type port: int | None
     :param num_buffers: Number of message buffers to allocate (default: 32)
     :type num_buffers: int
     :param buf_size: Size of each message buffer in bytes
@@ -62,8 +62,8 @@ class OutputStream(Stream):
     :type force_tcp: bool
     """
 
-    host: Optional[str]
-    port: Optional[int]
+    host: str | None
+    port: int | None
     num_buffers: int
     buf_size: int
     force_tcp: bool
@@ -71,8 +71,8 @@ class OutputStream(Stream):
     def __init__(
         self,
         msg_type: Any,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        host: str | None = None,
+        port: int | None = None,
         num_buffers: int = 32,
         buf_size: int = DEFAULT_SHM_SIZE,
         force_tcp: bool = False,

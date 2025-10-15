@@ -13,7 +13,7 @@
 
 import ezmsg.core as ez
 from dataclasses import dataclass
-from typing import AsyncGenerator, Tuple
+from collections.abc import AsyncGenerator
 
 # Create a message type to pass between the Units.
 # Python dataclasses are great for arbitrary messages, but you can
@@ -174,7 +174,7 @@ class CountSystem(ez.Collection):
     # with true parallelism (goodbye Python GIL!)
     # Any remaining sub units not specified are all run in the
     # main process.
-    def process_components(self) -> Tuple[ez.Component, ...]:
+    def process_components(self) -> tuple[ez.Component, ...]:
         return (self.COUNT, self.ADD_ONE, self.PRINT)
 
 

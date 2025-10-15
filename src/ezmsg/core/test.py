@@ -1,7 +1,7 @@
    # tutorial_pipeline.py
 import ezmsg.core as ez
 from dataclasses import dataclass
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 class CountSettings(ez.Settings):
     iterations: int
