@@ -16,12 +16,8 @@ simple_graph_1 = [
     ("d", "e"),
 ]
 
-simple_graph_2 = [
-    ("w", "x"), 
-    ("w", "y"), 
-    ("x", "z"), 
-    ("y", "z")
-]
+simple_graph_2 = [("w", "x"), ("w", "y"), ("x", "z"), ("y", "z")]
+
 
 @pytest.mark.asyncio
 async def test_pub_first():
@@ -90,10 +86,9 @@ async def test_comms_simple():
         await context.connect("a", "b")
         a_pub = await context.publisher("a")
         await a_pub.broadcast("HELLO")
-        print('DONE BROADCASTING')
+        print("DONE BROADCASTING")
         msg = await b_sub.recv()
         assert msg == "HELLO"
-
 
 
 @pytest.mark.asyncio
@@ -235,8 +230,8 @@ class Sender(AsyncProcess):
             if start is not None:
                 delta = time.perf_counter() - start
                 message_rate = int(self.n_msgs / delta)
-                print(f"{ message_rate } msgs/sec")
-                print(f"{ msg_size * message_rate / 1024 / 1024 / 1024 } GB/sec")
+                print(f"{message_rate} msgs/sec")
+                print(f"{msg_size * message_rate / 1024 / 1024 / 1024} GB/sec")
 
             await asyncio.get_running_loop().run_in_executor(
                 None, self.stop_barrier.wait

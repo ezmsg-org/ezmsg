@@ -42,22 +42,19 @@ class Subscriber:
 
     @classmethod
     async def create(
-        cls, 
-        topic: str, 
-        graph_address: AddressType | None, 
-        **kwargs
+        cls, topic: str, graph_address: AddressType | None, **kwargs
     ) -> "Subscriber":
         reader, writer = await GraphService(graph_address).open_connection()
         writer.write(Command.SUBSCRIBE.value)
         writer.write(encode_str(topic))
         sub_id_str = await read_str(reader)
         sub_id = UUID(sub_id_str)
-        
+
         sub = cls(sub_id, topic, graph_address, **kwargs)
 
         sub._graph_task = asyncio.create_task(
             sub._graph_connection(reader, writer),
-            name = f'sub-{sub.id}: _graph_connection'
+            name=f"sub-{sub.id}: _graph_connection",
         )
 
         # FIXME: We need to wait for _graph_task to service an UPDATE
@@ -65,16 +62,12 @@ class Subscriber:
         # subscriber ready for recv.
         await sub._initialized.wait()
 
-        logger.debug(f'created sub {sub.id=} {topic=}')
+        logger.debug(f"created sub {sub.id=} {topic=}")
 
         return sub
 
     def __init__(
-        self, 
-        id: UUID, 
-        topic: str, 
-        graph_address: AddressType | None,
-        **kwargs
+        self, id: UUID, topic: str, graph_address: AddressType | None, **kwargs
     ) -> None:
         """DO NOT USE this constructor, use Subscriber.create instead"""
         self.id = id
@@ -116,23 +109,27 @@ class Subscriber:
                     # event, which we wait on in Subscriber.create, releasing the
                     # block and returning a fully connected/ready subscriber.
                     # While this currently works, its non-obvious what this
-                    # accomplishes and why its implemented this way.  I just 
+                    # accomplishes and why its implemented this way.  I just
                     # wasted 2 hours removing this seemingly un-necessary event
-                    # to introduce a bug that is only resolved by reintroducing 
+                    # to introduce a bug that is only resolved by reintroducing
                     # the event.  Some thought should be put into replacing the
                     # bespoke communication protocol with something a bit more
                     # standard (JSON RPC?) with a more common/logical pattern
-                    # for creating/handling comms.  We will probably want to 
+                    # for creating/handling comms.  We will probably want to
                     # keep the bespoke comms for the publisher->channel link
                     # as that is in the hot path.
                     self._initialized.set()
 
                 elif cmd == Command.UPDATE.value:
                     update = await read_str(reader)
-                    pub_ids = set([UUID(id) for id in update.split(',')]) if update else set()
+                    pub_ids = (
+                        set([UUID(id) for id in update.split(",")]) if update else set()
+                    )
 
                     for pub_id in set(pub_ids - self._cur_pubs):
-                        channel = await CHANNELS.register(pub_id, self.id, self._incoming, self._graph_address)
+                        channel = await CHANNELS.register(
+                            pub_id, self.id, self._incoming, self._graph_address
+                        )
                         self._channels[pub_id] = channel
 
                     for pub_id in set(self._cur_pubs - pub_ids):
@@ -167,5 +164,3 @@ class Subscriber:
 
         with self._channels[pub_id].get(msg_id, self.id) as msg:
             yield msg
-
-  

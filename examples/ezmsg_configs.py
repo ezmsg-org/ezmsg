@@ -240,5 +240,5 @@ if __name__ == "__main__":
     ]
 
     for system in test_systems:
-        ez.logger.info(f"Testing { system.__name__ }")
+        ez.logger.info(f"Testing {system.__name__}")
         ez.run(system())

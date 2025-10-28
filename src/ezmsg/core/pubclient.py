@@ -92,13 +92,13 @@ class Publisher:
 
         pub_id = UUID(await read_str(reader))
         pub = cls(
-            id = pub_id,
-            topic = topic, 
-            shm = shm, 
-            graph_address = graph_address, 
-            num_buffers = num_buffers, 
-            start_paused = start_paused, 
-            force_tcp = force_tcp
+            id=pub_id,
+            topic=topic,
+            shm=shm,
+            graph_address=graph_address,
+            num_buffers=num_buffers,
+            start_paused=start_paused,
+            force_tcp=force_tcp,
         )
 
         start_port = int(
@@ -107,33 +107,32 @@ class Publisher:
         sock = create_socket(host, port, start_port=start_port)
         server = await asyncio.start_server(pub._channel_connect, sock=sock)
         pub._connection_task = asyncio.create_task(
-            pub._serve_channels(server), 
-            name = f'pub-{pub.id}: {pub.topic}'
+            pub._serve_channels(server), name=f"pub-{pub.id}: {pub.topic}"
         )
 
         # Notify GraphServer that our server is up
         channel_server_address = Address(*sock.getsockname())
         channel_server_address.to_stream(writer)
-        result = await reader.read(1) # channels connect
+        result = await reader.read(1)  # channels connect
         if result != Command.COMPLETE.value:
-            logger.warning(f'Could not create publisher {topic=}')
+            logger.warning(f"Could not create publisher {topic=}")
 
-        # Pass off graph connection keep-alive to publisher task 
+        # Pass off graph connection keep-alive to publisher task
         pub._graph_task = asyncio.create_task(
             pub._graph_connection(reader, writer),
-            name = f'pub-{pub.id}: _graph_connection'
+            name=f"pub-{pub.id}: _graph_connection",
         )
 
         pub._local_channel = await CHANNELS.register_local_pub(
-            pub_id = pub.id, 
-            local_backpressure = pub._backpressure,
-            graph_address = pub._graph_address, 
+            pub_id=pub.id,
+            local_backpressure=pub._backpressure,
+            graph_address=pub._graph_address,
         )
 
-        logger.debug(f'created pub {pub.id=} {topic=} {channel_server_address=}')
+        logger.debug(f"created pub {pub.id=} {topic=} {channel_server_address=}")
 
         return pub
-    
+
     async def _serve_channels(self, server: asyncio.Server) -> None:
         try:
             await server.serve_forever()
@@ -231,7 +230,7 @@ class Publisher:
 
         if len(cmd) == 0:
             return
-        
+
         if cmd == Command.CHANNEL.value:
             channel_id_str = await read_str(reader)
             channel_id = UUID(channel_id_str)
@@ -300,19 +299,29 @@ class Publisher:
         # Get local channel and put variable there for local tx
         self._local_channel.put_local(self._msg_id, obj)
 
-        if self._force_tcp or any(ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()):
-            with MessageMarshal.serialize(self._msg_id, obj) as (total_size, header, buffers):
+        if self._force_tcp or any(
+            ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()
+        ):
+            with MessageMarshal.serialize(self._msg_id, obj) as (
+                total_size,
+                header,
+                buffers,
+            ):
                 total_size_bytes = uint64_to_bytes(total_size)
 
-                if not self._force_tcp and any(ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()):
+                if not self._force_tcp and any(
+                    ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()
+                ):
                     if self._shm.buf_size < total_size:
-                        new_shm = await GraphService(self._graph_address).create_shm(self._num_buffers, total_size * 2)
-                        
+                        new_shm = await GraphService(self._graph_address).create_shm(
+                            self._num_buffers, total_size * 2
+                        )
+
                         for i in range(self._num_buffers):
                             with self._shm.buffer(i, readonly=True) as from_buf:
                                 with new_shm.buffer(i) as to_buf:
                                     MessageMarshal.copy_obj(from_buf, to_buf)
-                        
+
                         self._shm.close()
                         self._shm = new_shm
 
@@ -320,26 +329,29 @@ class Publisher:
                         MessageMarshal._write(mem, header, buffers)
 
                 for channel in self._channels.values():
-
                     if self.pid == channel.pid and channel.shm_ok:
-                        continue # Local transmission handled by channel.put
+                        continue  # Local transmission handled by channel.put
 
-                    elif (not self._force_tcp) and self.pid != channel.pid and channel.shm_ok:
+                    elif (
+                        (not self._force_tcp)
+                        and self.pid != channel.pid
+                        and channel.shm_ok
+                    ):
                         channel.writer.write(
-                            Command.TX_SHM.value + \
-                            msg_id_bytes + \
-                            encode_str(self._shm.name)
+                            Command.TX_SHM.value
+                            + msg_id_bytes
+                            + encode_str(self._shm.name)
                         )
 
                     else:
                         channel.writer.write(
-                            Command.TX_TCP.value + \
-                            msg_id_bytes + \
-                            total_size_bytes + \
-                            header + \
-                            b''.join([buffer for buffer in buffers])
+                            Command.TX_TCP.value
+                            + msg_id_bytes
+                            + total_size_bytes
+                            + header
+                            + b"".join([buffer for buffer in buffers])
                         )
-                    
+
                     try:
                         await channel.writer.drain()
                         self._backpressure.lease(channel.id, buf_idx)

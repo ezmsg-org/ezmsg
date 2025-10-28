@@ -20,7 +20,6 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR, ZERO_COPY_ATTR
 
 from .graphcontext import GraphContext
-from .graphserver import GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
@@ -181,7 +180,7 @@ class DefaultBackendProcess(BackendProcess):
             logger.debug("Waiting at start barrier!")
             self.start_barrier.wait()
 
-            threads = [
+            [
                 loop.run_in_executor(None, thread_fn, unit)
                 for unit in self.units
                 for thread_fn in unit.threads.values()

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import typing
 
-from uuid import UUID
 from dataclasses import dataclass, field
 from contextlib import contextmanager, suppress
 from multiprocessing import resource_tracker
@@ -41,6 +40,7 @@ def _ignore_shm(name, rtype):
     if rtype == "shared_memory":
         return
     return resource_tracker._resource_tracker.register(self, name, rtype)  # noqa: F821
+
 
 @contextmanager
 def _untracked_shm() -> typing.Generator[None, None, None]:
@@ -87,11 +87,10 @@ class SHMContext:
     ) -> "SHMContext":
         context = cls(shm_name)
         context._graph_task = asyncio.create_task(
-            context._graph_connection(reader, writer), 
-            name=f"{context.name}_monitor"
+            context._graph_connection(reader, writer), name=f"{context.name}_monitor"
         )
         return context
-    
+
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -125,7 +124,7 @@ class SHMContext:
     async def wait_closed(self) -> None:
         with suppress(asyncio.CancelledError):
             await self._graph_task
-            
+
     @property
     def name(self) -> str:
         return self._shm.name
@@ -133,7 +132,7 @@ class SHMContext:
     @property
     def size(self) -> int:
         return self.buf_size - 16  # 16 byte header
-    
+
     # This seems like it shouldn't be a thing.
     # async def close_shm(self) -> None:
     #     while True:
@@ -152,16 +151,14 @@ class SHMInfo:
     leases: typing.Set["asyncio.Task[None]"] = field(default_factory=set)
 
     @classmethod
-    def create(
-        cls, num_buffers: int, buf_size: int
-    ) -> "SHMInfo":
-        buf_size += 16 * num_buffers # Repeated header info makes this a bit bigger
+    def create(cls, num_buffers: int, buf_size: int) -> "SHMInfo":
+        buf_size += 16 * num_buffers  # Repeated header info makes this a bit bigger
         shm = SharedMemory(size=num_buffers * buf_size, create=True)
         shm.buf[:] = b"0" * len(shm.buf)  # Guarantee zeros
         shm.buf[0:8] = uint64_to_bytes(num_buffers)
         shm.buf[8:16] = uint64_to_bytes(buf_size)
         return cls(shm)
-    
+
     def lease(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> "asyncio.Task[None]":
@@ -169,7 +166,7 @@ class SHMInfo:
         lease.add_done_callback(self._release)
         self.leases.add(lease)
         return lease
-    
+
     async def _wait_for_eof(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:

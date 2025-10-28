@@ -12,7 +12,7 @@ from ..messagecodec import MessageDecoder
 from .envinfo import TestEnvironmentInfo, format_env_diff
 from .run import get_datestamp
 from .impl import (
-    TestParameters, 
+    TestParameters,
     Metrics,
     TestLogEntry,
 )
@@ -21,15 +21,15 @@ import ezmsg.core as ez
 
 try:
     import xarray as xr
-    import pandas as pd # xarray depends on pandas
+    import pandas as pd  # xarray depends on pandas
 except ImportError:
-    ez.logger.error('ezmsg perf analysis requires xarray')
+    ez.logger.error("ezmsg perf analysis requires xarray")
     raise
 
 try:
     import numpy as np
 except ImportError:
-    ez.logger.error('ezmsg perf analysis requires numpy')
+    ez.logger.error("ezmsg perf analysis requires numpy")
     raise
 
 TEST_DESCRIPTION = """
@@ -58,15 +58,14 @@ Metrics:
 
 
 def load_perf(perf: Path) -> xr.Dataset:
-
     params: typing.List[TestParameters] = []
     results: typing.List[typing.List[Metrics]] = []
 
-    with open(perf, 'r') as perf_f:
-        info: TestEnvironmentInfo = json.loads(next(perf_f), cls = MessageDecoder)
+    with open(perf, "r") as perf_f:
+        info: TestEnvironmentInfo = json.loads(next(perf_f), cls=MessageDecoder)
 
         for line in perf_f:
-            obj: TestLogEntry = json.loads(line, cls = MessageDecoder)
+            obj: TestLogEntry = json.loads(line, cls=MessageDecoder)
             params.append(obj.params)
             results.append(obj.results)
 
@@ -75,39 +74,46 @@ def load_perf(perf: Path) -> xr.Dataset:
     comms_axis = list(sorted(set([p.comms for p in params])))
     config_axis = list(sorted(set([p.config for p in params])))
 
-    dims = ['n_clients', 'msg_size', 'comms', 'config']
+    dims = ["n_clients", "msg_size", "comms", "config"]
     coords = {
-        'n_clients': n_clients_axis,
-        'msg_size': msg_size_axis,
-        'comms': comms_axis,
-        'config': config_axis
+        "n_clients": n_clients_axis,
+        "msg_size": msg_size_axis,
+        "comms": comms_axis,
+        "config": config_axis,
     }
-    
+
     data_vars = {}
     for field in dataclasses.fields(Metrics):
-        m = np.zeros((
-            len(n_clients_axis), 
-            len(msg_size_axis), 
-            len(comms_axis), 
-            len(config_axis)
-        )) * np.nan
+        m = (
+            np.zeros(
+                (
+                    len(n_clients_axis),
+                    len(msg_size_axis),
+                    len(comms_axis),
+                    len(config_axis),
+                )
+            )
+            * np.nan
+        )
         for p, r in zip(params, results):
             # tests are run multiple times; get the median value for each metric
             values = list(sorted([getattr(v, field.name) for v in r]))
-            value = values[len(values)//2]
+            value = values[len(values) // 2]
             m[
                 n_clients_axis.index(p.n_clients),
                 msg_size_axis.index(p.msg_size),
                 comms_axis.index(p.comms),
-                config_axis.index(p.config)
+                config_axis.index(p.config),
             ] = value
-        data_vars[field.name] = xr.DataArray(m, dims = dims, coords = coords)
+        data_vars[field.name] = xr.DataArray(m, dims=dims, coords=coords)
 
-    dataset = xr.Dataset(data_vars, attrs = dict(info = info))
+    dataset = xr.Dataset(data_vars, attrs=dict(info=info))
     return dataset
+
 
 def _escape(s: str) -> str:
     return html.escape(str(s), quote=True)
+
 
 def _env_block(title: str, body: str) -> str:
     return f"""
@@ -116,6 +122,7 @@ def _env_block(title: str, body: str) -> str:
       <pre>{_escape(body).strip()}</pre>
     </section>
     """
+
 
 def _legend_block() -> str:
     return """
@@ -128,6 +135,7 @@ def _legend_block() -> str:
       </ul>
     </section>
     """
+
 
 def _base_css() -> str:
     # Minimal, print-friendly CSS + color scales for cells.
@@ -233,7 +241,10 @@ def _base_css() -> str:
     </style>
     """
 
-def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 5.0) -> str:
+
+def _color_for_comparison(
+    value: float, metric: str, noise_band_pct: float = 5.0
+) -> str:
     """
     Returns inline CSS background for a comparison % value.
     value: e.g., 97.3, 104.8, etc.
@@ -246,11 +257,11 @@ def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 5.0
 
     delta = value - 100.0
     # Determine direction: + is good for sample/data; - is good for latency
-    if 'rate' in metric:
+    if "rate" in metric:
         # positive delta good, negative bad
         magnitude = abs(delta)
         sign_good = delta > 0
-    elif 'latency' in metric:
+    elif "latency" in metric:
         # negative delta good (lower latency)
         magnitude = abs(delta)
         sign_good = delta < 0
@@ -271,6 +282,7 @@ def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 5.0
     alpha = 0.15 + 0.35 * scale  # 0.15..0.50
     return f"background-color: hsla({hue}, 70%, 45%, {alpha});"
 
+
 def _format_number(x) -> str:
     if isinstance(x, (int,)) and not isinstance(x, bool):
         return f"{x:d}"
@@ -283,13 +295,13 @@ def _format_number(x) -> str:
 
 
 def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> None:
-    """ print perf test results and comparisons to the console """
+    """print perf test results and comparisons to the console"""
 
-    output = ''
+    output = ""
 
     perf = load_perf(perf_path)
-    info: TestEnvironmentInfo = perf.attrs['info']
-    output += str(info) + '\n\n'
+    info: TestEnvironmentInfo = perf.attrs["info"]
+    output += str(info) + "\n\n"
 
     relative = False
     env_diff = None
@@ -298,19 +310,19 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         output += "PERFORMANCE COMPARISON\n\n"
         baseline = load_perf(baseline_path)
         perf = (perf / baseline) * 100.0
-        baseline_info: TestEnvironmentInfo = baseline.attrs['info']
+        baseline_info: TestEnvironmentInfo = baseline.attrs["info"]
         env_diff = format_env_diff(info.diff(baseline_info))
-        output += env_diff + '\n\n'
+        output += env_diff + "\n\n"
 
-    # These raw stats are still valuable to have, but are confusing 
+    # These raw stats are still valuable to have, but are confusing
     # when making relative comparisons
-    perf = perf.drop_vars(['latency_total', 'num_msgs'])
+    perf = perf.drop_vars(["latency_total", "num_msgs"])
     df = perf.squeeze().to_dataframe()
 
-    for _, config_ds in perf.groupby('config'):
-        for _, comms_ds in config_ds.groupby('comms'):
-            output += str(comms_ds.squeeze().to_dataframe()) + '\n\n'
-        output += '\n'
+    for _, config_ds in perf.groupby("config"):
+        for _, comms_ds in config_ds.groupby("comms"):
+            output += str(comms_ds.squeeze().to_dataframe()) + "\n\n"
+        output += "\n"
 
     print(output)
 
@@ -322,14 +334,18 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
             raise ValueError(f"Missing expected columns in dataset: {missing}")
 
         # We'll render a table per (config, comms) group.
-        groups = df.reset_index().sort_values(
-            by=["config", "comms", "n_clients", "msg_size"]
-        ).groupby(["config", "comms"], sort=False)
+        groups = (
+            df.reset_index()
+            .sort_values(by=["config", "comms", "n_clients", "msg_size"])
+            .groupby(["config", "comms"], sort=False)
+        )
 
         # Build HTML
         parts: list[str] = []
         parts.append("<!doctype html><html><head><meta charset='utf-8'>")
-        parts.append("<meta name='viewport' content='width=device-width, initial-scale=1' />")
+        parts.append(
+            "<meta name='viewport' content='width=device-width, initial-scale=1' />"
+        )
         parts.append("<title>ezmsg perf report</title>")
         parts.append(_base_css())
         parts.append("</head><body><div class='wrap'>")
@@ -338,7 +354,7 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         parts.append("<h1>ezmsg Performance Report</h1>")
         sub = str(perf_path)
         if baseline_path is not None:
-            sub += f' relative to {str(baseline_path)}'
+            sub += f" relative to {str(baseline_path)}"
         parts.append(f"<div class='sub'>{_escape(sub)}</div>")
         parts.append("</header>")
 
@@ -358,11 +374,20 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         # Render each group
         for (config, comms), g in groups:
             # Keep only expected columns in order
-            cols = ["n_clients", "msg_size", "sample_rate", "data_rate", "latency_mean", "latency_median"]
+            cols = [
+                "n_clients",
+                "msg_size",
+                "sample_rate",
+                "data_rate",
+                "latency_mean",
+                "latency_median",
+            ]
             g = g[cols].copy()
 
             # String format some columns (msg_size with separators)
-            g["msg_size"] = g["msg_size"].map(lambda x: f"{int(x):,}" if pd.notna(x) else x)
+            g["msg_size"] = g["msg_size"].map(
+                lambda x: f"{int(x):,}" if pd.notna(x) else x
+            )
 
             # Build table manually so we can inject inline cell styles easily
             # (pandas Styler is great but produces bulky HTML; manual keeps it clean)
@@ -370,24 +395,31 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
             <thead>
             <tr>
                 <th>n_clients</th>
-                <th>msg_size {'' if relative else '(b)'}</th>
-                <th>sample_rate {'' if relative else '(msgs/s)'}</th>
-                <th>data_rate {'' if relative else '(MB/s)'}</th>
-                <th>latency_mean {'' if relative else '(us)'}</th>
-                <th>latency_median {'' if relative else '(us)'}<th>
+                <th>msg_size {"" if relative else "(b)"}</th>
+                <th>sample_rate {"" if relative else "(msgs/s)"}</th>
+                <th>data_rate {"" if relative else "(MB/s)"}</th>
+                <th>latency_mean {"" if relative else "(us)"}</th>
+                <th>latency_median {"" if relative else "(us)"}<th>
             </tr>
             </thead>
             """
             body_rows: list[str] = []
             for _, row in g.iterrows():
-                sr, dr, lt, lm = row["sample_rate"], row["data_rate"], row["latency_mean"], row["latency_median"]
+                sr, dr, lt, lm = (
+                    row["sample_rate"],
+                    row["data_rate"],
+                    row["latency_mean"],
+                    row["latency_median"],
+                )
                 dr = dr if relative else dr / 2**20
                 lt = lt if relative else lt * 1e6
                 lm = lm if relative else lm * 1e6
                 sr_style = _color_for_comparison(sr, "sample_rate") if relative else ""
                 dr_style = _color_for_comparison(dr, "data_rate") if relative else ""
                 lt_style = _color_for_comparison(lt, "latency_mean") if relative else ""
-                lm_style = _color_for_comparison(lm, "latency_median") if relative else ""
+                lm_style = (
+                    _color_for_comparison(lm, "latency_median") if relative else ""
+                )
 
                 body_rows.append(
                     "<tr>"
@@ -411,13 +443,13 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         parts.append("</div></body></html>")
         html_text = "".join(parts)
 
-        out_path = Path(f'report_{get_datestamp()}.html')
+        out_path = Path(f"report_{get_datestamp()}.html")
         out_path.write_text(html_text, encoding="utf-8")
         webbrowser.open(out_path.resolve().as_uri())
 
 
 def setup_summary_cmdline(subparsers: argparse._SubParsersAction) -> None:
-    p_summary = subparsers.add_parser("summary", help = "summarize performance results")
+    p_summary = subparsers.add_parser("summary", help="summarize performance results")
     p_summary.add_argument(
         "perf",
         type=Path,
@@ -432,12 +464,12 @@ def setup_summary_cmdline(subparsers: argparse._SubParsersAction) -> None:
     )
     p_summary.add_argument(
         "--html",
-        action = 'store_true',
-        help = "generate an html output file and render results in browser",
+        action="store_true",
+        help="generate an html output file and render results in browser",
     )
 
-    p_summary.set_defaults(_handler=lambda ns: summary(
-        perf_path = ns.perf,
-        baseline_path = ns.baseline,
-        html = ns.html
-    ))
+    p_summary.set_defaults(
+        _handler=lambda ns: summary(
+            perf_path=ns.perf, baseline_path=ns.baseline, html=ns.html
+        )
+    )

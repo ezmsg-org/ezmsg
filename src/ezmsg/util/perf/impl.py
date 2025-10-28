@@ -20,19 +20,23 @@ def collect(
     process_components: typing.Collection[ez.Component] | None = None,
     **components_kwargs: ez.Component,
 ) -> ez.Collection:
-    """ collect a grouping of pre-configured components into a new "Collection" """
+    """collect a grouping of pre-configured components into a new "Collection" """
     from ezmsg.core.util import either_dict_or_kwargs
-    
+
     components = either_dict_or_kwargs(components, components_kwargs, "collect")
     if components is None:
         raise ValueError("Must supply at least one component to run")
-    
+
     out = ez.Collection()
     for name, comp in components.items():
         comp._set_name(name)
-    out._components = components # FIXME: Component._components should be typehinted as a Mapping
+    out._components = (
+        components  # FIXME: Component._components should be typehinted as a Mapping
+    )
     out.network = lambda: network
-    out.process_components = lambda: (out,) if process_components is None else process_components
+    out.process_components = (
+        lambda: (out,) if process_components is None else process_components
+    )
     return out
 
 
@@ -89,12 +93,13 @@ class LoadTestSender(ez.Unit):
                     dynamic_data=np.zeros(
                         int(self.SETTINGS.dynamic_size // 8), dtype=np.float32
                     ),
-                    key = self.name,
+                    key=self.name,
                 ),
             )
             self.counter += 1
         ez.logger.info("Exiting publish")
         raise ez.Complete
+
 
 class LoadTestSource(LoadTestSender):
     async def shutdown(self) -> None:
@@ -106,7 +111,7 @@ class LoadTestRelay(ez.Unit):
     INPUT = ez.InputStream(LoadTestSample)
     OUTPUT = ez.OutputStream(LoadTestSample)
 
-    @ez.subscriber(INPUT, zero_copy = True)
+    @ez.subscriber(INPUT, zero_copy=True)
     @ez.publisher(OUTPUT)
     async def on_msg(self, msg: LoadTestSample) -> typing.AsyncGenerator:
         yield self.OUTPUT, msg
@@ -129,9 +134,7 @@ class LoadTestReceiver(ez.Unit):
     async def receive(self, sample: LoadTestSample) -> None:
         counter = self.STATE.counters.get(sample.key, -1)
         if sample.counter != counter + 1:
-            ez.logger.warning(
-                f"{sample.counter - counter - 1} samples skipped!"
-            )
+            ez.logger.warning(f"{sample.counter - counter - 1} samples skipped!")
         self.STATE.received_data.append(
             (sample._timestamp, time.time(), sample.counter)
         )
@@ -139,7 +142,6 @@ class LoadTestReceiver(ez.Unit):
 
 
 class LoadTestSink(LoadTestReceiver):
-
     @ez.task
     async def terminate(self) -> None:
         ez.logger.info(f"Load test subscriber started. (PID: {os.getpid()})")
@@ -151,6 +153,7 @@ class LoadTestSink(LoadTestReceiver):
 
 ### TEST CONFIGURATIONS
 
+
 @dataclasses.dataclass
 class ConfigSettings:
     n_clients: int
@@ -158,11 +161,13 @@ class ConfigSettings:
     source: LoadTestSource
     sink: LoadTestSink
 
+
 Configuration = typing.Tuple[typing.Iterable[ez.Component], ez.NetworkDefinition]
 Configurator = typing.Callable[[ConfigSettings], Configuration]
 
+
 def fanout(config: ConfigSettings) -> Configuration:
-    """ one pub to many subs """
+    """one pub to many subs"""
     connections: ez.NetworkDefinition = [(config.source.OUTPUT, config.sink.INPUT)]
     subs = [LoadTestReceiver(config.settings) for _ in range(config.n_clients)]
     for sub in subs:
@@ -170,8 +175,9 @@ def fanout(config: ConfigSettings) -> Configuration:
 
     return subs, connections
 
+
 def fanin(config: ConfigSettings) -> Configuration:
-    """ many pubs to one sub """
+    """many pubs to one sub"""
     connections: ez.NetworkDefinition = [(config.source.OUTPUT, config.sink.INPUT)]
     pubs = [LoadTestSender(config.settings) for _ in range(config.n_clients)]
     for pub in pubs:
@@ -180,7 +186,7 @@ def fanin(config: ConfigSettings) -> Configuration:
 
 
 def relay(config: ConfigSettings) -> Configuration:
-    """ one pub to one sub through many relays """
+    """one pub to one sub through many relays"""
     connections: ez.NetworkDefinition = []
 
     relays = [LoadTestRelay(config.settings) for _ in range(config.n_clients)]
@@ -189,17 +195,16 @@ def relay(config: ConfigSettings) -> Configuration:
         for from_relay, to_relay in zip(relays[:-1], relays[1:]):
             connections.append((from_relay.OUTPUT, to_relay.INPUT))
         connections.append((relays[-1].OUTPUT, config.sink.INPUT))
-    else: connections.append((config.source.OUTPUT, config.sink.INPUT))
+    else:
+        connections.append((config.source.OUTPUT, config.sink.INPUT))
 
     return relays, connections
 
+
 CONFIGS: typing.Mapping[str, Configurator] = {
-    c.__name__: c for c in [
-        fanin, 
-        fanout, 
-        relay
-    ]
+    c.__name__: c for c in [fanin, fanout, relay]
 }
+
 
 class Communication(enum.StrEnum):
     LOCAL = "local"
@@ -207,28 +212,28 @@ class Communication(enum.StrEnum):
     SHM_SPREAD = "shm_spread"
     TCP = "tcp"
     TCP_SPREAD = "tcp_spread"
-    
+
+
 def perform_test(
     n_clients: int,
-    duration: float, 
-    msg_size: int, 
+    duration: float,
+    msg_size: int,
     buffers: int,
     comms: Communication,
-    config: Configurator
+    config: Configurator,
 ) -> Metrics:
-    
     settings = LoadTestSettings(
-        dynamic_size = int(msg_size), 
-        duration = duration, 
-        buffers = buffers, 
-        force_tcp = (comms in (Communication.TCP, Communication.TCP_SPREAD)),
+        dynamic_size=int(msg_size),
+        duration=duration,
+        buffers=buffers,
+        force_tcp=(comms in (Communication.TCP, Communication.TCP_SPREAD)),
     )
 
     source = LoadTestSource(settings)
     sink = LoadTestSink(settings)
-    
+
     components: typing.Mapping[str, ez.Component] = dict(
-        SINK = sink,
+        SINK=sink,
     )
 
     clients, connections = config(ConfigSettings(n_clients, settings, source, sink))
@@ -239,16 +244,15 @@ def perform_test(
         # Every component in the same process (this one)
         components["SOURCE"] = source
         for i, client in enumerate(clients):
-            components[f"CLIENT_{i+1}"] = client
+            components[f"CLIENT_{i + 1}"] = client
 
     else:
-
         if comms in (Communication.SHM_SPREAD, Communication.TCP_SPREAD):
             # Every component in its own process.
             components["SOURCE"] = source
             process_components.append(source)
             for i, client in enumerate(clients):
-                components[f'CLIENT_{i+1}'] = client
+                components[f"CLIENT_{i + 1}"] = client
                 process_components.append(client)
 
         else:
@@ -256,22 +260,21 @@ def perform_test(
             collect_comps: typing.Mapping[str, ez.Component] = dict()
             collect_comps["SOURCE"] = source
             for i, client in enumerate(clients):
-                collect_comps[f"CLIENT_{i+1}"] = client
-            proc_collection = collect(components = collect_comps)
+                collect_comps[f"CLIENT_{i + 1}"] = client
+            proc_collection = collect(components=collect_comps)
             components["PROC"] = proc_collection
             process_components = [proc_collection]
 
     ez.run(
-        components = components,
-        connections = connections,
-        process_components = process_components,
+        components=components,
+        connections=connections,
+        process_components=process_components,
     )
 
     return calculate_metrics(sink, duration)
 
 
 def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
-
     # Log some useful summary statistics
     min_timestamp = min(timestamp for timestamp, _, _ in sink.STATE.received_data)
     max_timestamp = max(timestamp for timestamp, _, _ in sink.STATE.received_data)
@@ -306,12 +309,12 @@ def calculate_metrics(sink: LoadTestSink, duration: float) -> Metrics:
         )
 
     return Metrics(
-        num_msgs = num_samples,
-        sample_rate = sample_rate,
-        latency_mean = latency_mean,
-        latency_median = latency_median,
-        latency_total = total_latency,
-        data_rate = data_rate
+        num_msgs=num_samples,
+        sample_rate=sample_rate,
+        latency_mean=latency_mean,
+        latency_median=latency_median,
+        latency_total=total_latency,
+        data_rate=data_rate,
     )
 
 

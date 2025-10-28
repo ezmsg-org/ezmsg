@@ -28,8 +28,7 @@ PUBLISHER_START_PORT_ENV = "EZMSG_PUBLISHER_PORT_START"
 PUBLISHER_START_PORT_DEFAULT = 25980
 
 GRAPHSERVER_ADDR = os.environ.get(
-    GRAPHSERVER_ADDR_ENV, 
-    f"{DEFAULT_HOST}:{GRAPHSERVER_PORT_DEFAULT}"
+    GRAPHSERVER_ADDR_ENV, f"{DEFAULT_HOST}:{GRAPHSERVER_PORT_DEFAULT}"
 )
 
 
@@ -175,7 +174,7 @@ class Command(enum.Enum):
     SHM_ATTACH = enum.auto()
 
     SHUTDOWN = enum.auto()
-    
+
     CHANNEL = enum.auto()
     SHM_OK = enum.auto()
     SHM_ATTACH_FAILED = enum.auto()
@@ -188,7 +187,6 @@ def create_socket(
     max_port: int = 65535,
     ignore_ports: typing.List[int] = RESERVED_PORTS,
 ) -> socket.socket:
-
     if host is None:
         host = DEFAULT_HOST
 
@@ -219,5 +217,5 @@ def create_socket(
 
         if not bound:
             raise IOError("Failed to bind socket; no free ports")
-    
+
     return sock
