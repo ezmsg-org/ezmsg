@@ -2,6 +2,7 @@ import os
 import asyncio
 import typing
 import logging
+import enum
 
 from uuid import UUID
 from contextlib import contextmanager, suppress
@@ -16,7 +17,6 @@ from .netprotocol import (
     Address,
     AddressType,
     read_str,
-    read_int,
     uint64_to_bytes,
     encode_str,
     close_stream_writer,
@@ -30,6 +30,262 @@ NotificationQueue = asyncio.Queue[typing.Tuple[UUID, int]]
 
 
 class CacheMiss(Exception): ...
+
+
+class PublisherProtocolState(enum.Enum):
+    # Handshake states
+    HANDSHAKE_SHM_NAME_LEN = enum.auto()
+    HANDSHAKE_SHM_NAME_DATA = enum.auto()
+    HANDSHAKE_COMPLETE = enum.auto()
+    HANDSHAKE_NUM_BUFFERS = enum.auto()
+    # Message states
+    COMMAND = enum.auto()
+    MSG_ID = enum.auto()
+    SHM_NAME_LEN = enum.auto()
+    SHM_NAME_DATA = enum.auto()
+    TCP_SIZE = enum.auto()
+    TCP_DATA = enum.auto()
+
+
+class PublisherMessage(typing.NamedTuple):
+    """Parsed message from publisher"""
+
+    msg_id: int
+    command: bytes
+    shm_name: str | None = None
+    tcp_data: bytes | None = None
+
+
+class PublisherProtocol(asyncio.Protocol):
+    """High-performance protocol for publisher message stream"""
+
+    def __init__(
+        self,
+        channel_id: str,
+        message_queue: asyncio.Queue[PublisherMessage],
+    ):
+        self.channel_id = channel_id
+        self.message_queue = message_queue
+        self.transport: asyncio.Transport | None = None
+
+        # Pre-allocate buffer with reasonable size (1MB)
+        # This avoids repeated reallocations during growth
+        self.buffer = bytearray(1024 * 1024)
+        self.buffer_size = 0  # Actual data in buffer
+        self.buffer_offset = 0  # Read position
+
+        # Handshake state
+        self.handshake_complete = asyncio.Future()
+        self.handshake_shm_received = asyncio.Event()
+        self.handshake_shm_name: str | None = None
+        self.num_buffers: int | None = None
+
+        # Parser state machine - start in handshake mode
+        self.state = PublisherProtocolState.HANDSHAKE_SHM_NAME_LEN
+        self.expected_bytes = 8  # Expecting shm_name length
+
+        # Message parsing state
+        self.current_msg_id: int | None = None
+        self.current_command: int | None = None  # Store as int, not bytes
+        self.payload_size: int | None = None
+        self.shm_name_len: int | None = None
+
+    def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore
+        assert transport is not None
+        self.transport = transport
+        logger.debug("PublisherProtocol connected")
+        # Send initial handshake
+        self.transport.write(Command.CHANNEL.value)
+        self.transport.write(encode_str(self.channel_id))
+
+    def send_handshake_response(self, shm_ok: bool, pid: int) -> None:
+        """Send SHM attachment response after Channel attaches"""
+        if shm_ok:
+            self.transport.write(Command.SHM_OK.value)
+        else:
+            self.transport.write(Command.SHM_ATTACH_FAILED.value)
+        self.transport.write(uint64_to_bytes(pid))
+        # Resume parsing - might have buffered data
+        while self._try_parse():
+            pass
+
+    def data_received(self, data: bytes) -> None:
+        """Hot path - called directly by event loop"""
+        data_len = len(data)
+
+        # Ensure buffer has space
+        if self.buffer_size + data_len > len(self.buffer):
+            # Compact buffer if offset is large enough
+            if self.buffer_offset > len(self.buffer) // 2:
+                remaining = self.buffer_size - self.buffer_offset
+                self.buffer[0:remaining] = self.buffer[
+                    self.buffer_offset : self.buffer_size
+                ]
+                self.buffer_offset = 0
+                self.buffer_size = remaining
+            else:
+                # Grow buffer
+                new_size = max(len(self.buffer) * 2, self.buffer_size + data_len)
+                self.buffer.extend(bytearray(new_size - len(self.buffer)))
+
+        # Copy data into buffer
+        self.buffer[self.buffer_size : self.buffer_size + data_len] = data
+        self.buffer_size += data_len
+
+        # Process as many complete messages as possible
+        while self._try_parse():
+            pass
+
+    def _try_parse(self) -> bool:
+        """State machine parser - returns True if made progress"""
+        available = self.buffer_size - self.buffer_offset
+        if available < self.expected_bytes:
+            return False
+
+        # Handshake states
+        if self.state == PublisherProtocolState.HANDSHAKE_SHM_NAME_LEN:
+            name_len = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.expected_bytes = name_len
+            self.state = PublisherProtocolState.HANDSHAKE_SHM_NAME_DATA
+            return True
+
+        elif self.state == PublisherProtocolState.HANDSHAKE_SHM_NAME_DATA:
+            shm_name = self.buffer[
+                self.buffer_offset : self.buffer_offset + self.expected_bytes
+            ].decode("utf-8")
+            self.buffer_offset += self.expected_bytes
+            self.handshake_shm_name = shm_name
+            self.handshake_shm_received.set()
+            self.state = PublisherProtocolState.HANDSHAKE_COMPLETE
+            self.expected_bytes = 1
+            return False  # Pause until handshake response is sent
+
+        elif self.state == PublisherProtocolState.HANDSHAKE_COMPLETE:
+            complete_byte = self.buffer[self.buffer_offset]
+            self.buffer_offset += 1
+            if complete_byte != Command.COMPLETE.value[0]:
+                logger.error("Handshake failed: did not receive COMPLETE")
+                if self.transport:
+                    self.transport.close()
+                return False
+            self.state = PublisherProtocolState.HANDSHAKE_NUM_BUFFERS
+            self.expected_bytes = 8
+            return True
+
+        elif self.state == PublisherProtocolState.HANDSHAKE_NUM_BUFFERS:
+            num_buffers = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.num_buffers = num_buffers
+            self.state = PublisherProtocolState.COMMAND
+            self.expected_bytes = 1
+            self.handshake_complete.set_result(num_buffers)
+            return True
+
+        # Message states
+        elif self.state == PublisherProtocolState.COMMAND:
+            cmd = self.buffer[self.buffer_offset]
+            self.buffer_offset += 1
+            self.current_command = cmd
+            self.state = PublisherProtocolState.MSG_ID
+            self.expected_bytes = 8  # uint64
+            return True
+
+        elif self.state == PublisherProtocolState.MSG_ID:
+            msg_id = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.current_msg_id = msg_id
+
+            if self.current_command == Command.TX_SHM.value[0]:
+                self.state = PublisherProtocolState.SHM_NAME_LEN
+                self.expected_bytes = 8
+            elif self.current_command == Command.TX_TCP.value[0]:
+                self.state = PublisherProtocolState.TCP_SIZE
+                self.expected_bytes = 8
+            else:
+                # Unknown command - queue it anyway
+                self.message_queue.put_nowait(
+                    PublisherMessage(
+                        msg_id=msg_id, command=bytes([self.current_command or 0])
+                    )
+                )
+                self._reset_state()
+            return True
+
+        elif self.state == PublisherProtocolState.SHM_NAME_LEN:
+            name_len = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.expected_bytes = name_len
+            self.state = PublisherProtocolState.SHM_NAME_DATA
+            return True
+
+        elif self.state == PublisherProtocolState.SHM_NAME_DATA:
+            shm_name = self.buffer[
+                self.buffer_offset : self.buffer_offset + self.expected_bytes
+            ].decode("utf-8")
+            self.buffer_offset += self.expected_bytes
+            if self.current_msg_id is not None and self.current_command is not None:
+                self.message_queue.put_nowait(
+                    PublisherMessage(
+                        msg_id=self.current_msg_id,
+                        command=bytes([self.current_command]),
+                        shm_name=shm_name,
+                    )
+                )
+            self._reset_state()
+            return True
+
+        elif self.state == PublisherProtocolState.TCP_SIZE:
+            buf_size = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.expected_bytes = buf_size
+            self.state = PublisherProtocolState.TCP_DATA
+            return True
+
+        elif self.state == PublisherProtocolState.TCP_DATA:
+            # Use bytes() here - memoryview causes issues with pickle/marshal
+            obj_bytes = bytes(
+                self.buffer[
+                    self.buffer_offset : self.buffer_offset + self.expected_bytes
+                ]
+            )
+            self.buffer_offset += self.expected_bytes
+            if self.current_msg_id is not None and self.current_command is not None:
+                self.message_queue.put_nowait(
+                    PublisherMessage(
+                        msg_id=self.current_msg_id,
+                        command=bytes([self.current_command]),
+                        tcp_data=obj_bytes,
+                    )
+                )
+            self._reset_state()
+            return True
+
+        return False
+
+    def _reset_state(self) -> None:
+        self.state = PublisherProtocolState.COMMAND
+        self.expected_bytes = 1
+        self.current_msg_id = None
+        self.current_command = None
+        self.payload_size = None
+        self.shm_name_len = None
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        if exc:
+            logger.debug(f"PublisherProtocol connection lost: {exc}")
+        else:
+            logger.debug("PublisherProtocol disconnected")
 
 
 class Channel:
@@ -49,8 +305,10 @@ class Channel:
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
-    _pub_task: asyncio.Task[None]
-    _pub_writer: asyncio.StreamWriter
+    _pub_protocol: PublisherProtocol
+    _pub_transport: asyncio.Transport
+    _pub_message_queue: asyncio.Queue[PublisherMessage]
+    _pub_process_task: asyncio.Task[None]
     _graph_address: AddressType | None
     _local_backpressure: Backpressure | None
 
@@ -97,26 +355,32 @@ class Channel:
         id_str = await read_str(graph_reader)
         pub_address = await Address.from_stream(graph_reader)
 
-        reader, writer = await asyncio.open_connection(*pub_address)
-        writer.write(Command.CHANNEL.value)
-        writer.write(encode_str(id_str))
+        # Create protocol and connect directly (no StreamReader!)
+        loop = asyncio.get_running_loop()
+        pub_message_queue: asyncio.Queue[PublisherMessage] = asyncio.Queue()
+        transport, protocol = await loop.create_connection(
+            lambda: PublisherProtocol(id_str, pub_message_queue),
+            *pub_address,
+        )
 
+        # Wait for protocol to receive shm_name
+        await protocol.handshake_shm_received.wait()
+        assert protocol.handshake_shm_name is not None
+
+        # Attach SHM
         shm = None
-        shm_name = await read_str(reader)
+        shm_ok = False
         try:
-            shm = await graph_service.attach_shm(shm_name)
-            writer.write(Command.SHM_OK.value)
+            shm = await graph_service.attach_shm(protocol.handshake_shm_name)
+            shm_ok = True
         except (ValueError, OSError):
-            writer.write(Command.SHM_ATTACH_FAILED.value)
-        writer.write(uint64_to_bytes(os.getpid()))
+            pass
 
-        result = await reader.read(1)
-        if result != Command.COMPLETE.value:
-            # NOTE: The only reason this would happen is if the
-            # publisher's writer is closed due to a crash or shutdown
-            raise ValueError(f"failed to create channel {pub_id=}")
+        # Tell protocol to send handshake response
+        protocol.send_handshake_response(shm_ok, os.getpid())
 
-        num_buffers = await read_int(reader)
+        # Wait for handshake to complete (protocol receives COMPLETE + num_buffers)
+        num_buffers = await protocol.handshake_complete
 
         chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
 
@@ -125,10 +389,15 @@ class Channel:
             name=f"chan-{chan.id}: _graph_connection",
         )
 
-        chan._pub_writer = writer
-        chan._pub_task = asyncio.create_task(
-            chan._publisher_connection(reader),
-            name=f"chan-{chan.id}: _publisher_connection",
+        # Set up publisher connection (protocol already connected!)
+        chan._pub_message_queue = pub_message_queue
+        chan._pub_protocol = protocol
+        chan._pub_transport = transport
+
+        # Single task to process messages from protocol
+        chan._pub_process_task = asyncio.create_task(
+            chan._process_publisher_messages(),
+            name=f"chan-{chan.id}: _process_messages",
         )
 
         logger.debug(f"created channel {chan.id=} {pub_id=} {pub_address=}")
@@ -139,7 +408,8 @@ class Channel:
         if self.shm is not None:
             self.shm.close()
         self._graph_task.cancel()
-        self._pub_task.cancel()
+        self._pub_transport.close()
+        self._pub_process_task.cancel()
 
     async def wait_closed(self) -> None:
         if self.shm is not None:
@@ -147,7 +417,7 @@ class Channel:
         with suppress(asyncio.CancelledError):
             await self._graph_task
         with suppress(asyncio.CancelledError):
-            await self._pub_task
+            await self._pub_process_task
 
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -169,63 +439,37 @@ class Channel:
         finally:
             await close_stream_writer(writer)
 
-    async def _publisher_connection(self, reader: asyncio.StreamReader) -> None:
-        try:
-            while True:
-                msg = await reader.read(1)
+    async def _process_publisher_messages(self) -> None:
+        """Process messages from PublisherProtocol queue"""
+        while True:
+            msg = await self._pub_message_queue.get()
+            buf_idx = msg.msg_id % self.num_buffers
 
-                if not msg:
-                    break
+            if msg.command == Command.TX_SHM.value and msg.shm_name is not None:
+                # Handle SHM message
+                needs_attach = self.shm is None or self.shm.name != msg.shm_name
 
-                msg_id = await read_int(reader)
-                buf_idx = msg_id % self.num_buffers
-
-                # # Profiling indicates its faster to repeatedly
-                # # reconstruct <=512kB msgs from memory for up to
-                # # about 4 subs -- deepcopy is about 4x slower
-                # # which I suspect will be majority of cases
-                # # With more than 4 subs, one deepcopy may be faster
-                # # for <=512kB msgs, but becomes remarkably time
-                # # consuming for >= 512kB msgs.
-                # cache_msg = len(self.clients) > 4
-
-                if msg == Command.TX_SHM.value:
-                    shm_name = await read_str(reader)
-
-                    if self.shm is not None and self.shm.name != shm_name:
+                if needs_attach:
+                    if self.shm is not None:
                         self.shm.close()
                         await self.shm.wait_closed()
-                        try:
-                            self.shm = await GraphService(
-                                self._graph_address
-                            ).attach_shm(shm_name)
-                        except ValueError:
-                            logger.info(
-                                "Invalid SHM received from publisher; may be dead"
-                            )
-                            raise
+                    try:
+                        self.shm = await GraphService(self._graph_address).attach_shm(
+                            msg.shm_name
+                        )
+                    except ValueError:
+                        logger.info("Invalid SHM received from publisher; may be dead")
+                        self._pub_transport.close()
+                        return
 
-                    # if cache_msg:
-                    #     ...
+            elif msg.command == Command.TX_TCP.value and msg.tcp_data is not None:
+                # Handle TCP message
+                self.tcp_cache[buf_idx] = memoryview(msg.tcp_data).toreadonly()
 
-                elif msg == Command.TX_TCP.value:
-                    buf_size = await read_int(reader)
-                    obj_bytes = await reader.readexactly(buf_size)
-                    self.tcp_cache[buf_idx] = memoryview(obj_bytes).toreadonly()
-
-                    # if cache_msg:
-                    #     ...
-
-                if not self._notify_clients(msg_id):
-                    # Nobody is listening; need to ack!
-                    self._acknowledge(msg_id)
-
-        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
-            logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
-
-        finally:
-            await close_stream_writer(self._pub_writer)
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+            # Notify clients
+            if not self._notify_clients(msg.msg_id):
+                # Nobody is listening; need to ack!
+                self._acknowledge(msg.msg_id)
 
     def _notify_clients(self, msg_id: int) -> bool:
         """notify interested clients and return true if any were notified"""
@@ -294,7 +538,7 @@ class Channel:
     def _acknowledge(self, msg_id: int) -> None:
         try:
             ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
-            self._pub_writer.write(ack)
+            self._pub_transport.write(ack)
         except (BrokenPipeError, ConnectionResetError):
             logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
