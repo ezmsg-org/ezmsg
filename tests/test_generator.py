@@ -160,7 +160,7 @@ def test_gen_to_unit_any():
     assert MyUnit.INPUT.msg_type is typing.Any
     assert hasattr(MyUnit, "OUTPUT")
     assert isinstance(MyUnit.OUTPUT, ez.stream.OutputStream)
-    assert MyUnit.OUTPUT.msg_type is list[typing.Any]
+    assert MyUnit.OUTPUT.msg_type == list[typing.Any]
 
     num_msgs = 5
     test_filename = get_test_fn()
