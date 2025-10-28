@@ -39,7 +39,6 @@ master_doc = "index"
 todo_include_todos = False
 
 # -- Autodoc configuration ------------------------------
-autodoc_mock_imports = ["scipy.special"]
 autodoc_typehints_format = "short"
 python_use_unqualified_type_names = True
 autodoc_type_aliases = {
@@ -51,8 +50,8 @@ autodoc_type_aliases = {
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
-    "numpy": ("https://docs.scipy.org/doc/numpy", None),
-    "scipy": ("https://docs.scipy.org/doc/scipy/reference", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
 }
 intersphinx_disabled_domains = ["std"]
 
