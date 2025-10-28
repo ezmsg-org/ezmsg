@@ -4,3 +4,4 @@ sphinxext.rediraffe
 myst_parser
 sphinx_design
 sphinx_autodoc_typehints
+sphinx_copybutton
