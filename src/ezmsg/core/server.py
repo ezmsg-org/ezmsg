@@ -29,8 +29,8 @@ class ThreadedAsyncServer(threading.Thread):
     _sock: socket.socket
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self) -> None:
-        super().__init__(daemon=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**{**kwargs, **dict(daemon=True)})
         self._server_up = threading.Event()
         self._shutdown = threading.Event()
 

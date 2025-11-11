@@ -45,7 +45,7 @@ class GraphServer(ThreadedAsyncServer):
     _command_lock: asyncio.Lock
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(name = "GraphServer")
         self.graph = DAG()
         self.clients = dict()
         self._client_tasks = dict()

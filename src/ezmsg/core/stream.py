@@ -15,7 +15,7 @@ class Stream(Addressable):
 
     def __repr__(self) -> str:
         _addr = self.address if self._location is not None else "unlocated"
-        return f"Stream:{_addr}[{self.msg_type}]"
+        return f"Stream:{_addr}[{self.msg_type.__name__}]"
 
 
 class InputStream(Stream):

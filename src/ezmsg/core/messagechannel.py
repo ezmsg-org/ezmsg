@@ -5,10 +5,11 @@ import logging
 import enum
 
 from uuid import UUID
-from contextlib import contextmanager, suppress
+from copy import deepcopy
+from contextlib import contextmanager, suppress, ExitStack
 
 from .shm import SHMContext
-from .messagemarshal import MessageMarshal, NO_MESSAGE
+from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
 
 from .graphserver import GraphService
@@ -297,7 +298,7 @@ class Channel:
     topic: str
 
     num_buffers: int
-    tcp_cache: typing.List[memoryview]
+    contexts: typing.List[typing.ContextManager | None]
     cache: typing.List[typing.Any]
     cache_id: typing.List[int | None]
     shm: SHMContext | None
@@ -325,7 +326,7 @@ class Channel:
         self.num_buffers = num_buffers
         self.shm = shm
 
-        self.tcp_cache = [memoryview(NO_MESSAGE)] * self.num_buffers
+        self.contexts = [None] * self.num_buffers
         self.cache_id = [None] * self.num_buffers
         self.cache = [None] * self.num_buffers
         self.backpressure = Backpressure(self.num_buffers)
@@ -405,20 +406,16 @@ class Channel:
         return chan
 
     def close(self) -> None:
-        if self.shm is not None:
-            self.shm.close()
         self._graph_task.cancel()
         self._pub_transport.close()
         self._pub_process_task.cancel()
 
     async def wait_closed(self) -> None:
-        if self.shm is not None:
-            await self.shm.wait_closed()
         with suppress(asyncio.CancelledError):
             await self._graph_task
         with suppress(asyncio.CancelledError):
             await self._pub_process_task
-
+                
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -440,36 +437,78 @@ class Channel:
             await close_stream_writer(writer)
 
     async def _process_publisher_messages(self) -> None:
-        """Process messages from PublisherProtocol queue"""
-        while True:
-            msg = await self._pub_message_queue.get()
-            buf_idx = msg.msg_id % self.num_buffers
+        try:
+            while True:
+                msg = await self._pub_message_queue.get()
+                buf_idx = msg.msg_id % self.num_buffers
+                
+                ctx: typing.ContextManager | None = None
+                value: typing.Any = None
 
-            if msg.command == Command.TX_SHM.value and msg.shm_name is not None:
-                # Handle SHM message
-                needs_attach = self.shm is None or self.shm.name != msg.shm_name
+                if msg.command == Command.TX_SHM.value:
+                    if self.shm is not None and self.shm.name != msg.shm_name:
 
-                if needs_attach:
-                    if self.shm is not None:
+                        shm_entries = []
+                        for i, c in enumerate(self.contexts):
+                            if isinstance(c, ExitStack):
+                                shm_entries.append(i)
+                                c.close()
+                            
                         self.shm.close()
                         await self.shm.wait_closed()
-                    try:
-                        self.shm = await GraphService(self._graph_address).attach_shm(
-                            msg.shm_name
-                        )
-                    except ValueError:
-                        logger.info("Invalid SHM received from publisher; may be dead")
-                        self._pub_transport.close()
-                        return
+                        try:
+                            self.shm = await GraphService(self._graph_address).attach_shm(msg.shm_name)
+                        except ValueError:
+                            logger.info(
+                                "Invalid SHM received from publisher; may be dead"
+                            )
+                            raise
 
-            elif msg.command == Command.TX_TCP.value and msg.tcp_data is not None:
-                # Handle TCP message
-                self.tcp_cache[buf_idx] = memoryview(msg.tcp_data).toreadonly()
+                        for i in shm_entries:
+                            stack = ExitStack()
+                            view = stack.enter_context(self.shm.buffer(i))
+                            assert MessageMarshal.msg_id(view) == self.cache_id[i]
+                            self.cache[i] = stack.enter_context(MessageMarshal.obj_from_mem(view))
+                            self.contexts[i] = stack
+                    
+                    assert self.shm is not None
 
-            # Notify clients
-            if not self._notify_clients(msg.msg_id):
-                # Nobody is listening; need to ack!
-                self._acknowledge(msg.msg_id)
+                    ctx = ExitStack()
+                    view = ctx.enter_context(self.shm.buffer(buf_idx))
+                    assert MessageMarshal.msg_id(view) == msg.msg_id
+                    value = ctx.enter_context(MessageMarshal.obj_from_mem(view))
+
+                elif msg.command == Command.TX_TCP.value and msg.tcp_data is not None:
+                    view = memoryview(msg.tcp_data).toreadonly()
+                    ctx = MessageMarshal.obj_from_mem(view)
+                    value = ctx.__enter__()
+
+                else:
+                    raise ValueError(f"unimplemented data telemetry: {msg}")
+
+                if self._notify_clients(msg.msg_id):
+                    self.cache_id[buf_idx] = msg.msg_id
+                    self.cache[buf_idx] = value
+                    self.contexts[buf_idx] = ctx
+                else:
+                    # Nobody is listening; need to ack!
+                    self._acknowledge(msg.msg_id)
+                    ctx.__exit__(None, None, None)
+        finally:
+            for i in range(self.num_buffers):
+                obj = self.cache[i]
+                self.cache[i] = None
+                del obj
+                
+                self.cache_id[i] = None
+                ctx = self.contexts[i]
+                if ctx is not None:
+                    ctx.__exit__(None, None, None)
+                self.contexts[i] = None
+
+            if self.shm is not None:
+                self.shm.close()
+            self.shm = None
 
     def _notify_clients(self, msg_id: int) -> bool:
         """notify interested clients and return true if any were notified"""
@@ -503,37 +542,29 @@ class Channel:
     ) -> typing.Generator[typing.Any, None, None]:
         """get object from cache; if not in cache and shm provided -- get from shm"""
 
-        dispatched = False
-
         buf_idx = msg_id % self.num_buffers
-        if self.cache_id[buf_idx] == msg_id:
-            dispatched = True
+        if self.cache_id[buf_idx] != msg_id:
+            raise CacheMiss
+        
+        try:
             yield self.cache[buf_idx]
+        finally:
+            self.backpressure.free(client_id, buf_idx)
+            if self.backpressure.buffers[buf_idx].is_empty:
 
-        elif self.shm is not None:
-            with self.shm.buffer(buf_idx, readonly=True) as mem:
-                if MessageMarshal.msg_id(mem) == msg_id:
-                    with MessageMarshal.obj_from_mem(mem) as obj:
-                        dispatched = True
-                        yield obj
+                # If pub is in same process as this channel, avoid TCP
+                if self._local_backpressure is not None:
+                    self._local_backpressure.free(self.id, buf_idx)
+                else:
+                    self._acknowledge(msg_id)
 
-        if not dispatched:
-            tcp_mem = self.tcp_cache[buf_idx]
-            if MessageMarshal.msg_id(tcp_mem) == msg_id:
-                with MessageMarshal.obj_from_mem(tcp_mem) as obj:
-                    dispatched = True
-                    yield obj
-            else:
-                raise CacheMiss
-
-        self.backpressure.free(client_id, buf_idx)
-        if self.backpressure.buffers[buf_idx].is_empty:
-            # If pub is in same process as this channel, avoid TCP
-            if self._local_backpressure is not None:
-                self._local_backpressure.free(self.id, buf_idx)
-                return
-
-            self._acknowledge(msg_id)
+                # Free cache and release contexts
+                self.cache[buf_idx] = None
+                self.cache_id[buf_idx] = None
+                ctx = self.contexts[buf_idx]
+                if ctx is not None:
+                    ctx.__exit__(None, None, None)
+                self.contexts[buf_idx] = None
 
     def _acknowledge(self, msg_id: int) -> None:
         try:

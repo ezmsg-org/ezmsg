@@ -141,11 +141,11 @@ class Subscriber:
 
                 else:
                     logger.warning(
-                        f"Subscriber {self.id} rx unknown command from GraphServer: {cmd}"
+                        f"Subscriber {self.topic}({self.id}) rx unknown command from GraphServer: {cmd}"
                     )
 
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Subscriber {self.id} lost connection to graph server")
+            logger.debug(f"Subscriber {self.topic}({self.id}) lost connection to graph server")
 
         finally:
             for pub_id in self._channels:
