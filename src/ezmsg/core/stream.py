@@ -37,6 +37,7 @@ class OutputStream(Stream):
     num_buffers: int
     buf_size: int
     force_tcp: bool
+    batch_write: bool
 
     def __init__(
         self,
@@ -46,6 +47,7 @@ class OutputStream(Stream):
         num_buffers: int = 32,
         buf_size: int = DEFAULT_SHM_SIZE,
         force_tcp: bool = False,
+        batch_write: bool = False,
     ) -> None:
         super().__init__(msg_type)
         self.host = host
@@ -53,7 +55,8 @@ class OutputStream(Stream):
         self.num_buffers = num_buffers
         self.buf_size = buf_size
         self.force_tcp = force_tcp
+        self.batch_write = batch_write
 
     def __repr__(self) -> str:
         preamble = f"Output{super().__repr__()}"
-        return f"{preamble}({self.num_buffers=}, {self.force_tcp=})"
+        return f"{preamble}({self.num_buffers=}, {self.force_tcp=}, {self.batch_write=})"
