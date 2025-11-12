@@ -9,7 +9,7 @@ from contextlib import contextmanager, suppress, ExitStack
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
-from .publisherprotocol import PublisherProtocol, PublisherMessage,
+from .publisherprotocol import PublisherProtocol, PublisherMessage
 from .graphserver import GraphService
 from .netprotocol import (
     Command,
