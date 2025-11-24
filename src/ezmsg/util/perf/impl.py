@@ -4,6 +4,7 @@ import os
 import time
 import typing
 import enum
+import sys
 
 import ezmsg.core as ez
 
@@ -18,6 +19,17 @@ except ImportError:
 
 from .util import stable_perf
 
+try:
+    StrEnum = enum.StrEnum  # type: ignore[attr-defined]
+except AttributeError:
+    class StrEnum(str, enum.Enum):
+        """Fallback for Python < 3.11 where enum.StrEnum is unavailable."""
+
+        pass
+
+TIME = time.monotonic
+if sys.platform.startswith('win'):
+    TIME = time.perf_counter
 
 def collect(
     components: typing.Optional[typing.Mapping[str, ez.Component]] = None,
@@ -71,8 +83,10 @@ class LoadTestSample:
     dynamic_data: np.ndarray
     key: str
 
+
 class LoadTestSourceState(ez.State):
     counter: int = 0
+
 
 class LoadTestSource(ez.Unit):
     OUTPUT = ez.OutputStream(LoadTestSample)
@@ -86,17 +100,16 @@ class LoadTestSource(ez.Unit):
     @ez.publisher(OUTPUT)
     async def publish(self) -> typing.AsyncGenerator:
         ez.logger.info(f"Load test publisher started. (PID: {os.getpid()})")
-        start_time = time.time()
+        start_time = TIME()
         for _ in range(self.SETTINGS.num_msgs):
-
-            current_time = time.time()
+            current_time = TIME()
             if current_time - start_time >= self.SETTINGS.max_duration:
                 break
 
             yield (
                 self.OUTPUT,
                 LoadTestSample(
-                    _timestamp=time.time(),
+                    _timestamp=TIME(),
                     counter=self.STATE.counter,
                     dynamic_data=np.zeros(
                         int(self.SETTINGS.dynamic_size // 4), dtype=np.float32
@@ -105,13 +118,12 @@ class LoadTestSource(ez.Unit):
                 ),
             )
             self.STATE.counter += 1
-            
+
         ez.logger.info("Exiting publish")
         raise ez.Complete
-    
+
     async def shutdown(self) -> None:
         ez.logger.info(f"Samples sent: {self.STATE.counter}")
-
 
 
 class LoadTestRelay(ez.Unit):
@@ -126,10 +138,10 @@ class LoadTestRelay(ez.Unit):
 
 class LoadTestReceiverState(ez.State):
     # Tuples of sent timestamp, received timestamp, counter, dynamic size
-    received_data: typing.List[typing.Tuple[float, float, int]] = dataclasses.field(
+    received_data: list[tuple[float, float, int]] = dataclasses.field(
         default_factory=list
     )
-    counters: typing.Dict[str, int] = dataclasses.field(default_factory=dict)
+    counters: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 class LoadTestReceiver(ez.Unit):
@@ -146,13 +158,12 @@ class LoadTestReceiver(ez.Unit):
         if sample.counter != counter + 1:
             ez.logger.warning(f"{sample.counter - counter - 1} samples skipped!")
         self.STATE.received_data.append(
-            (sample._timestamp, time.time(), sample.counter)
+            (sample._timestamp, TIME(), sample.counter)
         )
         self.STATE.counters[sample.key] = sample.counter
 
 
 class LoadTestSink(LoadTestReceiver):
-
     INPUT = ez.InputStream(LoadTestSample)
 
     @ez.subscriber(INPUT, zero_copy=True)
@@ -199,7 +210,7 @@ def fanin(config: ConfigSettings) -> Configuration:
     connections: ez.NetworkDefinition = [(config.source.OUTPUT, config.sink.INPUT)]
     pubs = [LoadTestSource(config.settings) for _ in range(config.n_clients)]
     expected_num_msgs = config.sink.SETTINGS.num_msgs * len(pubs)
-    config.sink.SETTINGS = replace(config.sink.SETTINGS, num_msgs = expected_num_msgs) # type: ignore
+    config.sink.SETTINGS = replace(config.sink.SETTINGS, num_msgs=expected_num_msgs)  # type: ignore
     for pub in pubs:
         connections.append((pub.OUTPUT, config.sink.INPUT))
     return pubs, connections
@@ -226,7 +237,7 @@ CONFIGS: typing.Mapping[str, Configurator] = {
 }
 
 
-class Communication(enum.StrEnum):
+class Communication(StrEnum):
     LOCAL = "local"
     SHM = "shm"
     SHM_SPREAD = "shm_spread"
@@ -236,20 +247,20 @@ class Communication(enum.StrEnum):
 
 def perform_test(
     n_clients: int,
-    max_duration: float, 
+    max_duration: float,
     num_msgs: int,
-    msg_size: int, 
+    msg_size: int,
     buffers: int,
     comms: Communication,
     config: Configurator,
-    graph_address: Address
+    graph_address: Address,
 ) -> Metrics:
     settings = LoadTestSettings(
-        dynamic_size = int(msg_size), 
-        num_msgs = num_msgs,
-        max_duration = max_duration, 
-        buffers = buffers, 
-        force_tcp = (comms in (Communication.TCP, Communication.TCP_SPREAD)),
+        dynamic_size=int(msg_size),
+        num_msgs=num_msgs,
+        max_duration=max_duration,
+        buffers=buffers,
+        force_tcp=(comms in (Communication.TCP, Communication.TCP_SPREAD)),
     )
 
     source = LoadTestSource(settings)
@@ -290,17 +301,16 @@ def perform_test(
 
     with stable_perf():
         ez.run(
-            components = components,
-            connections = connections,
-            process_components = process_components,
-            graph_address = graph_address
+            components=components,
+            connections=connections,
+            process_components=process_components,
+            graph_address=graph_address,
         )
 
     return calculate_metrics(sink)
 
 
 def calculate_metrics(sink: LoadTestSink) -> Metrics:
-
     # Log some useful summary statistics
     min_timestamp = min(timestamp for timestamp, _, _ in sink.STATE.received_data)
     max_timestamp = max(timestamp for timestamp, _, _ in sink.STATE.received_data)
@@ -316,10 +326,13 @@ def calculate_metrics(sink: LoadTestSink) -> Metrics:
     )
 
     rx_timestamps = np.array([rx_ts for _, rx_ts, _ in sink.STATE.received_data])
+    rx_timestamps.sort()
     runtime = max_timestamp - min_timestamp
     num_samples = len(sink.STATE.received_data)
     samplerate_mean = num_samples / runtime
-    samplerate_median = 1.0 / float(np.median(np.diff(rx_timestamps)))
+    diff_timestamps = np.diff(rx_timestamps)
+    diff_timestamps = diff_timestamps[np.nonzero(diff_timestamps)]
+    samplerate_median = 1.0 / float(np.median(diff_timestamps))
     latency_mean = total_latency / num_samples
     latency_median = list(sorted(latency))[len(latency) // 2]
     total_data = num_samples * sink.SETTINGS.dynamic_size
@@ -339,13 +352,13 @@ def calculate_metrics(sink: LoadTestSink) -> Metrics:
         )
 
     return Metrics(
-        num_msgs = num_samples,
-        sample_rate_mean = samplerate_mean,
-        sample_rate_median = samplerate_median,
-        latency_mean = latency_mean,
-        latency_median = latency_median,
-        latency_total = total_latency,
-        data_rate = data_rate
+        num_msgs=num_samples,
+        sample_rate_mean=samplerate_mean,
+        sample_rate_median=samplerate_median,
+        latency_mean=latency_mean,
+        latency_median=latency_median,
+        latency_total=total_latency,
+        data_rate=data_rate,
     )
 
 

@@ -5,7 +5,8 @@ from .stream import InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
-from typing import Any, Dict, List, Tuple, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import logging
 
@@ -23,7 +24,7 @@ PROCESS_ATTR = "__ez_process__"
 
 class UnitMeta(ComponentMeta):
     def __init__(
-        cls, name: str, bases: Tuple[type, ...], fields: Dict[str, Any], **kwargs: Any
+        cls, name: str, bases: tuple[type, ...], fields: dict[str, Any], **kwargs: Any
     ) -> None:
         super(UnitMeta, cls).__init__(name, bases, fields)
 
@@ -61,11 +62,16 @@ class UnitMeta(ComponentMeta):
 class Unit(Component, metaclass=UnitMeta):
     """
     Represents a single step in the graph.
-    Units can subscribe, publish, and have tasks.
-    To create a ``Unit``, inherit from the ``Unit`` class.
+
+    Units can subscribe, publish, and have tasks. Units are the fundamental building blocks
+    of ezmsg applications that perform actual computation and message processing.
+    To create a Unit, inherit from the Unit class.
+
+    :param settings: Optional settings object for unit configuration
+    :type settings: Settings | None
     """
 
-    def __init__(self, *args, settings: Optional[Settings] = None, **kwargs):
+    def __init__(self, *args, settings: Settings | None = None, **kwargs):
         super(Unit, self).__init__(*args, settings=settings, **kwargs)
 
         for task_name, task in self.__class__.__tasks__.items():
@@ -73,7 +79,7 @@ class Unit(Component, metaclass=UnitMeta):
         self._main = self.__class__.__main__
         self._threads = self.__class__.__threads__
 
-    async def setup(self):
+    async def setup(self) -> None:
         """This is called from within the same process this unit will live"""
         self._instantiate_state()
         if not self._settings_applied:
@@ -90,19 +96,27 @@ class Unit(Component, metaclass=UnitMeta):
 
     async def initialize(self) -> None:
         """
-        Runs when the ``Unit`` is instantiated.
-        This is called from within the same process this unit will live.
-        This lifecycle hook can be overridden. It can be run as ``async`` functions by simply adding the
-        ``async`` keyword when overriding.
+        Runs when the Unit is instantiated.
+
+        This is called from within the same process this unit will live in.
+        This lifecycle hook can be overridden. It can be run as async functions
+        by simply adding the async keyword when overriding.
+
+        This method is where you should initialize your unit's state and prepare
+        for message processing.
         """
         pass
 
     async def shutdown(self) -> None:
         """
-        Runs when the ``Unit`` terminates.
-        This is called from within the same process this unit will live.
-        This lifecycle hook can be overridden. It can be run as ``async`` functions by simply adding the
-        ``async`` keyword when overriding.
+        Runs when the Unit terminates.
+
+        This is called from within the same process this unit will live in.
+        This lifecycle hook can be overridden. It can be run as async functions
+        by simply adding the async keyword when overriding.
+
+        This method is where you should clean up resources and perform
+        any necessary shutdown procedures.
         """
         pass
 
@@ -110,11 +124,21 @@ class Unit(Component, metaclass=UnitMeta):
 def publisher(stream: OutputStream):
     """
     A decorator for a method that publishes to a stream in the task/messaging thread.
+
     An async function will yield messages on the designated :obj:`OutputStream`.
+    A function can have both ``@subscriber`` and ``@publisher`` decorators.
+
+    :param stream: The output stream to publish messages to
+    :type stream: OutputStream
+    :return: Decorated function that can publish to the stream
+    :rtype: collections.abc.Callable
+    :raises ValueError: If stream is not an OutputStream
+
+    Example usage:
 
     .. code-block:: python
 
-      from typing import AsyncGenerator
+      from collections.abc import AsyncGenerator
 
       OUTPUT = OutputStream(ez.Message)
 
@@ -122,15 +146,13 @@ def publisher(stream: OutputStream):
       async def send_message(self) -> AsyncGenerator:
          message = Message()
          yield(OUTPUT, message)
-
-    A function can have both ``@subscriber`` and ``@publisher`` decorators.
     """
 
     if not isinstance(stream, OutputStream):
         raise ValueError(f"Cannot publish to object of type {type(stream)}")
 
     def pub_factory(func):
-        published_streams: List[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
+        published_streams: list[OutputStream] = getattr(func, PUBLISHES_ATTR, [])
         published_streams.append(stream)
         setattr(func, PUBLISHES_ATTR, published_streams)
         return task(func)
@@ -141,9 +163,19 @@ def publisher(stream: OutputStream):
 def subscriber(stream: InputStream, zero_copy: bool = False):
     """
     A decorator for a method that subscribes to a stream in the task/messaging thread.
-    An async function will run once per message received from the :obj:`InputStream` it subscribes to.
 
-    Example:
+    An async function will run once per message received from the :obj:`InputStream`
+    it subscribes to. A function can have both ``@subscriber`` and ``@publisher`` decorators.
+
+    :param stream: The input stream to subscribe to
+    :type stream: InputStream
+    :param zero_copy: Whether to use zero-copy message passing (default: False)
+    :type zero_copy: bool
+    :return: Decorated function that can subscribe to the stream
+    :rtype: collections.abc.Callable
+    :raises ValueError: If stream is not an InputStream
+
+    Example usage:
 
     .. code-block:: python
 
@@ -152,15 +184,13 @@ def subscriber(stream: InputStream, zero_copy: bool = False):
       @subscriber(INPUT)
       async def print_message(self, message: Message) -> None:
          print(message)
-
-    A function can have both ``@subscriber`` and ``@publisher`` decorators.
     """
 
     if not isinstance(stream, InputStream):
         raise ValueError(f"Cannot subscribe to object of type {type(stream)}")
 
     def sub_factory(func):
-        subscribed_streams: Optional[InputStream] = getattr(func, SUBSCRIBES_ATTR, None)
+        subscribed_streams: InputStream | None = getattr(func, SUBSCRIBES_ATTR, None)
         if subscribed_streams is not None:
             raise Exception(f"{func} cannot subscribe to more than one stream")
         setattr(func, SUBSCRIBES_ATTR, stream)
@@ -172,8 +202,16 @@ def subscriber(stream: InputStream, zero_copy: bool = False):
 
 def main(func: Callable):
     """
-    A decorator which designates this function to run as the main thread for this :obj:`Unit`.
-    A :obj:`Unit` may only have one of these.
+    A decorator which designates this function to run as the main thread for this Unit.
+
+    A Unit may only have one main function. The main function runs independently
+    of the message processing and is typically used for initialization, background
+    processing, or cleanup tasks.
+
+    :param func: The function to designate as main
+    :type func: collections.abc.Callable
+    :return: The decorated function
+    :rtype: collections.abc.Callable
     """
     setattr(func, MAIN_ATTR, True)
     return func
@@ -181,7 +219,20 @@ def main(func: Callable):
 
 def timeit(func: Callable):
     """
-    ``ezmsg`` will log the amount of time this function takes to execute.
+    A decorator that logs the execution time of the decorated function.
+
+    ezmsg will log the amount of time this function takes to execute to
+    the ezmsg logger. This is useful for performance monitoring and
+    optimization. The execution time is logged in milliseconds.
+
+    .. note:: Use the ``@profile_subpub`` or ``@profile_method`` decorators
+        from ezmsg-sigproc for more detailed profiling that is stored in a
+        dedicated profiling log file.
+
+    :param func: The function to time
+    :type func: collections.abc.Callable
+    :return: The decorated function with timing functionality
+    :rtype: collections.abc.Callable
     """
     setattr(func, TIMEIT_ATTR, True)
 
@@ -200,7 +251,15 @@ def timeit(func: Callable):
 
 def thread(func: Callable):
     """
-    A decorator which designates this function to run as a background thread for this `:obj:`Unit`.
+    A decorator which designates this function to run as a background thread for this Unit.
+
+    Thread functions run concurrently with the main message processing and can be used
+    for background tasks, monitoring, or other concurrent operations.
+
+    :param func: The function to run as a background thread
+    :type func: collections.abc.Callable
+    :return: The decorated function
+    :rtype: collections.abc.Callable
     """
     setattr(func, THREAD_ATTR, True)
     return func
@@ -209,6 +268,14 @@ def thread(func: Callable):
 def task(func: Callable):
     """
     A decorator which designates this function to run as a task in the task/messaging thread.
+
+    Task functions are part of the main message processing pipeline and are executed
+    within the unit's primary execution context.
+
+    :param func: The function to run as a task
+    :type func: collections.abc.Callable
+    :return: The decorated function
+    :rtype: collections.abc.Callable
     """
     setattr(func, TASK_ATTR, True)
     return func
@@ -217,6 +284,14 @@ def task(func: Callable):
 def process(func: Callable):
     """
     A decorator which designates this function to run in its own process.
+
+    Process functions run in separate processes for isolation and can be used
+    for CPU-intensive operations or when process isolation is required.
+
+    :param func: The function to run in its own process
+    :type func: collections.abc.Callable
+    :return: The decorated function
+    :rtype: collections.abc.Callable
     """
     setattr(func, PROCESS_ATTR, True)
     return func

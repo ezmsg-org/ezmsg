@@ -1,3 +1,4 @@
+import importlib.util
 import pytest
 import numpy as np
 
@@ -10,7 +11,7 @@ from ezmsg.util.messages.axisarray import (
     sliding_win_oneaxis,
 )
 
-from typing import Generator, List
+from collections.abc import Generator
 
 DATA = np.ones((2, 5, 4, 4))
 
@@ -21,7 +22,7 @@ def test_simple() -> None:
 
 @dataclass
 class MultiChannelData(AxisArray):
-    ch_names: List[str] = field(default_factory=list)
+    ch_names: list[str] = field(default_factory=list)
 
 
 def test_axes() -> None:
@@ -65,9 +66,9 @@ def test_concat() -> None:
     batch_size = 10
     num_batches = 5
 
-    batches: List[AxisArray] = list()
+    batches: list[AxisArray] = list()
     for _ in range(num_batches):
-        win: List[AxisArray] = list()
+        win: list[AxisArray] = list()
         for msg, _ in zip(gen, range(batch_size)):
             win.append(msg)
         batches.append(AxisArray.concatenate(*win, dim="time"))
@@ -274,13 +275,8 @@ def test_sliding_win_oneaxis(nwin: int, axis: int, step: int):
     assert np.shares_memory(res, expected)
 
 
-def xarray_available():
-    try:
-        import xarray
-
-        return True
-    except ImportError:
-        return False
+def xarray_available() -> bool:
+    return importlib.util.find_spec("xarray") is not None
 
 
 @pytest.mark.skipif(

@@ -1,5 +1,4 @@
 import json
-import typing
 import dataclasses
 import argparse
 import html
@@ -58,15 +57,14 @@ Metrics:
 
 
 def load_perf(perf: Path) -> xr.Dataset:
-
-    all_results: typing.Dict[TestParameters, typing.Dict[int, typing.List[Metrics]]] = dict()
+    all_results: dict[TestParameters, dict[int, list[Metrics]]] = dict()
 
     run_idx = 0
 
-    with open(perf, 'r') as perf_f:
-        info: TestEnvironmentInfo = json.loads(next(perf_f), cls = MessageDecoder)
+    with open(perf, "r") as perf_f:
+        info: TestEnvironmentInfo = json.loads(next(perf_f), cls=MessageDecoder)
         for line in perf_f:
-            obj = json.loads(line, cls = MessageDecoder)    
+            obj = json.loads(line, cls=MessageDecoder)
             if isinstance(obj, TestEnvironmentInfo):
                 run_idx += 1
             elif isinstance(obj, TestLogEntry):
@@ -91,21 +89,28 @@ def load_perf(perf: Path) -> xr.Dataset:
 
     data_vars = {}
     for field in dataclasses.fields(Metrics):
-        m = np.zeros((
-            len(n_clients_axis), 
-            len(msg_size_axis), 
-            len(comms_axis), 
-            len(config_axis)
-        )) * np.nan
+        m = (
+            np.zeros(
+                (
+                    len(n_clients_axis),
+                    len(msg_size_axis),
+                    len(comms_axis),
+                    len(config_axis),
+                )
+            )
+            * np.nan
+        )
         for p, a in all_results.items():
             # tests are run multiple times; get the median of means
             m[
                 n_clients_axis.index(p.n_clients),
                 msg_size_axis.index(p.msg_size),
                 comms_axis.index(p.comms),
-                config_axis.index(p.config)
-            ] = np.median([np.mean([getattr(v, field.name) for v in r]) for r in a.values()])
-        data_vars[field.name] = xr.DataArray(m, dims = dims, coords = coords)
+                config_axis.index(p.config),
+            ] = np.median(
+                [np.mean([getattr(v, field.name) for v in r]) for r in a.values()]
+            )
+        data_vars[field.name] = xr.DataArray(m, dims=dims, coords=coords)
 
     dataset = xr.Dataset(data_vars, attrs=dict(info=info))
     return dataset
@@ -241,7 +246,10 @@ def _base_css() -> str:
     </style>
     """
 
-def _color_for_comparison(value: float, metric: str, noise_band_pct: float = 10.0) -> str:
+
+def _color_for_comparison(
+    value: float, metric: str, noise_band_pct: float = 10.0
+) -> str:
     """
     Returns inline CSS background for a comparison % value.
     value: e.g., 97.3, 104.8, etc.
@@ -311,14 +319,14 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         env_diff = format_env_diff(info.diff(baseline_info))
         output += env_diff + "\n\n"
 
-        # These raw stats are still valuable to have, but are confusing 
+        # These raw stats are still valuable to have, but are confusing
         # when making relative comparisons
-        perf = perf.drop_vars(['latency_total', 'num_msgs'])
+        perf = perf.drop_vars(["latency_total", "num_msgs"])
 
-    perf = perf.stack(params = ['n_clients', 'msg_size']).dropna('params')
+    perf = perf.stack(params=["n_clients", "msg_size"]).dropna("params")
     df = perf.squeeze().to_dataframe()
-    df = df.drop('n_clients', axis = 1)
-    df = df.drop('msg_size', axis = 1)
+    df = df.drop("n_clients", axis=1)
+    df = df.drop("msg_size", axis=1)
 
     for _, config_ds in perf.groupby("config"):
         for _, comms_ds in config_ds.groupby("comms"):
@@ -329,7 +337,13 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
 
     if html:
         # Ensure expected columns exist
-        expected_cols = {"sample_rate_mean", "sample_rate_median", "data_rate", "latency_mean", "latency_median"}
+        expected_cols = {
+            "sample_rate_mean",
+            "sample_rate_median",
+            "data_rate",
+            "latency_mean",
+            "latency_median",
+        }
         missing = expected_cols - set(df.columns)
         if missing:
             raise ValueError(f"Missing expected columns in dataset: {missing}")
@@ -375,7 +389,15 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
         # Render each group
         for (config, comms), g in groups:
             # Keep only expected columns in order
-            cols = ["n_clients", "msg_size", "sample_rate_mean", "sample_rate_median", "data_rate", "latency_mean", "latency_median"]
+            cols = [
+                "n_clients",
+                "msg_size",
+                "sample_rate_mean",
+                "sample_rate_median",
+                "data_rate",
+                "latency_mean",
+                "latency_median",
+            ]
             g = g[cols].copy()
 
             # String format some columns (msg_size with separators)
@@ -389,23 +411,33 @@ def summary(perf_path: Path, baseline_path: Path | None, html: bool = False) -> 
             <thead>
             <tr>
                 <th>n_clients</th>
-                <th>msg_size {'' if relative else '(b)'}</th>
-                <th>sample_rate_mean {'' if relative else '(msgs/s)'}</th>
-                <th>sample_rate_median {'' if relative else '(msgs/s)'}</th>
-                <th>data_rate {'' if relative else '(MB/s)'}</th>
-                <th>latency_mean {'' if relative else '(us)'}</th>
-                <th>latency_median {'' if relative else '(us)'}<th>
+                <th>msg_size {"" if relative else "(b)"}</th>
+                <th>sample_rate_mean {"" if relative else "(msgs/s)"}</th>
+                <th>sample_rate_median {"" if relative else "(msgs/s)"}</th>
+                <th>data_rate {"" if relative else "(MB/s)"}</th>
+                <th>latency_mean {"" if relative else "(us)"}</th>
+                <th>latency_median {"" if relative else "(us)"}<th>
             </tr>
             </thead>
             """
             body_rows: list[str] = []
             for _, row in g.iterrows():
-                sr, srm, dr, lt, lm = row["sample_rate_mean"], row["sample_rate_median"], row["data_rate"], row["latency_mean"], row["latency_median"]
+                sr, srm, dr, lt, lm = (
+                    row["sample_rate_mean"],
+                    row["sample_rate_median"],
+                    row["data_rate"],
+                    row["latency_mean"],
+                    row["latency_median"],
+                )
                 dr = dr if relative else dr / 2**20
                 lt = lt if relative else lt * 1e6
                 lm = lm if relative else lm * 1e6
-                sr_style = _color_for_comparison(sr, "sample_rate_mean") if relative else ""
-                srm_style = _color_for_comparison(srm, "sample_rate_median") if relative else ""
+                sr_style = (
+                    _color_for_comparison(sr, "sample_rate_mean") if relative else ""
+                )
+                srm_style = (
+                    _color_for_comparison(srm, "sample_rate_median") if relative else ""
+                )
                 dr_style = _color_for_comparison(dr, "data_rate") if relative else ""
                 lt_style = _color_for_comparison(lt, "latency_mean") if relative else ""
                 lm_style = (

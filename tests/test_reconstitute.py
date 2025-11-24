@@ -42,7 +42,7 @@ def recon_with_deepcopy_func(shm):
 
 def recon_without_deepcopy_func(shm):
     with shm.buffer(0, readonly=True) as mem:
-        with MessageMarshal.obj_from_mem(mem):
+        with MessageMarshal.obj_from_mem(mem) as _obj:
             pass
 
 

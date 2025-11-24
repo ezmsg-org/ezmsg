@@ -1,2 +1,0 @@
-sphinx-rtd-theme
-ezmsg-sigproc @ git+https://github.com/ezmsg-org/ezmsg-sigproc@dev

@@ -37,6 +37,19 @@ Note that it is generally recommended to install poetry into its own standalone 
 
 ## Documentation
 
+To build the documentation in this branch, install sphinx
+
+```bash
+pip install sphinx
+```
+
+Then change directory to the `docs/` folder and run the `make.bat` file with an html specification.
+
+```bash
+cd docs
+uv run make.bat html
+```
+
 https://ezmsg.readthedocs.io/en/latest/
 
 `ezmsg` is very similar to [`labgraph`](https://www.github.com/facebookresearch/labgraph), so you might get a primer with their documentation and examples. Additionally, there are many examples provided in the examples/tests directories strewn throughout this repository.

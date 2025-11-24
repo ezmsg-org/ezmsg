@@ -6,7 +6,7 @@ from ezmsg.core.graphserver import GraphService
 
 from multiprocessing import Process
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 
 class TransmitReceiveSettings(ez.Settings):

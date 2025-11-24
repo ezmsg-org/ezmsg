@@ -5,7 +5,6 @@ import json
 import logging
 import subprocess
 import sys
-import typing
 import webbrowser
 import zlib
 
@@ -23,6 +22,13 @@ logger = logging.getLogger("ezmsg")
 
 
 def cmdline() -> None:
+    """
+    Command-line interface for ezmsg core server management.
+
+    Provides commands for starting, stopping, and managing ezmsg server
+    processes including GraphServer and SHMServer, as well as utilities
+    for graph visualization.
+    """
     parser = argparse.ArgumentParser(
         "ezmsg.core",
         description="start and stop core ezmsg server processes",
@@ -66,9 +72,9 @@ def cmdline() -> None:
 
     class Args:
         command: str
-        address: typing.Optional[str]
+        address: str | None
         target: str
-        compact: typing.Optional[int]
+        compact: int | None
         nobrowser: bool
 
     args = parser.parse_args(namespace=Args)
@@ -95,9 +101,26 @@ async def run_command(
     cmd: str,
     graph_address: Address,
     target: str = "live",
-    compact: typing.Optional[int] = None,
+    compact: int | None = None,
     nobrowser: bool = False,
 ) -> None:
+    """
+    Run an ezmsg command with the specified parameters.
+
+    This function handles various ezmsg commands like 'serve', 'start', 'shutdown', etc.
+    and manages the graph and shared memory services.
+
+    :param cmd: The command to execute ('serve', 'start', 'shutdown', 'graphviz', 'mermaid')
+    :type cmd: str
+    :param graph_address: Address of the graph service
+    :type graph_address: Address
+    :param target: Target for visualization commands (default: 'live')
+    :type target: str
+    :param compact: Compactification level for visualization commands
+    :type compact: int | None
+    :param nobrowser: Whether to suppress browser opening for visualization
+    :type nobrowser: bool
+    """
     graph_service = GraphService(graph_address)
 
     if cmd == "serve":
@@ -158,6 +181,16 @@ async def run_command(
 
 
 def mm(graph: str, target="live") -> str:
+    """
+    Generate a Mermaid visualization URL for the given graph.
+
+    :param graph: Graph representation string to visualize.
+    :type graph: str
+    :param target: Target platform ('live' or 'ink').
+    :type target: str
+    :return: URL for graph visualization.
+    :rtype: str
+    """
     if target != "ink":
         jdict = {
             "code": graph,

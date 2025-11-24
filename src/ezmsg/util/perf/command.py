@@ -14,5 +14,6 @@ def command() -> None:
     ns = parser.parse_args()
     ns._handler(ns)
 
+
 if __name__ == "__main__":
     command()

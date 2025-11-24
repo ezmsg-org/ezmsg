@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
-from .messagechannel import CHANNELS, NotificationQueue, Channel
+from .channelmanager import CHANNELS
+from .messagechannel import NotificationQueue, Channel
 
 from .netprotocol import (
     AddressType,
@@ -22,12 +23,20 @@ logger = logging.getLogger("ezmsg")
 
 
 class Subscriber:
+    """
+    A subscriber client for receiving messages from publishers.
+
+    Subscriber manages connections to multiple publishers, handles different
+    transport methods (local, shared memory, TCP), and provides both copying
+    and zero-copy message access patterns with automatic acknowledgment.
+    """
+
     id: UUID
     topic: str
 
     _graph_address: AddressType | None
     _graph_task: asyncio.Task[None]
-    _cur_pubs: typing.Set[UUID]
+    _cur_pubs: set[UUID]
     _incoming: NotificationQueue
 
     # FIXME: This event allows Subscriber.create to block until
@@ -38,12 +47,25 @@ class Subscriber:
 
     # NOTE: This is an optimization to retain a local handle to channels
     # so that dict lookup and wrapper contextmanager aren't in hotpath
-    _channels: typing.Dict[UUID, Channel]
+    _channels: dict[UUID, Channel]
 
     @classmethod
     async def create(
         cls, topic: str, graph_address: AddressType | None, **kwargs
     ) -> "Subscriber":
+        """
+        Create a new Subscriber instance and register it with the graph server.
+
+        :param topic: The topic this subscriber will listen to.
+        :type topic: str
+        :param graph_service: Service for graph server communication.
+        :type graph_service: GraphService
+        :param shm_service: Service for shared memory management.
+        :type shm_service: SHMService
+        :param kwargs: Additional keyword arguments for Subscriber constructor.
+        :return: Initialized and registered Subscriber instance.
+        :rtype: Subscriber
+        """
         reader, writer = await GraphService(graph_address).open_connection()
         writer.write(Command.SUBSCRIBE.value)
         writer.write(encode_str(topic))
@@ -69,7 +91,19 @@ class Subscriber:
     def __init__(
         self, id: UUID, topic: str, graph_address: AddressType | None, **kwargs
     ) -> None:
-        """DO NOT USE this constructor, use Subscriber.create instead"""
+        """
+        Initialize a Subscriber instance.
+
+        DO NOT USE this constructor, use Subscriber.create instead.
+
+        :param id: Unique identifier for this subscriber.
+        :type id: UUID
+        :param topic: The topic this subscriber listens to.
+        :type topic: str
+        :param graph_service: Service for graph operations.
+        :type graph_service: GraphService
+        :param kwargs: Additional keyword arguments (unused).
+        """
         self.id = id
         self.topic = topic
         self._graph_address = graph_address
@@ -80,15 +114,38 @@ class Subscriber:
         self._initialized = asyncio.Event()
 
     def close(self) -> None:
+        """
+        Close the subscriber and cancel all associated tasks.
+
+        Cancels graph connection, all publisher connection tasks,
+        and closes all shared memory contexts.
+        """
         self._graph_task.cancel()
 
     async def wait_closed(self) -> None:
+        """
+        Wait for all subscriber resources to be fully closed.
+
+        Waits for graph connection termination, all publisher connection
+        tasks to complete, and all shared memory contexts to close.
+        """
         with suppress(asyncio.CancelledError):
             await self._graph_task
 
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        """
+        Handle communication with the graph server.
+
+        Processes commands from the graph server including COMPLETE and UPDATE
+        operations for managing publisher connections.
+
+        :param reader: Stream reader for receiving commands from graph server.
+        :type reader: asyncio.StreamReader
+        :param writer: Stream writer for responding to graph server.
+        :type writer: asyncio.StreamWriter
+        """
         try:
             while True:
                 cmd = await reader.read(1)
@@ -145,7 +202,9 @@ class Subscriber:
                     )
 
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Subscriber {self.topic}({self.id}) lost connection to graph server")
+            logger.debug(
+                f"Subscriber {self.topic}({self.id}) lost connection to graph server"
+            )
 
         finally:
             for pub_id in self._channels:
@@ -153,6 +212,15 @@ class Subscriber:
             await close_stream_writer(writer)
 
     async def recv(self) -> typing.Any:
+        """
+        Receive the next message with a deep copy.
+
+        This method creates a deep copy of the received message, allowing
+        safe modification without affecting the original cached message.
+
+        :return: Deep copy of the received message.
+        :rtype: typing.Any
+        """
         out_msg = None
         async with self.recv_zero_copy() as msg:
             out_msg = deepcopy(msg)
@@ -160,6 +228,16 @@ class Subscriber:
 
     @asynccontextmanager
     async def recv_zero_copy(self) -> typing.AsyncGenerator[typing.Any, None]:
+        """
+        Receive the next message with zero-copy access.
+
+        This context manager provides direct access to the cached message
+        without copying. The message should not be modified or stored beyond
+        the context manager's scope.
+
+        :return: Context manager yielding the received message.
+        :rtype: collections.abc.AsyncGenerator[typing.Any, None]
+        """
         pub_id, msg_id = await self._incoming.get()
 
         with self._channels[pub_id].get(msg_id, self.id) as msg:

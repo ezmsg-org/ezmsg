@@ -9,6 +9,7 @@ T = typing.TypeVar("T")
 def fast_replace(arr: typing.Generic[T], **kwargs) -> T:
     """
     Fast replacement of dataclass fields with reduced safety.
+
     Unlike dataclasses.replace, this function does not check for type compatibility,
     nor does it check that the passed in fields are valid fields for the dataclass
     and not flagged as init=False.
@@ -17,6 +18,12 @@ def fast_replace(arr: typing.Generic[T], **kwargs) -> T:
     To force ezmsg to use the legacy replace, set the environment variable:
     EZMSG_DISABLE_FAST_REPLACE
     Unset the variable to use this replace function.
+
+    :param arr: The dataclass instance to create a modified copy of.
+    :type arr: typing.Generic[T]
+    :param kwargs: Field values to update in the new instance.
+    :return: A new instance of the same type with updated field values.
+    :rtype: T
     """
     out_kwargs = arr.__dict__.copy()  # Shallow copy
     out_kwargs.update(**kwargs)

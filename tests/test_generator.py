@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator, Generator
 import copy
 import json
 import os
@@ -22,7 +23,7 @@ from ez_test_utils import (
 
 def undecorated_generator(
     arg_untyped, arg_typed: int, kwarg_untyped=None, kwarg_typed: bool = True
-) -> typing.Generator[typing.Any, typing.Any, None]:
+) -> Generator[typing.Any, typing.Any, None]:
     """
     Do-nothing generator to test func inspection.
     """
@@ -37,7 +38,7 @@ def undecorated_generator(
 @consumer
 def decorated_generator(
     arg_untyped, arg_typed: int, kwarg_untyped=None, kwarg_typed: bool = True
-) -> typing.Generator[typing.Any, typing.Any, None]:
+) -> Generator[typing.Any, typing.Any, None]:
     """
     Do-nothing generator to test func inspection.
     """
@@ -74,7 +75,7 @@ def test_gen_to_unit_settings():
 @consumer
 def my_gen_func(
     append_right: bool = True,
-) -> typing.Generator[typing.List[typing.Any], typing.Any, None]:
+) -> Generator[list[typing.Any], typing.Any, None]:
     """
     Basic generator function used for testing. It returns the accumulated inputs.
     """
@@ -82,7 +83,7 @@ def my_gen_func(
     # state variables
     msg_in = None
     msg_out = []
-    history: typing.List[typing.Any] = []
+    history: list[typing.Any] = []
 
     while True:
         msg_in = yield msg_out
@@ -97,7 +98,7 @@ def my_gen_func(
 @consumer
 def my_gen_func_axarr(
     axis: str = "time",
-) -> typing.Generator[AxisArray, AxisArray, None]:
+) -> Generator[AxisArray, AxisArray, None]:
     """
     Basic generator function used for testing. It returns the accumulated inputs
     when the inputs are AxisArrays and accumulation happens on the specified axis.
@@ -106,7 +107,7 @@ def my_gen_func_axarr(
     axis_arr_out = AxisArray(np.array([]), dims=[""])
 
     # state variables
-    history: typing.Optional[AxisArray] = None
+    history: AxisArray | None = None
 
     while True:
         axis_arr_in = yield axis_arr_out
@@ -138,10 +139,10 @@ class MessageAnyReceiver(ez.Unit):
     STATE = MessageReceiverState
     SETTINGS = MessageReceiverSettings
 
-    INPUT = ez.InputStream(typing.List[typing.Any])
+    INPUT = ez.InputStream(list[typing.Any])
 
     @ez.subscriber(INPUT)
-    async def on_message(self, msg: typing.List[typing.Any]) -> None:
+    async def on_message(self, msg: list[typing.Any]) -> None:
         self.STATE.num_received += 1
         with open(self.SETTINGS.output_fn, "a") as output_file:
             payload = {self.STATE.num_received: [_.number for _ in msg]}
@@ -159,7 +160,7 @@ def test_gen_to_unit_any():
     assert MyUnit.INPUT.msg_type is typing.Any
     assert hasattr(MyUnit, "OUTPUT")
     assert isinstance(MyUnit.OUTPUT, ez.stream.OutputStream)
-    assert MyUnit.OUTPUT.msg_type is typing.List[typing.Any]
+    assert MyUnit.OUTPUT.msg_type == list[typing.Any]
 
     num_msgs = 5
     test_filename = get_test_fn()
@@ -191,7 +192,7 @@ class AxarrGenerator(ez.Unit):
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
 
     @ez.publisher(OUTPUT_SIGNAL)
-    async def spawn(self) -> typing.AsyncGenerator:
+    async def spawn(self) -> AsyncGenerator:
         for i in range(self.SETTINGS.num_msgs):
             yield self.OUTPUT_SIGNAL, AxisArray(data=np.arange(i), dims=["time"])
         raise ez.Complete

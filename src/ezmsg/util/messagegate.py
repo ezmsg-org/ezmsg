@@ -1,4 +1,5 @@
 import typing
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 import ezmsg.core as ez
@@ -6,7 +7,12 @@ import ezmsg.core as ez
 
 @dataclass
 class GateMessage:
-    """Send this message to ``INPUT_GATE`` to open or close the gate."""
+    """
+    Send this message to ``INPUT_GATE`` to open or close the gate.
+
+    :param open: True to open the gate (allow messages), False to close it (discard messages)
+    :type open: bool
+    """
 
     open: bool
 
@@ -25,11 +31,11 @@ class MessageGateSettings(ez.Settings):
 
     start_open: bool = False
     default_open: bool = False
-    default_after: typing.Optional[int] = None
+    default_after: int | None = None
 
 
 class MessageGateState(ez.State):
-    gate_open: typing.Optional[bool] = None
+    gate_open: bool | None = None
     msgs: int = 0  # Messages since last gate change
 
 
@@ -58,6 +64,12 @@ class MessageGate(ez.Unit):
         self.STATE.gate_open = self.SETTINGS.start_open
 
     def set_gate(self, set_open: bool) -> None:
+        """
+        Set the gate open/closed state and reset message counter.
+
+        :param set_open: True to open gate, False to close it
+        :type set_open: bool
+        """
         if self.STATE.gate_open != set_open:
             self.STATE.msgs = 0
             self.STATE.gate_open = set_open
@@ -68,7 +80,7 @@ class MessageGate(ez.Unit):
 
     @ez.subscriber(INPUT)
     @ez.publisher(OUTPUT)
-    async def on_input(self, msg: typing.Any) -> typing.AsyncGenerator:
+    async def on_input(self, msg: typing.Any) -> AsyncGenerator:
         self.STATE.msgs += 1
 
         if self.STATE.gate_open:
