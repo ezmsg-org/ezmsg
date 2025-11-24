@@ -9,7 +9,7 @@ from contextlib import contextmanager, suppress
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
-from .publisherprotocol import PublisherProtocol, PublisherMessage
+from .publisherprotocol import PublisherClientProtocol, PublisherMessage
 from .messagecache import MessageCache
 from .graphserver import GraphService
 from .netprotocol import (
@@ -54,7 +54,7 @@ class Channel:
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
-    _pub_protocol: PublisherProtocol
+    _pub_protocol: PublisherClientProtocol
     _pub_transport: asyncio.Transport
     _pub_message_queue: asyncio.Queue[PublisherMessage]
     _pub_process_task: asyncio.Task[None]
@@ -118,7 +118,7 @@ class Channel:
         loop = asyncio.get_running_loop()
         pub_message_queue: asyncio.Queue[PublisherMessage] = asyncio.Queue()
         transport, protocol = await loop.create_connection(
-            lambda: PublisherProtocol(id_str, pub_message_queue),
+            lambda: PublisherClientProtocol(id_str, pub_message_queue),
             *pub_address,
         )
 

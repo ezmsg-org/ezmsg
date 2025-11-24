@@ -13,18 +13,17 @@ from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import Channel
 from .messagemarshal import MessageMarshal, UninitializedMemory
+from .publisherprotocol import PublisherServerProtocol
 
 from .netprotocol import (
     Address,
     AddressType,
     uint64_to_bytes,
-    read_int,
     read_str,
     encode_str,
     close_stream_writer,
     close_server,
     Command,
-    ChannelInfo,
     create_socket,
     DEFAULT_SHM_SIZE,
     PUBLISHER_START_PORT_ENV,
@@ -39,9 +38,10 @@ BACKPRESSURE_WARNING = "EZMSG_DISABLE_BACKPRESSURE_WARNING" not in os.environ
 BACKPRESSURE_REFRACTORY = 5.0  # sec
 
 
-# Publisher needs a bit more information about connected channels
 @dataclass
-class PubChannelInfo(ChannelInfo):
+class PubChannelState:
+    id: UUID
+    protocol: PublisherServerProtocol
     pid: int
     shm_ok: bool = False
 
@@ -63,8 +63,7 @@ class Publisher:
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
     _connection_task: "asyncio.Task[None]"
-    _channels: dict[UUID, PubChannelInfo]
-    _channel_tasks: dict[UUID, "asyncio.Task[None]"]
+    _channels: dict[UUID, PubChannelState]
     _local_channel: Channel
     _address: Address
     _backpressure: Backpressure
@@ -140,7 +139,16 @@ class Publisher:
             os.getenv(PUBLISHER_START_PORT_ENV, PUBLISHER_START_PORT_DEFAULT)
         )
         sock = create_socket(host, port, start_port=start_port)
-        server = await asyncio.start_server(pub._channel_connect, sock=sock)
+        loop = asyncio.get_running_loop()
+        server = await loop.create_server(
+            lambda: PublisherServerProtocol(
+                pub._get_shm_info,
+                pub._on_channel_handshake,
+                pub._on_channel_ack,
+                pub._on_channel_disconnect,
+            ),
+            sock=sock,
+        )
         pub._connection_task = asyncio.create_task(
             pub._serve_channels(server), name=f"pub-{pub.id}: {pub.topic}"
         )
@@ -211,7 +219,6 @@ class Publisher:
         self._shm = shm
         self._msg_id = 0
         self._channels = dict()
-        self._channel_tasks = dict()
         self._running = asyncio.Event()
         if not start_paused:
             self._running.set()
@@ -220,6 +227,47 @@ class Publisher:
         self._force_tcp = force_tcp
         self._last_backpressure_event = -1
         self._graph_address = graph_address
+
+    def _get_shm_info(self) -> tuple[str, int]:
+        return self._shm.name, self._num_buffers
+
+    def _on_channel_handshake(
+        self,
+        channel_id: str,
+        pid: int,
+        shm_ok: bool,
+        protocol: PublisherServerProtocol,
+    ) -> None:
+        try:
+            chan_uuid = UUID(channel_id)
+        except ValueError:
+            logger.error(f"Invalid channel id from handshake: {channel_id}")
+            protocol.close()
+            return
+
+        self._channels[chan_uuid] = PubChannelState(
+            id=chan_uuid, protocol=protocol, pid=pid, shm_ok=shm_ok
+        )
+
+    def _on_channel_ack(self, channel_id: str, msg_id: int) -> None:
+        try:
+            chan_uuid = UUID(channel_id)
+        except ValueError:
+            logger.error(f"Invalid channel id for ack: {channel_id}")
+            return
+        self._backpressure.free(chan_uuid, msg_id % self._num_buffers)
+
+    def _on_channel_disconnect(self, channel_id: str | None) -> None:
+        if channel_id is None:
+            return
+        try:
+            chan_uuid = UUID(channel_id)
+        except ValueError:
+            logger.error(f"Invalid channel id disconnect: {channel_id}")
+            return
+
+        self._backpressure.free(chan_uuid)
+        self._channels.pop(chan_uuid, None)
 
     @property
     def log_name(self) -> str:
@@ -235,8 +283,8 @@ class Publisher:
         self._graph_task.cancel()
         self._shm.close()
         self._connection_task.cancel()
-        for task in self._channel_tasks.values():
-            task.cancel()
+        for channel in list(self._channels.values()):
+            channel.protocol.close()
 
     async def wait_closed(self) -> None:
         """
@@ -250,9 +298,6 @@ class Publisher:
             await self._graph_task
         with suppress(asyncio.CancelledError):
             await self._connection_task
-        for task in self._channel_tasks.values():
-            with suppress(asyncio.CancelledError):
-                await task
 
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -296,73 +341,6 @@ class Publisher:
 
         finally:
             await close_stream_writer(writer)
-
-    async def _channel_connect(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        """
-        Handle new subscriber connections.
-
-        Exchanges identification information with connecting subscribers
-        and sets up subscriber handling tasks.
-
-        :param reader: Stream reader for receiving subscriber info.
-        :type reader: asyncio.StreamReader
-        :param writer: Stream writer for sending publisher info.
-        :type writer: asyncio.StreamWriter
-        """
-        cmd = await reader.read(1)
-
-        if len(cmd) == 0:
-            return
-
-        if cmd == Command.CHANNEL.value:
-            channel_id_str = await read_str(reader)
-            channel_id = UUID(channel_id_str)
-            writer.write(encode_str(self._shm.name))
-            shm_ok = await reader.read(1) == Command.SHM_OK.value
-            pid = await read_int(reader)
-            info = PubChannelInfo(channel_id, writer, self.id, pid, shm_ok)
-            coro = self._handle_channel(info, reader)
-            self._channel_tasks[channel_id] = asyncio.create_task(coro)
-            writer.write(Command.COMPLETE.value + uint64_to_bytes(self._num_buffers))
-
-        await writer.drain()
-
-    async def _handle_channel(
-        self, info: PubChannelInfo, reader: asyncio.StreamReader
-    ) -> None:
-        """
-        Handle communication with a specific channel.
-
-        Processes acknowledgments from channels and manages backpressure
-        control based on channel feedback.
-
-        :param info: Information about the channel connection.
-        :type info: PubChannelInfo
-        :param reader: Stream reader for receiving channel messages.
-        :type reader: asyncio.StreamReader
-        """
-        self._channels[info.id] = info
-
-        try:
-            while True:
-                msg = await reader.read(1)
-
-                if len(msg) == 0:
-                    break
-
-                elif msg == Command.RX_ACK.value:
-                    msg_id = await read_int(reader)
-                    self._backpressure.free(info.id, msg_id % self._num_buffers)
-
-        except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
-
-        finally:
-            self._backpressure.free(info.id)
-            await close_stream_writer(self._channels[info.id].writer)
-            del self._channels[info.id]
 
     async def sync(self) -> None:
         """
@@ -425,18 +403,17 @@ class Publisher:
         # Get local channel and put variable there for local tx
         self._local_channel.put_local(self._msg_id, obj)
 
+        channels = list(self._channels.values())
         if self._force_tcp or any(
-            ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()
+            ch.pid != self.pid or not ch.shm_ok for ch in channels
         ):
             with MessageMarshal.serialize(self._msg_id, obj) as (
                 total_size,
                 header,
                 buffers,
             ):
-                total_size_bytes = uint64_to_bytes(total_size)
-
                 if not self._force_tcp and any(
-                    ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()
+                    ch.pid != self.pid and ch.shm_ok for ch in channels
                 ):
                     if self._shm.buf_size < total_size:
                         new_shm = await GraphService(self._graph_address).create_shm(
@@ -458,8 +435,8 @@ class Publisher:
                     with self._shm.buffer(buf_idx) as mem:
                         MessageMarshal._write(mem, header, buffers)
 
-                for channel in self._channels.values():
-                    msg: bytes = b""
+                tcp_payload: bytes | None = None
+                for channel in channels:
 
                     if self.pid == channel.pid and channel.shm_ok:
                         continue  # Local transmission handled by channel.put
@@ -469,29 +446,28 @@ class Publisher:
                         and self.pid != channel.pid
                         and channel.shm_ok
                     ):
-                        msg = (
-                            Command.TX_SHM.value
-                            + msg_id_bytes
-                            + encode_str(self._shm.name)
-                        )
+                        try:
+                            channel.protocol.send_tx_shm(self._msg_id, self._shm.name)
+                            await channel.protocol.drain()
+                            self._backpressure.lease(channel.id, buf_idx)
+                        except (ConnectionResetError, BrokenPipeError):
+                            logger.debug(
+                                f"Publisher {self.id}: Channel {channel.id} connection fail"
+                            )
 
                     else:
-                        msg = (
-                            Command.TX_TCP.value
-                            + msg_id_bytes
-                            + total_size_bytes
-                            + header
-                            + b"".join([buffer for buffer in buffers])
-                        )
+                        if tcp_payload is None:
+                            tcp_payload = header + b"".join(
+                                [buffer for buffer in buffers]
+                            )
+                        try:
+                            channel.protocol.send_tx_tcp(self._msg_id, tcp_payload)
+                            await channel.protocol.drain()
+                            self._backpressure.lease(channel.id, buf_idx)
 
-                    try:
-                        channel.writer.write(msg)
-                        await channel.writer.drain()
-                        self._backpressure.lease(channel.id, buf_idx)
-
-                    except (ConnectionResetError, BrokenPipeError):
-                        logger.debug(
-                            f"Publisher {self.id}: Channel {channel.id} connection fail"
-                        )
+                        except (ConnectionResetError, BrokenPipeError):
+                            logger.debug(
+                                f"Publisher {self.id}: Channel {channel.id} connection fail"
+                            )
 
         self._msg_id += 1

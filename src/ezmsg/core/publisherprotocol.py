@@ -11,6 +11,7 @@ from .netprotocol import (
 
 logger = logging.getLogger("ezmsg")
 
+
 class PublisherProtocolState(enum.Enum):
     # Handshake states
     HANDSHAKE_SHM_NAME_LEN = enum.auto()
@@ -35,7 +36,7 @@ class PublisherMessage(typing.NamedTuple):
     tcp_data: bytes | None = None
 
 
-class PublisherProtocol(asyncio.Protocol):
+class PublisherClientProtocol(asyncio.Protocol):
     """High-performance protocol for publisher message stream"""
 
     def __init__(
@@ -71,7 +72,7 @@ class PublisherProtocol(asyncio.Protocol):
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore
         self.transport = transport
-        logger.debug("PublisherProtocol connected")
+        logger.debug("PublisherClientProtocol connected")
         # Send initial handshake
         self.transport.write(Command.CHANNEL.value)
         self.transport.write(encode_str(self.channel_id))
@@ -262,6 +263,249 @@ class PublisherProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         if exc:
-            logger.debug(f"PublisherProtocol connection lost: {exc}")
+            logger.debug(f"PublisherClientProtocol connection lost: {exc}")
         else:
-            logger.debug("PublisherProtocol disconnected")
+            logger.debug("PublisherClientProtocol disconnected")
+
+
+class PublisherServerProtocolState(enum.Enum):
+    WAIT_COMMAND = enum.auto()
+    CHANNEL_ID_LEN = enum.auto()
+    CHANNEL_ID_DATA = enum.auto()
+    SHM_RESPONSE = enum.auto()
+    PID = enum.auto()
+    COMMAND = enum.auto()
+    ACK_MSG_ID = enum.auto()
+
+
+class PublisherServerProtocol(asyncio.Protocol):
+    """
+    Server-side protocol for publisher<->channel link.
+
+    Handles handshake (CHANNEL command, SHM negotiation, COMPLETE + num_buffers)
+    and ACK telemetry from channels. Publisher injects callbacks to integrate
+    with its state/backpressure tracking.
+    """
+
+    def __init__(
+        self,
+        get_shm_info: typing.Callable[[], tuple[str, int]],
+        on_handshake: typing.Callable[
+            [str, int, bool, "PublisherServerProtocol"], None
+        ],
+        on_ack: typing.Callable[[str, int], None],
+        on_disconnect: typing.Callable[[str | None], None] | None = None,
+    ):
+        self._get_shm_info = get_shm_info
+        self._on_handshake = on_handshake
+        self._on_ack = on_ack
+        self._on_disconnect = on_disconnect
+
+        self.transport: asyncio.Transport | None = None
+
+        self.buffer = bytearray(1024 * 1024)
+        self.buffer_size = 0
+        self.buffer_offset = 0
+
+        self.state = PublisherServerProtocolState.WAIT_COMMAND
+        self.expected_bytes = 1
+
+        self.channel_id: str | None = None
+        self.shm_ok: bool | None = None
+        self.pid: int | None = None
+        self.num_buffers: int | None = None
+
+        self.handshake_complete: asyncio.Future[
+            tuple[str, bool, int]
+        ] = asyncio.get_running_loop().create_future()
+
+        self._paused = False
+        self._drain_waiter: asyncio.Future[None] | None = None
+
+    def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore
+        self.transport = transport
+        logger.debug("PublisherServerProtocol connected")
+
+    def data_received(self, data: bytes) -> None:
+        data_len = len(data)
+
+        if self.buffer_size + data_len > len(self.buffer):
+            if self.buffer_offset > len(self.buffer) // 2:
+                remaining = self.buffer_size - self.buffer_offset
+                self.buffer[0:remaining] = self.buffer[
+                    self.buffer_offset : self.buffer_size
+                ]
+                self.buffer_offset = 0
+                self.buffer_size = remaining
+            else:
+                new_size = max(len(self.buffer) * 2, self.buffer_size + data_len)
+                self.buffer.extend(bytearray(new_size - len(self.buffer)))
+
+        self.buffer[self.buffer_size : self.buffer_size + data_len] = data
+        self.buffer_size += data_len
+
+        while self._try_parse():
+            pass
+
+    def _try_parse(self) -> bool:
+        available = self.buffer_size - self.buffer_offset
+        if available < self.expected_bytes:
+            return False
+
+        if self.state == PublisherServerProtocolState.WAIT_COMMAND:
+            cmd = self.buffer[self.buffer_offset]
+            self.buffer_offset += 1
+            if cmd != Command.CHANNEL.value[0]:
+                logger.error(f"Unexpected command from channel: {cmd}")
+                if self.transport:
+                    self.transport.close()
+                return False
+            self.state = PublisherServerProtocolState.CHANNEL_ID_LEN
+            self.expected_bytes = 8
+            return True
+
+        elif self.state == PublisherServerProtocolState.CHANNEL_ID_LEN:
+            chan_len = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.expected_bytes = chan_len
+            self.state = PublisherServerProtocolState.CHANNEL_ID_DATA
+            return True
+
+        elif self.state == PublisherServerProtocolState.CHANNEL_ID_DATA:
+            chan_id = self.buffer[
+                self.buffer_offset : self.buffer_offset + self.expected_bytes
+            ].decode("utf-8")
+            self.buffer_offset += self.expected_bytes
+            self.channel_id = chan_id
+
+            shm_name, num_buffers = self._get_shm_info()
+            self.num_buffers = num_buffers
+
+            if self.transport is None:
+                return False
+
+            # Send SHM name (length + data) as handshake step
+            self.transport.write(encode_str(shm_name))
+
+            self.state = PublisherServerProtocolState.SHM_RESPONSE
+            self.expected_bytes = 1
+            return True
+
+        elif self.state == PublisherServerProtocolState.SHM_RESPONSE:
+            resp = self.buffer[self.buffer_offset]
+            self.buffer_offset += 1
+            if resp == Command.SHM_OK.value[0]:
+                self.shm_ok = True
+            elif resp == Command.SHM_ATTACH_FAILED.value[0]:
+                self.shm_ok = False
+            else:
+                logger.error(f"Unexpected SHM response: {resp}")
+                if self.transport:
+                    self.transport.close()
+                return False
+
+            self.state = PublisherServerProtocolState.PID
+            self.expected_bytes = 8
+            return True
+
+        elif self.state == PublisherServerProtocolState.PID:
+            pid = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            self.pid = pid
+
+            if self.transport is not None and self.num_buffers is not None:
+                self.transport.write(Command.COMPLETE.value)
+                self.transport.write(uint64_to_bytes(self.num_buffers))
+
+            if (
+                self.channel_id is not None
+                and self.shm_ok is not None
+                and self.pid is not None
+            ):
+                self._on_handshake(self.channel_id, self.pid, self.shm_ok, self)
+                if not self.handshake_complete.done():
+                    self.handshake_complete.set_result(
+                        (self.channel_id, self.shm_ok, self.pid)
+                    )
+
+            self.state = PublisherServerProtocolState.COMMAND
+            self.expected_bytes = 1
+            return True
+
+        elif self.state == PublisherServerProtocolState.COMMAND:
+            cmd = self.buffer[self.buffer_offset]
+            self.buffer_offset += 1
+            if cmd == Command.RX_ACK.value[0]:
+                self.state = PublisherServerProtocolState.ACK_MSG_ID
+                self.expected_bytes = 8
+            else:
+                logger.error(f"Unknown command from channel: {cmd}")
+                if self.transport:
+                    self.transport.close()
+                return False
+            return True
+
+        elif self.state == PublisherServerProtocolState.ACK_MSG_ID:
+            msg_id = int.from_bytes(
+                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
+            )
+            self.buffer_offset += 8
+            if self.channel_id is not None:
+                self._on_ack(self.channel_id, msg_id)
+            self.state = PublisherServerProtocolState.COMMAND
+            self.expected_bytes = 1
+            return True
+
+        return False
+
+    def close(self) -> None:
+        if self.transport is not None:
+            self.transport.close()
+
+    def send_tx_shm(self, msg_id: int, shm_name: str) -> None:
+        if self.transport is None:
+            return
+        payload = Command.TX_SHM.value + uint64_to_bytes(msg_id) + encode_str(shm_name)
+        self.transport.write(payload)
+
+    def send_tx_tcp(self, msg_id: int, payload: bytes) -> None:
+        if self.transport is None:
+            return
+        header = (
+            Command.TX_TCP.value
+            + uint64_to_bytes(msg_id)
+            + uint64_to_bytes(len(payload))
+        )
+        self.transport.write(header + payload)
+
+    async def drain(self) -> None:
+        if self._paused and self._drain_waiter is not None:
+            await self._drain_waiter
+
+    def pause_writing(self) -> None:
+        self._paused = True
+        loop = asyncio.get_running_loop()
+        if self._drain_waiter is None or self._drain_waiter.done():
+            self._drain_waiter = loop.create_future()
+
+    def resume_writing(self) -> None:
+        self._paused = False
+        if self._drain_waiter is not None and not self._drain_waiter.done():
+            self._drain_waiter.set_result(None)
+        self._drain_waiter = None
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        if exc:
+            logger.debug(f"PublisherServerProtocol connection lost: {exc}")
+        else:
+            logger.debug("PublisherServerProtocol disconnected")
+
+        if self._on_disconnect:
+            self._on_disconnect(self.channel_id)
+
+        if not self.handshake_complete.done():
+            self.handshake_complete.cancel()
