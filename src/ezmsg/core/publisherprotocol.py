@@ -12,6 +12,15 @@ from .netprotocol import (
 logger = logging.getLogger("ezmsg")
 
 
+class PublisherMessage(typing.NamedTuple):
+    """Parsed message from publisher"""
+
+    msg_id: int
+    command: bytes
+    shm_name: str | None = None
+    tcp_data: bytes | None = None
+
+
 class PublisherProtocolState(enum.Enum):
     # Handshake states
     HANDSHAKE_SHM_NAME_LEN = enum.auto()
@@ -25,15 +34,6 @@ class PublisherProtocolState(enum.Enum):
     SHM_NAME_DATA = enum.auto()
     TCP_SIZE = enum.auto()
     TCP_DATA = enum.auto()
-
-
-class PublisherMessage(typing.NamedTuple):
-    """Parsed message from publisher"""
-
-    msg_id: int
-    command: bytes
-    shm_name: str | None = None
-    tcp_data: bytes | None = None
 
 
 class PublisherClientProtocol(asyncio.Protocol):

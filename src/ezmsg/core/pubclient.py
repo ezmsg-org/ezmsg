@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 import time
-
 from uuid import UUID
 from contextlib import suppress
 from dataclasses import dataclass
@@ -246,7 +245,10 @@ class Publisher:
             return
 
         self._channels[chan_uuid] = PubChannelState(
-            id=chan_uuid, protocol=protocol, pid=pid, shm_ok=shm_ok
+            id=chan_uuid,
+            protocol=protocol,
+            pid=pid,
+            shm_ok=shm_ok,
         )
 
     def _on_channel_ack(self, channel_id: str, msg_id: int) -> None:

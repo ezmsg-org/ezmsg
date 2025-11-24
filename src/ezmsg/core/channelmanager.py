@@ -52,7 +52,9 @@ class ChannelManager:
         :return: A Channel for retreiving messages from the requested Publisher
         :rtype: Channel
         """
-        return await self._register(pub_id, client_id, queue, graph_address, None)
+        return await self._register(
+            pub_id, client_id, queue, graph_address, None, is_local=False
+        )
 
     async def register_local_pub(
         self,
@@ -75,7 +77,12 @@ class ChannelManager:
         :rtype: Channel
         """
         return await self._register(
-            pub_id, pub_id, None, graph_address, local_backpressure
+            pub_id,
+            pub_id,
+            None,
+            graph_address,
+            local_backpressure,
+            is_local=True,
         )
 
     async def _register(
@@ -85,12 +92,17 @@ class ChannelManager:
         queue: NotificationQueue | None = None,
         graph_address: AddressType | None = None,
         local_backpressure: Backpressure | None = None,
+        is_local: bool = False,
     ) -> Channel:
         graph_address = _ensure_address(graph_address)
         try:
             channel = self._registry.get(graph_address, dict())[pub_id]
         except KeyError:
-            channel = await Channel.create(pub_id, graph_address)
+            try:
+                channel = await Channel.create(pub_id, graph_address, is_local=is_local)
+            except TypeError:
+                # Backwards compatibility with test fakes that don't expect the kwarg
+                channel = await Channel.create(pub_id, graph_address)
             channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels

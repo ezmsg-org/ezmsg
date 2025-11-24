@@ -85,6 +85,7 @@ class Channel:
         cls,
         pub_id: UUID,
         graph_address: AddressType,
+        is_local: bool = False,
     ) -> "Channel":
         """
         Create a channel for a particular Publisher managed by a GraphServer at graph_address
@@ -141,7 +142,15 @@ class Channel:
         # Wait for handshake to complete (protocol receives COMPLETE + num_buffers)
         num_buffers = await protocol.handshake_complete
 
-        chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
+        channel_cls: type[Channel]
+        if is_local and shm is not None:
+            channel_cls = LocalChannel
+        elif shm_ok and shm is not None:
+            channel_cls = SHMChannel
+        else:
+            channel_cls = TCPChannel
+
+        chan = channel_cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
 
         chan._graph_task = asyncio.create_task(
             chan._graph_connection(graph_reader, graph_writer),
@@ -360,3 +369,112 @@ class Channel:
             self._local_backpressure = None
 
         del self.clients[client_id]
+
+
+class SHMChannel(Channel):
+    """
+    Channel specialized for SHM telemetry from publisher.
+    Prefers SHM telemetry but will handle TCP if publisher falls back.
+    """
+
+    async def _process_publisher_messages(self) -> None:
+        try:
+            while True:
+                msg = await self._pub_message_queue.get()
+                buf_idx = msg.msg_id % self.num_buffers
+
+                if msg.command == Command.TX_TCP.value and msg.tcp_data is not None:
+                    assert MessageMarshal.msg_id(msg.tcp_data) == msg.msg_id
+                    self.cache.put_from_mem(memoryview(msg.tcp_data).toreadonly())
+                else:
+                    if msg.command != Command.TX_SHM.value:
+                        logger.warning(
+                            f"Channel {self.id} expected TX_SHM, received {msg.command}"
+                        )
+                    if (
+                        self.shm is not None
+                        and msg.shm_name is not None
+                        and self.shm.name != msg.shm_name
+                    ):
+                        shm_entries = self.cache.keys()
+                        self.cache.clear()
+                        self.shm.close()
+                        await self.shm.wait_closed()
+
+                        try:
+                            self.shm = await GraphService(
+                                self._graph_address
+                            ).attach_shm(msg.shm_name)
+                        except ValueError:
+                            logger.info("Invalid SHM received from publisher; may be dead")
+                            raise
+
+                        for id in shm_entries:
+                            self.cache.put_from_mem(self.shm[id % self.num_buffers])
+
+                    assert self.shm is not None
+                    assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg.msg_id
+                    self.cache.put_from_mem(self.shm[buf_idx])
+
+                if not self._notify_clients(msg.msg_id):
+                    self.cache.release(msg.msg_id)
+                    self._acknowledge(msg.msg_id)
+
+        finally:
+            self.cache.clear()
+            if self.shm is not None:
+                self.shm.close()
+
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+
+class LocalChannel(SHMChannel):
+    """
+    Channel specialized for local publisher communication.
+    No network telemetry expected; messages arrive via put_local.
+    """
+
+    async def _process_publisher_messages(self) -> None:
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.cache.clear()
+            if self.shm is not None:
+                self.shm.close()
+
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+
+class TCPChannel(Channel):
+    """
+    Channel specialized for TCP telemetry from publisher.
+    Expects only TX_TCP messages after handshake.
+    """
+
+    async def _process_publisher_messages(self) -> None:
+        try:
+            while True:
+                msg = await self._pub_message_queue.get()
+                buf_idx = msg.msg_id % self.num_buffers
+
+                if msg.command != Command.TX_TCP.value or msg.tcp_data is None:
+                    logger.error(
+                        f"Channel {self.id} expected TX_TCP, received {msg.command}"
+                    )
+                    continue
+
+                assert MessageMarshal.msg_id(msg.tcp_data) == msg.msg_id
+                self.cache.put_from_mem(memoryview(msg.tcp_data).toreadonly())
+
+                if not self._notify_clients(msg.msg_id):
+                    self.cache.release(msg.msg_id)
+                    self._acknowledge(msg.msg_id)
+
+        finally:
+            self.cache.clear()
+            if self.shm is not None:
+                self.shm.close()
+
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
