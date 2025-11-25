@@ -120,9 +120,9 @@ class MessageCache:
         """
         Release memory for the entry associated with msg_id
 
-        :param mem: Source memoryview containing serialized object.
-        :type from_mem: memoryview
-        :raises UninitializedMemory: If mem buffer is not properly initialized.
+        :param msg_id: ID for the message to release.
+        :type msg_id: int
+        :raises CacheMiss: If requested msg_id is not in cache.
         """
         buf_idx = self._buf_idx(msg_id)
         entry = self._cache[buf_idx]
