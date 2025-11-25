@@ -304,10 +304,6 @@ class DefaultBackendProcess(BackendProcess):
                         unit.shutdown()  # type: ignore
 
             asyncio.run_coroutine_threadsafe(shutdown_units(), loop=loop).result()
-
-            # for cache in MessageCache.values():
-            #     cache.clear()
-
             asyncio.run_coroutine_threadsafe(context.revert(), loop=loop).result()
 
             logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")

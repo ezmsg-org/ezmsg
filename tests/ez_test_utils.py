@@ -28,10 +28,15 @@ def get_test_fn(test_name: str | None = None, extension: str = "txt") -> typing.
     # Use NamedTemporaryFile with delete=False so callers can open/remove it.
     prefix = f"{test_name}-" if test_name else "test-"
     tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=f".{extension}")
+    tmp.close()  # Close so others can open it on Windows
+    path = Path(tmp.name)
     try:
-        yield Path(tmp.name)
+        yield path
     finally:
-        tmp.close()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 # MESSAGE DEFINITIONS
