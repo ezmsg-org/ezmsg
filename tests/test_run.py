@@ -63,70 +63,69 @@ def toy_system_fixture(request):
 
 @pytest.mark.parametrize("num_messages", [1, 5, 10])
 def test_local_system(toy_system_fixture, num_messages):
-    test_filename = get_test_fn()
-    system = toy_system_fixture(
-        ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
-    )
-    ez.run(SYSTEM=system, profiler_log_name="test_profiler.log")
-    assert os.environ.get("EZMSG_PROFILER") == "test_profiler.log"
+    with get_test_fn() as test_filename:
+        system = toy_system_fixture(
+            ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
+        )
+        ez.run(SYSTEM=system, profiler_log_name="test_profiler.log")
+        assert os.environ.get("EZMSG_PROFILER") == "test_profiler.log"
 
-    results = []
-    with open(test_filename, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            results.append(json.loads(line))
-    os.remove(test_filename)
-    assert len(results) == num_messages
+        results = []
+        with open(test_filename, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                results.append(json.loads(line))
+
+        assert len(results) == num_messages
 
 
 @pytest.mark.parametrize("passthrough_settings", [False, True])
 @pytest.mark.parametrize("num_messages", [1, 5, 10])
 def test_run_comps_conns(passthrough_settings, num_messages):
-    test_filename = get_test_fn()
-    if passthrough_settings:
-        comps = {
-            "SIMPLE_PUB": MessageGenerator(num_msgs=num_messages),
-            "SIMPLE_SUB": MessageReceiver(
-                num_msgs=num_messages, output_fn=test_filename
-            ),
-        }
-    else:
-        comps = {
-            "SIMPLE_PUB": MessageGenerator(
-                MessageGeneratorSettings(num_msgs=num_messages)
-            ),
-            "SIMPLE_SUB": MessageReceiver(
-                MessageReceiverSettings(num_msgs=num_messages, output_fn=test_filename)
-            ),
-        }
-    conns = ((comps["SIMPLE_PUB"].OUTPUT, comps["SIMPLE_SUB"].INPUT),)
+    with get_test_fn() as test_filename:
+        if passthrough_settings:
+            comps = {
+                "SIMPLE_PUB": MessageGenerator(num_msgs=num_messages),
+                "SIMPLE_SUB": MessageReceiver(
+                    num_msgs=num_messages, output_fn=test_filename
+                ),
+            }
+        else:
+            comps = {
+                "SIMPLE_PUB": MessageGenerator(
+                    MessageGeneratorSettings(num_msgs=num_messages)
+                ),
+                "SIMPLE_SUB": MessageReceiver(
+                    MessageReceiverSettings(num_msgs=num_messages, output_fn=test_filename)
+                ),
+            }
+        conns = ((comps["SIMPLE_PUB"].OUTPUT, comps["SIMPLE_SUB"].INPUT),)
 
-    ez.run(components=comps, connections=conns)
+        ez.run(components=comps, connections=conns)
 
-    results = []
-    with open(test_filename, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            results.append(json.loads(line))
-    os.remove(test_filename)
-    assert len(results) == num_messages
+        results = []
+        with open(test_filename, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                results.append(json.loads(line))
+
+        assert len(results) == num_messages
 
 
 @pytest.mark.parametrize("passthrough_settings", [False, True])
 @pytest.mark.parametrize("num_messages", [1, 5, 10])
 def test_run_collection(passthrough_settings, num_messages):
-    test_filename = get_test_fn()
-    if passthrough_settings:
-        collection = ToySystem(num_msgs=num_messages, output_fn=test_filename)
-    else:
-        collection = ToySystem(
-            ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
-        )
-    ez.run(collection)
-    results = []
-    with open(test_filename, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            results.append(json.loads(line))
-    os.remove(test_filename)
-    assert len(results) == num_messages
+    with get_test_fn() as test_filename:
+        if passthrough_settings:
+            collection = ToySystem(num_msgs=num_messages, output_fn=test_filename)
+        else:
+            collection = ToySystem(
+                ToySystemSettings(num_msgs=num_messages, output_fn=test_filename)
+            )
+        ez.run(collection)
+        results = []
+        with open(test_filename, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                results.append(json.loads(line))
+        assert len(results) == num_messages

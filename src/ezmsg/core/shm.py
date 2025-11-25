@@ -120,7 +120,7 @@ class SHMContext:
     ) -> None:
         try:
             await reader.read()
-            logger.debug(f"SHMContext {self.name} GraphServer hangup")
+            logger.debug(f"SHMContext {self.name} GraphServer disconnected; closing.")
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"SHMContext {self.name} GraphServer {type(e)}")
         finally:

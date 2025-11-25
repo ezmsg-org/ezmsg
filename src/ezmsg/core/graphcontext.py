@@ -108,7 +108,7 @@ class GraphContext:
         await GraphService(self.graph_address).disconnect(from_topic, to_topic)
         self._edges.discard((from_topic, to_topic))
 
-    async def sync(self, timeout: typing.Optional[float] = None) -> None:
+    async def sync(self, timeout: float | None = None) -> None:
         """
         Synchronize with the graph server.
 

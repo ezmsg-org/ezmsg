@@ -24,6 +24,8 @@ __all__ = [
     "GraphServer",
     "GraphContext",
     "run_command",
+    "Publisher",
+    "Subscriber",
     # All following are deprecated
     "System",
     "run_system",
@@ -42,6 +44,8 @@ from .backendprocess import Complete, NormalTermination
 from .graphserver import GraphServer
 from .graphcontext import GraphContext
 from .command import run_command
+from .pubclient import Publisher
+from .subclient import Subscriber
 
 # Following imports are deprecated
 from .backend import run_system

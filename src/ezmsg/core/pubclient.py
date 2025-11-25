@@ -55,6 +55,8 @@ class Publisher:
     and resource management.
     """
 
+    _SENTINEL = object()
+
     id: UUID
     pid: int
     topic: str
@@ -132,6 +134,7 @@ class Publisher:
             num_buffers=num_buffers,
             start_paused=start_paused,
             force_tcp=force_tcp,
+            _guard=cls._SENTINEL,
         )
 
         start_port = int(
@@ -194,6 +197,7 @@ class Publisher:
         num_buffers: int = 32,
         start_paused: bool = False,
         force_tcp: bool = False,
+        _guard = None
     ) -> None:
         """
         Initialize a Publisher instance.
@@ -212,6 +216,12 @@ class Publisher:
         :param force_tcp: Whether to force TCP transport instead of shared memory.
         :type force_tcp: bool
         """
+        if _guard is not self._SENTINEL:
+            raise TypeError(
+                "Publisher cannot be instantiated directly."
+                "Use 'await Publisher.create(...)' instead."
+            )
+
         self.id = id
         self.pid = os.getpid()
         self.topic = topic

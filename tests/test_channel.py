@@ -32,10 +32,9 @@ def _serialize(msg_id: int, payload: object) -> bytes:
 
 @pytest.mark.asyncio
 async def test_channel_acknowledges_remote_messages():
-    channel = Channel(uuid4(), uuid4(), 2, None, None)
+    channel = Channel(uuid4(), uuid4(), 2, None, None, Channel._SENTINEL)
     channel._pub_transport = DummyTransport()
     channel._pub_message_queue = asyncio.Queue()
-
     client_id = uuid4()
     queue: asyncio.Queue = asyncio.Queue()
     channel.register_client(client_id, queue)
@@ -72,7 +71,7 @@ async def test_channel_acknowledges_remote_messages():
 
 @pytest.mark.asyncio
 async def test_channel_releases_local_backpressure():
-    channel = Channel(uuid4(), uuid4(), 2, None, None)
+    channel = Channel(uuid4(), uuid4(), 2, None, None, Channel._SENTINEL)
     channel._pub_transport = DummyTransport()
 
     local_bp = Backpressure(channel.num_buffers)
@@ -99,6 +98,6 @@ async def test_channel_releases_local_backpressure():
 
 
 def test_channel_put_local_requires_local_backpressure():
-    channel = Channel(uuid4(), uuid4(), 1, None, None)
+    channel = Channel(uuid4(), uuid4(), 1, None, None, Channel._SENTINEL)
     with pytest.raises(ValueError):
         channel.put_local(1, "no pub")

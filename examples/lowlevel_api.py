@@ -1,16 +1,13 @@
 import asyncio
 
-from ezmsg.core.graphserver import GraphServer, GraphService
-
-from ezmsg.core.subclient import Subscriber
-from ezmsg.core.pubclient import Publisher
+import ezmsg.core as ez
 
 PORT = 12345
 MAX_COUNT = 100
 TOPIC = "/TEST"
 
 
-async def handle_pub(pub: Publisher) -> None:
+async def handle_pub(pub: ez.Publisher) -> None:
     print("Publisher Task Launched")
 
     count = 0
@@ -25,13 +22,14 @@ async def handle_pub(pub: Publisher) -> None:
     print("Publisher Task Concluded")
 
 
-async def handle_sub(sub: Subscriber) -> None:
+async def handle_sub(sub: ez.Subscriber) -> None:
     print("Subscriber Task Launched")
 
     rx_count = 0
     while True:
         async with sub.recv_zero_copy() as msg:
-            await asyncio.sleep(0.15)
+            # Uncomment if you want to witness backpressure!
+            # await asyncio.sleep(0.15)
             print(msg)
 
         rx_count += 1
@@ -43,19 +41,15 @@ async def handle_sub(sub: Subscriber) -> None:
 
 async def host(host: str = "127.0.0.1"):
     # Manually create a GraphServer
-    server = GraphServer()
+    server = ez.GraphServer()
     server.start((host, PORT))
 
     print(f"Created GraphServer @ {server.address}")
 
-    # Create a graph_service that will interact with this GraphServer
-    graph_service = GraphService((host, PORT))
-    await graph_service.ensure()
-
     try:
-        test_pub = await Publisher.create(TOPIC, (host, PORT), host=host)
-        test_sub1 = await Subscriber.create(TOPIC, (host, PORT))
-        test_sub2 = await Subscriber.create(TOPIC, (host, PORT))
+        test_pub = await ez.Publisher.create(TOPIC, (host, PORT), host=host)
+        test_sub1 = await ez.Subscriber.create(TOPIC, (host, PORT))
+        test_sub2 = await ez.Subscriber.create(TOPIC, (host, PORT))
 
         await asyncio.sleep(1.0)
 
@@ -85,18 +79,14 @@ async def host(host: str = "127.0.0.1"):
 
 
 async def attach_client(host: str = "127.0.0.1"):
-    # Attach to a running GraphServer
-    graph_service = GraphService((host, PORT))
-    await graph_service.ensure()
 
-    print(f"Connected to GraphServer @ {graph_service.address}")
-
-    sub = await Subscriber.create(TOPIC, (host, PORT))
+    sub = await ez.Subscriber.create(TOPIC, (host, PORT))
 
     try:
         while True:
             async with sub.recv_zero_copy() as msg:
-                await asyncio.sleep(1.0)
+                # Uncomment if you want to see EXTREME backpressure!
+                # await asyncio.sleep(1.0)
                 print(msg)
 
     except asyncio.CancelledError:

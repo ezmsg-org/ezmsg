@@ -99,7 +99,7 @@ class Marshal:
         :type mem: memoryview | bytes
         :return: Message ID of encoded message
         :rtype: int
-        :raises UndersizedMemory: If buffer is not initialized.
+        :raises UninitializedMemory: If buffer is not initialized.
         """
         cls._assert_initialized(raw)
         return bytes_to_uint(raw[_PREAMBLE_LEN : _PREAMBLE_LEN + UINT64_SIZE])

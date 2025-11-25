@@ -163,25 +163,25 @@ def test_gen_to_unit_any():
     assert MyUnit.OUTPUT.msg_type == list[typing.Any]
 
     num_msgs = 5
-    test_filename = get_test_fn()
-    comps = {
-        "SIMPLE_PUB": MessageGenerator(num_msgs=num_msgs),
-        "MYUNIT": MyUnit(),
-        "SIMPLE_SUB": MessageAnyReceiver(num_msgs=num_msgs, output_fn=test_filename),
-    }
-    ez.run(
-        components=comps,
-        connections=(
-            (comps["SIMPLE_PUB"].OUTPUT, comps["MYUNIT"].INPUT),
-            (comps["MYUNIT"].OUTPUT, comps["SIMPLE_SUB"].INPUT),
-        ),
-    )
-    results = []
-    with open(test_filename, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            results.append(json.loads(line))
-    os.remove(test_filename)
+    with get_test_fn() as test_filename:
+        comps = {
+            "SIMPLE_PUB": MessageGenerator(num_msgs=num_msgs),
+            "MYUNIT": MyUnit(),
+            "SIMPLE_SUB": MessageAnyReceiver(num_msgs=num_msgs, output_fn=test_filename),
+        }
+        ez.run(
+            components=comps,
+            connections=(
+                (comps["SIMPLE_PUB"].OUTPUT, comps["MYUNIT"].INPUT),
+                (comps["MYUNIT"].OUTPUT, comps["SIMPLE_SUB"].INPUT),
+            ),
+        )
+        results = []
+        with open(test_filename, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                results.append(json.loads(line))
+
     # We don't really care about the contents; functionality was confirmed in a separate test.
     # Keep this simple.
     assert len(results) == num_msgs
@@ -224,25 +224,26 @@ def test_gen_to_unit_axarr():
     assert MyUnit.OUTPUT_SIGNAL.msg_type is AxisArray
 
     num_msgs = 5
-    test_filename = get_test_fn()
-    comps = {
-        "SIMPLE_PUB": AxarrGenerator(num_msgs=num_msgs),
-        "MYUNIT": MyUnit(),
-        "SIMPLE_SUB": AxarrReceiver(num_msgs=num_msgs, output_fn=test_filename),
-    }
-    ez.run(
-        components=comps,
-        connections=(
-            (comps["SIMPLE_PUB"].OUTPUT_SIGNAL, comps["MYUNIT"].INPUT_SIGNAL),
-            (comps["MYUNIT"].OUTPUT_SIGNAL, comps["SIMPLE_SUB"].INPUT_SIGNAL),
-        ),
-    )
-    results = []
-    with open(test_filename, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            results.append(json.loads(line))
-    os.remove(test_filename)
+
+    with get_test_fn() as test_filename:
+        comps = {
+            "SIMPLE_PUB": AxarrGenerator(num_msgs=num_msgs),
+            "MYUNIT": MyUnit(),
+            "SIMPLE_SUB": AxarrReceiver(num_msgs=num_msgs, output_fn=test_filename),
+        }
+        ez.run(
+            components=comps,
+            connections=(
+                (comps["SIMPLE_PUB"].OUTPUT_SIGNAL, comps["MYUNIT"].INPUT_SIGNAL),
+                (comps["MYUNIT"].OUTPUT_SIGNAL, comps["SIMPLE_SUB"].INPUT_SIGNAL),
+            ),
+        )
+        results = []
+        with open(test_filename, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                results.append(json.loads(line))
+
     assert np.array_equal(
         results[-1][f"{num_msgs}"], np.hstack([np.arange(_) for _ in range(num_msgs)])
     )

@@ -3,7 +3,13 @@ import typing
 from .messagemarshal import MessageMarshal
 
 
-class CacheMiss(Exception): ...
+class CacheMiss(Exception): 
+    """
+    Exception raised when a requested message is not found in cache.
+    
+    This occurs when trying to retrieve a message that has been evicted
+    from the cache or was never stored in the first place.
+    """
 
 
 class CacheEntry(typing.NamedTuple):
@@ -14,9 +20,22 @@ class CacheEntry(typing.NamedTuple):
 
 
 class MessageCache:
+    """
+    Cache for memoryview-backed objects.
+    
+    Provides a buffer cache that can store objects in memory 
+    enabling efficient message passing between
+    processes with automatic eviction based on buffer age.
+    """
     _cache: list[CacheEntry | None]
 
     def __init__(self, num_buffers: int) -> None:
+        """
+        Initialize the cache with specified number of buffers.
+        
+        :param num_buffers: Number of cache buffers to maintain.
+        :type num_buffers: int
+        """
         self._cache = [None] * num_buffers
 
     def _buf_idx(self, msg_id: int) -> int:
@@ -114,10 +133,6 @@ class MessageCache:
     def clear(self) -> None:
         """
         Release all cached objects
-
-        :param mem: Source memoryview containing serialized object.
-        :type from_mem: memoryview
-        :raises UninitializedMemory: If mem buffer is not properly initialized.
         """
         for i in range(len(self._cache)):
             self._release(i)

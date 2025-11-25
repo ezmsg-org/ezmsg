@@ -31,6 +31,8 @@ class Subscriber:
     and zero-copy message access patterns with automatic acknowledgment.
     """
 
+    _SENTINEL = object()
+
     id: UUID
     topic: str
 
@@ -72,7 +74,7 @@ class Subscriber:
         sub_id_str = await read_str(reader)
         sub_id = UUID(sub_id_str)
 
-        sub = cls(sub_id, topic, graph_address, **kwargs)
+        sub = cls(sub_id, topic, graph_address, _guard=cls._SENTINEL, **kwargs)
 
         sub._graph_task = asyncio.create_task(
             sub._graph_connection(reader, writer),
@@ -89,7 +91,12 @@ class Subscriber:
         return sub
 
     def __init__(
-        self, id: UUID, topic: str, graph_address: AddressType | None, **kwargs
+        self, 
+        id: UUID, 
+        topic: str, 
+        graph_address: AddressType | None, 
+        _guard = None, 
+        **kwargs
     ) -> None:
         """
         Initialize a Subscriber instance.
@@ -104,6 +111,11 @@ class Subscriber:
         :type graph_service: GraphService
         :param kwargs: Additional keyword arguments (unused).
         """
+        if _guard is not self._SENTINEL:
+            raise TypeError(
+                "Subscriber cannot be instantiated directly."
+                "Use 'await Subscriber.create(...)' instead."
+            )
         self.id = id
         self.topic = topic
         self._graph_address = graph_address

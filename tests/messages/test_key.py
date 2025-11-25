@@ -74,71 +74,69 @@ class AxarrReceiver(ez.Unit):
 
 def test_set_key_unit():
     num_msgs = 20
-    test_fn_raw = get_test_fn()
-    test_fn_keyed = test_fn_raw.parent / (
-        test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
-    )
+    with get_test_fn() as test_fn_raw:
+        test_fn_keyed = test_fn_raw.parent / (
+            test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
+        )
 
-    comps = {
-        "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
-        "KEYSETTER": SetKey(key="new key"),
-        "SINK_RAW": AxarrReceiver(num_msgs=1e9, output_fn=test_fn_raw),
-        "SINK_KEYED": AxarrReceiver(num_msgs=num_msgs, output_fn=test_fn_keyed),
-    }
-    conns = [
-        (comps["SRC"].OUTPUT_SIGNAL, comps["SINK_RAW"].INPUT_SIGNAL),
-        (comps["SRC"].OUTPUT_SIGNAL, comps["KEYSETTER"].INPUT_SIGNAL),
-        (comps["KEYSETTER"].OUTPUT_SIGNAL, comps["SINK_KEYED"].INPUT_SIGNAL),
-    ]
-    ez.run(components=comps, connections=conns)
-
-    with open(test_fn_raw, "r") as file:
-        raw_results = [json.loads(_) for _ in file.readlines()]
-    os.remove(test_fn_raw)
-    assert len(raw_results) == num_msgs
-    assert all(
-        [
-            _[str(ix + 1)] == ("odd" if ix % 2 else "even")
-            for ix, _ in enumerate(raw_results)
+        comps = {
+            "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
+            "KEYSETTER": SetKey(key="new key"),
+            "SINK_RAW": AxarrReceiver(num_msgs=1e9, output_fn=test_fn_raw),
+            "SINK_KEYED": AxarrReceiver(num_msgs=num_msgs, output_fn=test_fn_keyed),
+        }
+        conns = [
+            (comps["SRC"].OUTPUT_SIGNAL, comps["SINK_RAW"].INPUT_SIGNAL),
+            (comps["SRC"].OUTPUT_SIGNAL, comps["KEYSETTER"].INPUT_SIGNAL),
+            (comps["KEYSETTER"].OUTPUT_SIGNAL, comps["SINK_KEYED"].INPUT_SIGNAL),
         ]
-    )
+        ez.run(components=comps, connections=conns)
 
-    with open(test_fn_keyed, "r") as file:
-        keyed_results = [json.loads(_) for _ in file.readlines()]
-    os.remove(test_fn_keyed)
-    assert len(keyed_results) == num_msgs
-    assert all([_[str(ix + 1)] == "new key" for ix, _ in enumerate(keyed_results)])
+        with open(test_fn_raw, "r") as file:
+            raw_results = [json.loads(_) for _ in file.readlines()]
+        assert len(raw_results) == num_msgs
+        assert all(
+            [
+                _[str(ix + 1)] == ("odd" if ix % 2 else "even")
+                for ix, _ in enumerate(raw_results)
+            ]
+        )
+
+        with open(test_fn_keyed, "r") as file:
+            keyed_results = [json.loads(_) for _ in file.readlines()]
+        os.remove(test_fn_keyed)
+        assert len(keyed_results) == num_msgs
+        assert all([_[str(ix + 1)] == "new key" for ix, _ in enumerate(keyed_results)])
 
 
 def test_filter_key():
     num_msgs = 20
-    test_fn_raw = get_test_fn()
-    test_fn_filtered = test_fn_raw.parent / (
-        test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
-    )
+    with get_test_fn() as test_fn_raw:
+        test_fn_filtered = test_fn_raw.parent / (
+            test_fn_raw.stem + "_keyed" + test_fn_raw.suffix
+        )
 
-    comps = {
-        "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
-        "FILTER": FilterOnKey(key="odd"),
-        "SINK_RAW": AxarrReceiver(num_msgs=1e9, output_fn=test_fn_raw),
-        "SINK_FILTERED": AxarrReceiver(
-            num_msgs=num_msgs // 2, output_fn=test_fn_filtered
-        ),
-    }
-    conns = [
-        (comps["SRC"].OUTPUT_SIGNAL, comps["SINK_RAW"].INPUT_SIGNAL),
-        (comps["SRC"].OUTPUT_SIGNAL, comps["FILTER"].INPUT_SIGNAL),
-        (comps["FILTER"].OUTPUT_SIGNAL, comps["SINK_FILTERED"].INPUT_SIGNAL),
-    ]
-    ez.run(components=comps, connections=conns)
+        comps = {
+            "SRC": KeyedAxarrGenerator(num_msgs=num_msgs),
+            "FILTER": FilterOnKey(key="odd"),
+            "SINK_RAW": AxarrReceiver(num_msgs=1e9, output_fn=test_fn_raw),
+            "SINK_FILTERED": AxarrReceiver(
+                num_msgs=num_msgs // 2, output_fn=test_fn_filtered
+            ),
+        }
+        conns = [
+            (comps["SRC"].OUTPUT_SIGNAL, comps["SINK_RAW"].INPUT_SIGNAL),
+            (comps["SRC"].OUTPUT_SIGNAL, comps["FILTER"].INPUT_SIGNAL),
+            (comps["FILTER"].OUTPUT_SIGNAL, comps["SINK_FILTERED"].INPUT_SIGNAL),
+        ]
+        ez.run(components=comps, connections=conns)
 
-    with open(test_fn_raw, "r") as file:
-        raw_results = [json.loads(_) for _ in file.readlines()]
-    os.remove(test_fn_raw)
-    assert len(raw_results) == num_msgs
+        with open(test_fn_raw, "r") as file:
+            raw_results = [json.loads(_) for _ in file.readlines()]
+        assert len(raw_results) == num_msgs
 
-    with open(test_fn_filtered, "r") as file:
-        filtered_results = [json.loads(_) for _ in file.readlines()]
-    os.remove(test_fn_filtered)
-    assert len(filtered_results) == num_msgs // 2
-    assert all([_[str(ix + 1)] == "odd" for ix, _ in enumerate(filtered_results)])
+        with open(test_fn_filtered, "r") as file:
+            filtered_results = [json.loads(_) for _ in file.readlines()]
+        os.remove(test_fn_filtered)
+        assert len(filtered_results) == num_msgs // 2
+        assert all([_[str(ix + 1)] == "odd" for ix, _ in enumerate(filtered_results)])

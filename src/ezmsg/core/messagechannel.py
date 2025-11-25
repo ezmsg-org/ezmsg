@@ -42,6 +42,8 @@ class Channel:
     The Channel constructor should not be called directly, instead use Channel.create(...)
     """
 
+    _SENTINEL = object()
+
     id: UUID
     pub_id: UUID
     pid: int
@@ -67,7 +69,14 @@ class Channel:
         num_buffers: int,
         shm: SHMContext | None,
         graph_address: AddressType | None,
+        _guard = None,
     ) -> None:
+        if _guard is not self._SENTINEL:
+            raise TypeError(
+                "Channel cannot be instantiated directly."
+                "Use 'await CHANNELS.register(...)' instead."
+            )
+        
         self.id = id
         self.pub_id = pub_id
         self.num_buffers = num_buffers
@@ -140,6 +149,7 @@ class Channel:
 
         # Wait for handshake to complete (protocol receives COMPLETE + num_buffers)
         num_buffers = await protocol.handshake_complete
+        assert num_buffers > 0, "publisher reports invalid num_buffers"
 
         channel_cls: type[Channel]
         if is_local and shm is not None:
@@ -149,7 +159,7 @@ class Channel:
         else:
             channel_cls = TCPChannel
 
-        chan = channel_cls(UUID(id_str), pub_id, num_buffers, shm, graph_address)
+        chan = channel_cls(UUID(id_str), pub_id, num_buffers, shm, graph_address, _guard=cls._SENTINEL)
 
         chan._graph_task = asyncio.create_task(
             chan._graph_connection(graph_reader, graph_writer),
