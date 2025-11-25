@@ -59,7 +59,6 @@ class Channel:
     _pub_message_queue: asyncio.Queue[PublisherMessage]
     _pub_process_task: asyncio.Task[None]
     _graph_address: AddressType | None
-    _local_backpressure: Backpressure | None
 
     def __init__(
         self,
@@ -274,21 +273,6 @@ class Channel:
             queue.put_nowait((self.pub_id, msg_id))
         return not self.backpressure.available(buf_idx)
 
-    def put_local(self, msg_id: int, msg: typing.Any) -> None:
-        """
-        Put a message DIRECTLY into cache and notify all clients.
-        .. note:: This command should ONLY be used by Publishers that are in the same process as this Channel.
-        """
-        if self._local_backpressure is None:
-            raise ValueError(
-                "cannot put_local without access to publisher backpressure (is publisher in same process?)"
-            )
-
-        buf_idx = msg_id % self.num_buffers
-        if self._notify_clients(msg_id):
-            self.cache.put_local(msg, msg_id)
-            self._local_backpressure.lease(self.id, buf_idx)
-
     @contextmanager
     def get(
         self, msg_id: int, client_id: UUID
@@ -434,6 +418,8 @@ class LocalChannel(SHMChannel):
     No network telemetry expected; messages arrive via put_local.
     """
 
+    _local_backpressure: Backpressure
+
     async def _process_publisher_messages(self) -> None:
         try:
             await asyncio.Future()
@@ -445,6 +431,15 @@ class LocalChannel(SHMChannel):
                 self.shm.close()
 
             logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+    def put(self, msg_id: int, msg: typing.Any) -> None:
+        """
+        Put a message DIRECTLY into cache and notify all clients.
+        """
+        buf_idx = msg_id % self.num_buffers
+        if self._notify_clients(msg_id):
+            self.cache.put_local(msg, msg_id)
+            self._local_backpressure.lease(self.id, buf_idx)
 
 
 class TCPChannel(Channel):
