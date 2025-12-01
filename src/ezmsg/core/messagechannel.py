@@ -9,7 +9,7 @@ from contextlib import contextmanager, suppress
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
-from .publisherprotocol import PublisherClientProtocol, PublisherMessage
+from .publisherprotocol import PublisherClientProtocol, SHMMessage, TCPMessage
 from .messagecache import MessageCache
 from .graphserver import GraphService
 from .netprotocol import (
@@ -26,11 +26,9 @@ from .netprotocol import (
 
 logger = logging.getLogger("ezmsg")
 
+T = typing.TypeVar('T', SHMMessage, TCPMessage)
 
-NotificationQueue = asyncio.Queue[typing.Tuple[UUID, int]]
-
-
-class Channel:
+class Channel(typing.Generic[T]):
     """
     Channel is a "middle-man" that receives messages from a particular Publisher,
     maintains the message in a MessageCache, and pushes notifications to interested
@@ -51,15 +49,10 @@ class Channel:
 
     num_buffers: int
     cache: MessageCache
-    shm: SHMContext | None
-    clients: dict[UUID, NotificationQueue | None]
+    clients: dict[UUID, asyncio.Queue[tuple[UUID, int]] | None]
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
-    _pub_protocol: PublisherClientProtocol
-    _pub_transport: asyncio.Transport
-    _pub_message_queue: asyncio.Queue[PublisherMessage]
-    _pub_process_task: asyncio.Task[None]
     _graph_address: AddressType | None
 
     def __init__(
@@ -67,7 +60,6 @@ class Channel:
         id: UUID,
         pub_id: UUID,
         num_buffers: int,
-        shm: SHMContext | None,
         graph_address: AddressType | None,
         _guard = None,
     ) -> None:
@@ -80,20 +72,16 @@ class Channel:
         self.id = id
         self.pub_id = pub_id
         self.num_buffers = num_buffers
-        self.shm = shm
-
         self.cache = MessageCache(self.num_buffers)
-        self.backpressure = Backpressure(self.num_buffers)
         self.clients = dict()
+        self.backpressure = Backpressure(self.num_buffers)
         self._graph_address = graph_address
-        self._local_backpressure = None
 
     @classmethod
     async def create(
         cls,
         pub_id: UUID,
         graph_address: AddressType,
-        is_local: bool = False,
     ) -> "Channel":
         """
         Create a channel for a particular Publisher managed by a GraphServer at graph_address
@@ -123,9 +111,9 @@ class Channel:
         id_str = await read_str(graph_reader)
         pub_address = await Address.from_stream(graph_reader)
 
-        # Create protocol and connect directly (no StreamReader!)
+        # Create a connection to the publisher
         loop = asyncio.get_running_loop()
-        pub_message_queue: asyncio.Queue[PublisherMessage] = asyncio.Queue()
+        pub_message_queue: asyncio.Queue[T] = asyncio.Queue()
         transport, protocol = await loop.create_connection(
             lambda: PublisherClientProtocol(id_str, pub_message_queue),
             *pub_address,
@@ -148,54 +136,57 @@ class Channel:
         protocol.send_handshake_response(shm_ok, os.getpid())
 
         # Wait for handshake to complete (protocol receives COMPLETE + num_buffers)
-        num_buffers = await protocol.handshake_complete
+        num_buffers, mode = await protocol.handshake_complete
         assert num_buffers > 0, "publisher reports invalid num_buffers"
 
-        channel_cls: type[Channel]
-        if is_local and shm is not None:
-            channel_cls = LocalChannel
-        elif shm_ok and shm is not None:
-            channel_cls = SHMChannel
+        # WE do all of this here, and make the proper channel; closing the publisher connection if Local
+        chan: Channel | None = None
+        if protocol.mode == Command.TX_LOCAL.value:
+            chan = LocalChannel(UUID(id_str), pub_id, num_buffers, graph_address, cls._SENTINEL)
         else:
-            channel_cls = TCPChannel
+            if protocol.mode == Command.TX_SHM.value:
+                assert shm is not None, "publisher will transmit via SHM, but channel failed to attach"
+                chan = SHMChannel(UUID(id_str), pub_id, num_buffers, graph_address, shm, cls._SENTINEL)
+            elif protocol.mode == Command.TX_TCP.value:
+                chan = TCPChannel(UUID(id_str), pub_id, num_buffers, graph_address, cls._SENTINEL)
 
-        chan = channel_cls(UUID(id_str), pub_id, num_buffers, shm, graph_address, _guard=cls._SENTINEL)
+        if chan is None:
+            raise ValueError(f"publisher negotiated for unknown channel type: {protocol.mode=}")
 
         chan._graph_task = asyncio.create_task(
             chan._graph_connection(graph_reader, graph_writer),
             name=f"chan-{chan.id}: _graph_connection",
         )
 
-        # Set up publisher connection (protocol already connected!)
-        chan._pub_message_queue = pub_message_queue
-        chan._pub_protocol = protocol
-        chan._pub_transport = transport
+        if not isinstance(chan, SHMChannel) and shm is not None:
+            shm.close()
+            await shm.wait_closed()
 
-        # Single task to process messages from protocol
-        chan._pub_process_task = asyncio.create_task(
-            chan._process_publisher_messages(),
-            name=f"chan-{chan.id}: _process_messages",
-        )
+        if isinstance(chan, RemoteChannel):
+            # Set up publisher connection (protocol already connected!)
+            chan._pub_message_queue = pub_message_queue
+            chan._pub_protocol = protocol
+            chan._pub_transport = transport
 
-        logger.debug(f"created channel {chan.id=} {pub_id=} {pub_address=}")
+            # Single task to process messages from protocol
+            chan._pub_process_task = asyncio.create_task(
+                chan._process_publisher_messages(),
+                name=f"chan-{chan.id}: _process_messages",
+            )
+
+        logger.debug(f"created {type(chan).__name__}({chan.id}) {pub_id=} {pub_address=}")
 
         return chan
 
     def close(self) -> None:
         self._graph_task.cancel()
-        self._pub_transport.close()
-        self._pub_process_task.cancel()
 
     async def wait_closed(self) -> None:
         """
         Wait until the Channel has properly shutdown and its resources have been deallocated.
         """
         with suppress(asyncio.CancelledError):
-            await self._pub_process_task
-        with suppress(asyncio.CancelledError):
             await self._graph_task
-        if self.shm is not None:
-            await self.shm.wait_closed()
 
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -219,59 +210,6 @@ class Channel:
 
         finally:
             await close_stream_writer(writer)
-
-    async def _process_publisher_messages(self) -> None:
-        try:
-            while True:
-                msg = await self._pub_message_queue.get()
-                buf_idx = msg.msg_id % self.num_buffers
-
-                if msg.command == Command.TX_SHM.value:
-
-                    if (
-                        self.shm is not None and 
-                        msg.shm_name is not None and 
-                        self.shm.name != msg.shm_name
-                    ):
-                        shm_entries = self.cache.keys()
-                        self.cache.clear()
-                        self.shm.close()
-                        await self.shm.wait_closed()
-
-                        try:
-                            self.shm = await GraphService(
-                                self._graph_address
-                            ).attach_shm(msg.shm_name)
-                        except ValueError:
-                            logger.info(
-                                "Invalid SHM received from publisher; may be dead"
-                            )
-                            raise
-
-                        for id in shm_entries:
-                            self.cache.put_from_mem(self.shm[id % self.num_buffers])
-
-                    assert self.shm is not None
-                    assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg.msg_id
-                    self.cache.put_from_mem(self.shm[buf_idx])
-
-                elif msg.command == Command.TX_TCP.value:
-                    assert msg.tcp_data is not None
-                    assert MessageMarshal.msg_id(msg.tcp_data) == msg.msg_id
-                    self.cache.put_from_mem(memoryview(msg.tcp_data).toreadonly())
-
-
-                if not self._notify_clients(msg.msg_id):
-                    # Nobody is listening; need to ack!
-                    self.cache.release(msg.msg_id)
-                    self._acknowledge(msg.msg_id)
-
-        finally:
-            self.cache.clear()
-            if self.shm is not None:
-                self.shm.close()
-
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     def _notify_clients(self, msg_id: int) -> bool:
         """notify interested clients and return true if any were notified"""
@@ -298,20 +236,62 @@ class Channel:
         :return: A ContextManager for the message (type: Any)
         :rtype: Generator[Any]
         """
+        raise NotImplementedError
 
-        try:
-            yield self.cache[msg_id]
-        finally:
-            buf_idx = msg_id % self.num_buffers
-            self.backpressure.free(client_id, buf_idx)
-            if self.backpressure.buffers[buf_idx].is_empty:
-                self.cache.release(msg_id)
+    def register(
+        self,
+        client_id: UUID,
+        queue: asyncio.Queue[tuple[UUID, int]] | None = None,
+    ) -> None:
+        """
+        Register an interested client and optionally provide a queue for 
+        incoming message notifications.
 
-                # If pub is in same process as this channel, avoid TCP
-                if self._local_backpressure is not None:
-                    self._local_backpressure.free(self.id, buf_idx)
-                else:
-                    self._acknowledge(msg_id)
+        :param client_id: The UUID of the interested client
+        :type client_id: UUID
+        :param queue: An optional notification queue for the client
+        :type queue: asyncio.Queue[tuple[UUID, int]] | None
+        """
+        self.clients[client_id] = queue
+
+    def unregister(self, client_id: UUID) -> None:
+        """
+        Unregister a client
+
+        :param client_id: The UUID of the client
+        :type client_id: UUID
+        """
+        queue = self.clients.get(client_id, None)
+
+        if queue is not None:
+            for _ in range(queue.qsize()):
+                pub_id, msg_id = queue.get_nowait()
+                if pub_id != self.pub_id:
+                    queue.put_nowait((pub_id, msg_id))
+                
+            del self.clients[client_id]
+
+        self.backpressure.free(client_id)
+
+class RemoteChannel(typing.Generic[T], Channel[T]):
+
+    _pub_protocol: PublisherClientProtocol
+    _pub_transport: asyncio.Transport
+    _pub_message_queue: asyncio.Queue[T]
+    _pub_process_task: asyncio.Task[None]
+    
+    def close(self):
+        super().close()
+        self._pub_transport.close()
+        self._pub_process_task.cancel()
+
+    async def wait_closed(self) -> None:
+        await super().wait_closed()
+        with suppress(asyncio.CancelledError):
+            await self._pub_process_task
+
+    async def _process_publisher_messages(self) -> None:
+        raise NotImplementedError
 
     def _acknowledge(self, msg_id: int) -> None:
         try:
@@ -320,95 +300,93 @@ class Channel:
         except (BrokenPipeError, ConnectionResetError):
             logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
-    def register_client(
-        self,
-        client_id: UUID,
-        queue: NotificationQueue | None = None,
-        local_backpressure: Backpressure | None = None,
-    ) -> None:
+    @contextmanager
+    def get(
+        self, msg_id: int, client_id: UUID
+    ) -> typing.Generator[typing.Any, None, None]:
         """
-        Register an interested client and provide a queue for incoming message notifications.
+        Get a message via a ContextManager
 
-        :param client_id: The UUID of the subscribing client
+        :param msg_id: Message ID to retreive
+        :type msg_id: int
+        :param client_id: UUID of client retreiving this message for backpressure purposes
         :type client_id: UUID
-        :param queue: The notification queue for the subscribing client
-        :type queue: asyncio.Queue[tuple[UUID, int]] | None
-        :param local_backpressure: The backpressure object for the Publisher if it is in the same process
-        :type local_backpressure: Backpressure
+        :raises CacheMiss: If this msg_id does not exist in the cache.
+        :return: A ContextManager for the message (type: Any)
+        :rtype: Generator[Any]
         """
-        self.clients[client_id] = queue
-        if client_id == self.pub_id:
-            self._local_backpressure = local_backpressure
 
-    def unregister_client(self, client_id: UUID) -> None:
-        """
-        Unregister a subscribed client
-
-        :param client_id: The UUID of the subscribing client
-        :type client_id: UUID
-        """
-        queue = self.clients[client_id]
-
-        # queue is only 'None' if this client is a local publisher
-        if queue is not None:
-            for _ in range(queue.qsize()):
-                pub_id, msg_id = queue.get_nowait()
-                if pub_id != self.pub_id:
-                    queue.put_nowait((pub_id, msg_id))
-
-            self.backpressure.free(client_id)
-
-        elif client_id == self.pub_id and self._local_backpressure is not None:
-            self._local_backpressure.free(self.id)
-            self._local_backpressure = None
-
-        del self.clients[client_id]
+        try:
+            yield self.cache[msg_id]
+        finally:
+            buf_idx = msg_id % self.num_buffers
+            self.backpressure.free(client_id, buf_idx)
+            if self.backpressure.buffers[buf_idx].is_empty:
+                self.cache.release(msg_id)
+                self._acknowledge(msg_id)
 
 
-class SHMChannel(Channel):
+class SHMChannel(RemoteChannel[SHMMessage]):
     """
     Channel specialized for SHM telemetry from publisher.
     Prefers SHM telemetry but will handle TCP if publisher falls back.
     """
+
+    shm: SHMContext
+
+    def __init__(
+        self,
+        id: UUID,
+        pub_id: UUID,
+        num_buffers: int,
+        graph_address: AddressType | None,
+        shm: SHMContext,
+        _guard = None,
+    ) -> None:
+        super().__init__(
+            id = id,
+            pub_id = pub_id,
+            num_buffers = num_buffers,
+            graph_address = graph_address,
+            _guard = _guard
+        )
+
+        self.shm = shm
+
+
+    async def wait_closed(self) -> None:
+        await super().wait_closed()
+        if self.shm is not None:
+            await self.shm.wait_closed()
 
     async def _process_publisher_messages(self) -> None:
         try:
             while True:
                 msg = await self._pub_message_queue.get()
                 buf_idx = msg.msg_id % self.num_buffers
+                
+                if self.shm.name != msg.shm_name:
+                    # SHM resized
+                    shm_entries = self.cache.keys()
+                    self.cache.clear()
+                    self.shm.close()
+                    await self.shm.wait_closed()
 
-                if msg.command == Command.TX_TCP.value and msg.tcp_data is not None:
-                    assert MessageMarshal.msg_id(msg.tcp_data) == msg.msg_id
-                    self.cache.put_from_mem(memoryview(msg.tcp_data).toreadonly())
-                else:
-                    if msg.command != Command.TX_SHM.value:
-                        logger.warning(
-                            f"Channel {self.id} expected TX_SHM, received {msg.command}"
-                        )
-                    if (
-                        self.shm is not None
-                        and msg.shm_name is not None
-                        and self.shm.name != msg.shm_name
-                    ):
-                        shm_entries = self.cache.keys()
-                        self.cache.clear()
-                        self.shm.close()
-                        await self.shm.wait_closed()
+                    try:
+                        self.shm = await GraphService(
+                            self._graph_address
+                        ).attach_shm(msg.shm_name)
+                    except ValueError:
+                        logger.info("Invalid SHM received from publisher; may be dead")
+                        raise
 
-                        try:
-                            self.shm = await GraphService(
-                                self._graph_address
-                            ).attach_shm(msg.shm_name)
-                        except ValueError:
-                            logger.info("Invalid SHM received from publisher; may be dead")
-                            raise
+                    # On resize, server copies all entries from old SHM into new SHM
+                    # So just expose old entries in the new SHM.
+                    for id in shm_entries:
+                        self.cache.put_from_mem(self.shm[id % self.num_buffers])
 
-                        for id in shm_entries:
-                            self.cache.put_from_mem(self.shm[id % self.num_buffers])
-
-                    assert self.shm is not None
-                    assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg.msg_id
-                    self.cache.put_from_mem(self.shm[buf_idx])
+                assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg.msg_id
+                self.cache.put_from_mem(self.shm[buf_idx])
 
                 if not self._notify_clients(msg.msg_id):
                     self.cache.release(msg.msg_id)
@@ -422,37 +400,7 @@ class SHMChannel(Channel):
             logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
 
-class LocalChannel(SHMChannel):
-    """
-    Channel specialized for local publisher communication.
-    No network telemetry expected; messages arrive via put_local.
-    """
-
-    _local_backpressure: Backpressure
-
-    async def _process_publisher_messages(self) -> None:
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self.cache.clear()
-            if self.shm is not None:
-                self.shm.close()
-
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
-
-    def put(self, msg_id: int, msg: typing.Any) -> None:
-        """
-        Put a message DIRECTLY into cache and notify all clients.
-        """
-        buf_idx = msg_id % self.num_buffers
-        if self._notify_clients(msg_id):
-            self.cache.put_local(msg, msg_id)
-            self._local_backpressure.lease(self.id, buf_idx)
-
-
-class TCPChannel(Channel):
+class TCPChannel(RemoteChannel[TCPMessage]):
     """
     Channel specialized for TCP telemetry from publisher.
     Expects only TX_TCP messages after handshake.
@@ -462,13 +410,6 @@ class TCPChannel(Channel):
         try:
             while True:
                 msg = await self._pub_message_queue.get()
-                buf_idx = msg.msg_id % self.num_buffers
-
-                if msg.command != Command.TX_TCP.value or msg.tcp_data is None:
-                    logger.error(
-                        f"Channel {self.id} expected TX_TCP, received {msg.command}"
-                    )
-                    continue
 
                 assert MessageMarshal.msg_id(msg.tcp_data) == msg.msg_id
                 self.cache.put_from_mem(memoryview(msg.tcp_data).toreadonly())
@@ -479,7 +420,71 @@ class TCPChannel(Channel):
 
         finally:
             self.cache.clear()
-            if self.shm is not None:
-                self.shm.close()
-
             logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+
+class LocalChannel(Channel):
+    """
+    Channel specialized for local publisher communication.
+    No network telemetry expected; messages arrive via put.
+    NOTE: After creation, the Publisher should inject its backpressure object
+    (e.g. chan.local_backpressure = self._backpressure)
+    """
+
+    _local_backpressure: Backpressure | None = None
+
+    @property
+    def local_backpressure(self) -> Backpressure:
+        if self._local_backpressure is None:
+            raise RuntimeError("LocalChannel used before publisher has set the local backpressure")
+        return self._local_backpressure
+    
+    @local_backpressure.setter
+    def local_backpressure(self, value: Backpressure):
+        if self._local_backpressure is not None:
+            raise RuntimeError("Local backpressure has already been set and cannot be changed")
+        self._local_backpressure = value
+
+    async def _process_publisher_messages(self) -> None:
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.cache.clear()
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+    def put(self, msg_id: int, msg: typing.Any) -> None:
+        """
+        Put a message DIRECTLY into cache and notify all clients.
+        """
+        buf_idx = msg_id % self.num_buffers
+        if self._notify_clients(msg_id):
+            self.cache.put_local(msg, msg_id)
+            self.local_backpressure.lease(self.id, buf_idx)
+    
+    @contextmanager
+    def get(
+        self, msg_id: int, client_id: UUID
+    ) -> typing.Generator[typing.Any, None, None]:
+        """
+        Get a message via a ContextManager
+
+        :param msg_id: Message ID to retreive
+        :type msg_id: int
+        :param client_id: UUID of client retreiving this message for backpressure purposes
+        :type client_id: UUID
+        :raises CacheMiss: If this msg_id does not exist in the cache.
+        :return: A ContextManager for the message (type: Any)
+        :rtype: Generator[Any]
+        """
+
+        try:
+            yield self.cache[msg_id]
+        finally:
+            buf_idx = msg_id % self.num_buffers
+            self.backpressure.free(client_id, buf_idx)
+            if self.backpressure.buffers[buf_idx].is_empty:
+                self.cache.release(msg_id)
+                self.local_backpressure.free(self.id, buf_idx)
+

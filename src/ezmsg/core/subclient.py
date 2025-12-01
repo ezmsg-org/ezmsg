@@ -8,7 +8,7 @@ from copy import deepcopy
 
 from .graphserver import GraphService
 from .channelmanager import CHANNELS
-from .messagechannel import NotificationQueue, Channel
+from .messagechannel import Channel
 
 from .netprotocol import (
     AddressType,
@@ -39,7 +39,7 @@ class Subscriber:
     _graph_address: AddressType | None
     _graph_task: asyncio.Task[None]
     _cur_pubs: set[UUID]
-    _incoming: NotificationQueue
+    _incoming: asyncio.Queue[tuple[UUID, int]]
 
     # FIXME: This event allows Subscriber.create to block until
     # incoming initial connections (UPDATE) has completed. The

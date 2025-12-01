@@ -1,8 +1,9 @@
+import asyncio
 import logging
 
 from uuid import UUID
 
-from .messagechannel import Channel, NotificationQueue
+from .messagechannel import Channel
 from .backpressure import Backpressure
 from .netprotocol import Address, AddressType, GRAPHSERVER_ADDR
 
@@ -34,8 +35,8 @@ class ChannelManager:
     async def register(
         self,
         pub_id: UUID,
-        client_id: UUID,
-        queue: NotificationQueue,
+        client_id: UUID | None = None,
+        queue: asyncio.Queue[tuple[UUID, int]] | None = None,
         graph_address: AddressType | None = None,
     ) -> Channel:
         """
@@ -43,89 +44,49 @@ class ChannelManager:
 
         :param pub_id: The UUID associated with the publisher to acquire a channel for
         :type pub_id: UUID
-        :param client_id: The UUID associated with the client interested in this channel, used for deallocation when the channel has no more registered clients
-        :type client_id: UUID
-        :param queue: An asyncio Queue for the interested client that will be populated with incoming message notifications
-        :type queue: asyncio.Queue[tuple[UUID, int]]
+        :param client_id: The UUID associated with the client interested in this channel; if None; client_id = pub_id
+        :type client_id: UUID | None
+        :param queue: An optional asyncio Queue for message notifications
+        :type queue: asyncio.Queue[tuple[UUID, int]] | None
         :param graph_address: The address to the GraphServer that the requested publisher is managed by
         :type graph_address: AddressType | None
         :return: A Channel for retreiving messages from the requested Publisher
         :rtype: Channel
         """
-        return await self._register(
-            pub_id, client_id, queue, graph_address, None, is_local=False
-        )
-
-    async def register_local_pub(
-        self,
-        pub_id: UUID,
-        local_backpressure: Backpressure,
-        graph_address: AddressType | None = None,
-    ) -> Channel:
-        """
-        Register/create a channel for a publisher that is local to (in the same process as) the publisher in question.
-        Because this message channel is local to the publisher, it will directly push messages into the channel and the channel will directly manage the publisher's Backpressure without any telemetry or serialization.
-        .. note:: Since only a Publisher should be registering a channel this way, it will not need access to the messages it is publishing, hence it will not provide a queue.
-
-        :param pub_id: The UUID associated with the publisher to acquire a channel for
-        :type pub_id: UUID
-        :param local_backpressure: The Backpressure object associated with the Publisher
-        :type local_backpressure: Backpressure
-        :param graph_address: The address to the GraphServer that the requested publisher is managed by
-        :type graph_address: AddressType | None
-        :return: A Channel that the Publisher can push messages to locally
-        :rtype: Channel
-        """
-        return await self._register(
-            pub_id,
-            pub_id,
-            None,
-            graph_address,
-            local_backpressure,
-            is_local=True,
-        )
-
-    async def _register(
-        self,
-        pub_id: UUID,
-        client_id: UUID,
-        queue: NotificationQueue | None = None,
-        graph_address: AddressType | None = None,
-        local_backpressure: Backpressure | None = None,
-        is_local: bool = False,
-    ) -> Channel:
         graph_address = _ensure_address(graph_address)
+
+        if client_id is None:
+            client_id = pub_id
+            
         try:
             channel = self._registry.get(graph_address, dict())[pub_id]
         except KeyError:
-            try:
-                channel = await Channel.create(pub_id, graph_address, is_local=is_local)
-            except TypeError:
-                # Backwards compatibility with test fakes that don't expect the kwarg
-                channel = await Channel.create(pub_id, graph_address)
+            channel = await Channel.create(pub_id, graph_address)
             channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels
-        channel.register_client(client_id, queue, local_backpressure)
+        channel.register(client_id, queue)
         return channel
 
     async def unregister(
         self, pub_id: UUID, client_id: UUID, graph_address: AddressType | None = None
     ) -> None:
         """
-        Indicate to the ChannelManager that the client referred to by client_id no longer needs access to the Channel associated with the publisher referred to by pub_id.
-        If no clients need access to this channel, the channel will be closed and removed from the ChannelManager.
+        Indicate to the ChannelManager that the client referred to by client_id 
+        no longer needs access to the Channel associated with the publisher 
+        referred to by pub_id.vIf no clients need access to this channel, the 
+        channel will be closed and removed from the ChannelManager.
 
-        :param pub_id: The UUID associated with the publisher to acquire a channel for
+        :param pub_id: The UUID associated with the publisher
         :type pub_id: UUID
-        :param client_id: The UUID associated with the client interested in this channel, used for deallocation when the channel has no more registered clients
+        :param client_id: The UUID associated with the client to unregister
         :type client_id: UUID
         :param graph_address: The address to the GraphServer that the requested publisher is managed by
         :type graph_address: AddressType | None
         """
         graph_address = _ensure_address(graph_address)
         channel = self._registry.get(graph_address, dict())[pub_id]
-        channel.unregister_client(client_id)
+        channel.unregister(client_id)
 
         logger.debug(
             f"unregistered {client_id} from {pub_id}; {len(channel.clients)} left"

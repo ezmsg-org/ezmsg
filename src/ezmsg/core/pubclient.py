@@ -4,13 +4,13 @@ import logging
 import time
 from uuid import UUID
 from contextlib import suppress
-from dataclasses import dataclass
+
 
 from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
 from .channelmanager import CHANNELS
-from .messagechannel import Channel
+from .messagechannel import LocalChannel
 from .messagemarshal import MessageMarshal, UninitializedMemory
 from .publisherprotocol import PublisherServerProtocol
 
@@ -37,14 +37,6 @@ BACKPRESSURE_WARNING = "EZMSG_DISABLE_BACKPRESSURE_WARNING" not in os.environ
 BACKPRESSURE_REFRACTORY = 5.0  # sec
 
 
-@dataclass
-class PubChannelState:
-    id: UUID
-    protocol: PublisherServerProtocol
-    pid: int
-    shm_ok: bool = False
-
-
 class Publisher:
     """
     A publisher client for broadcasting messages to subscribers.
@@ -64,8 +56,8 @@ class Publisher:
     _initialized: asyncio.Event
     _graph_task: "asyncio.Task[None]"
     _connection_task: "asyncio.Task[None]"
-    _channels: dict[UUID, PubChannelState]
-    _local_channel: Channel
+    _channels: dict[UUID, PublisherServerProtocol]
+    _local_channel: LocalChannel
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -144,6 +136,7 @@ class Publisher:
         loop = asyncio.get_running_loop()
         server = await loop.create_server(
             lambda: PublisherServerProtocol(
+                force_tcp,
                 pub._get_shm_info,
                 pub._on_channel_handshake,
                 pub._on_channel_ack,
@@ -168,11 +161,14 @@ class Publisher:
             name=f"pub-{pub.id}: _graph_connection",
         )
 
-        pub._local_channel = await CHANNELS.register_local_pub(
+        channel = await CHANNELS.register(
             pub_id=pub.id,
-            local_backpressure=pub._backpressure,
             graph_address=pub._graph_address,
         )
+
+        assert isinstance(channel, LocalChannel)
+        channel.local_backpressure = pub._backpressure
+        pub._local_channel = channel
 
         logger.debug(f"created pub {pub.id=} {topic=} {channel_server_address=}")
 
@@ -240,46 +236,15 @@ class Publisher:
     def _get_shm_info(self) -> tuple[str, int]:
         return self._shm.name, self._num_buffers
 
-    def _on_channel_handshake(
-        self,
-        channel_id: str,
-        pid: int,
-        shm_ok: bool,
-        protocol: PublisherServerProtocol,
-    ) -> None:
-        try:
-            chan_uuid = UUID(channel_id)
-        except ValueError:
-            logger.error(f"Invalid channel id from handshake: {channel_id}")
-            protocol.close()
-            return
+    def _on_channel_handshake(self, channel_uuid: UUID, protocol: PublisherServerProtocol) -> None:
+        self._channels[channel_uuid] = protocol
 
-        self._channels[chan_uuid] = PubChannelState(
-            id=chan_uuid,
-            protocol=protocol,
-            pid=pid,
-            shm_ok=shm_ok,
-        )
+    def _on_channel_ack(self, channel_uuid: UUID,  msg_id: int) -> None:
+        self._backpressure.free(channel_uuid, msg_id % self._num_buffers)
 
-    def _on_channel_ack(self, channel_id: str, msg_id: int) -> None:
-        try:
-            chan_uuid = UUID(channel_id)
-        except ValueError:
-            logger.error(f"Invalid channel id for ack: {channel_id}")
-            return
-        self._backpressure.free(chan_uuid, msg_id % self._num_buffers)
-
-    def _on_channel_disconnect(self, channel_id: str | None) -> None:
-        if channel_id is None:
-            return
-        try:
-            chan_uuid = UUID(channel_id)
-        except ValueError:
-            logger.error(f"Invalid channel id disconnect: {channel_id}")
-            return
-
-        self._backpressure.free(chan_uuid)
-        self._channels.pop(chan_uuid, None)
+    def _on_channel_disconnect(self, channel_uuid: UUID) -> None:
+        self._backpressure.free(channel_uuid)
+        self._channels.pop(channel_uuid, None)
 
     @property
     def log_name(self) -> str:
@@ -296,7 +261,7 @@ class Publisher:
         self._shm.close()
         self._connection_task.cancel()
         for channel in list(self._channels.values()):
-            channel.protocol.close()
+            channel.close()
 
     async def wait_closed(self) -> None:
         """
@@ -392,18 +357,17 @@ class Publisher:
 
     async def broadcast(self, obj: Any) -> None:
         """
-        Broadcast a message to all connected subscribers.
+        Broadcast a message to all connected channels.
 
         Handles message serialization, shared memory management, transport
         selection (local/SHM/TCP), and backpressure control automatically.
 
-        :param obj: The object/message to broadcast to subscribers.
+        :param obj: The object/message to broadcast to channels.
         :type obj: Any
         """
         await self._running.wait()
 
         buf_idx = self._msg_id % self._num_buffers
-        msg_id_bytes = uint64_to_bytes(self._msg_id)
 
         if not self._backpressure.available(buf_idx):
             delta = time.time() - self._last_backpressure_event
@@ -412,26 +376,34 @@ class Publisher:
             self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
-        # Get local channel and put variable there for local tx
-        self._local_channel.put_local(self._msg_id, obj)
+        # Get local channel and put variable there for local tx (always)
+        self._local_channel.put(self._msg_id, obj)
 
-        channels = list(self._channels.values())
-        if self._force_tcp or any(
-            ch.pid != self.pid or not ch.shm_ok for ch in channels
-        ):
+        remote_channels = [c for c in self._channels.values() if c.mode != Command.TX_LOCAL.value]
+
+        if len(remote_channels):
+            # If we have ANY remote channels, we definitely need to serialize object ONCE
             with MessageMarshal.serialize(self._msg_id, obj) as (
                 total_size,
                 header,
                 buffers,
             ):
-                if not self._force_tcp and any(
-                    ch.pid != self.pid and ch.shm_ok for ch in channels
-                ):
+                tcp_payload = header + b"".join(
+                    [buffer for buffer in buffers]
+                )
+
+                # If there's ANY SHM channels, we should populate SHM ONCE ...                            
+                if any(c.mode == Command.TX_SHM.value for c in remote_channels):
+
+                    # ... But only if the message fits.  If it doesn't, we need to resize SHM.
                     if self._shm.buf_size < total_size:
+
+                        # Need to resize shm; make a new one twice as large as current message
                         new_shm = await GraphService(self._graph_address).create_shm(
                             self._num_buffers, total_size * 2
                         )
 
+                        # Copy old data into new shm; old messages will fit because shm only grows.
                         for i in range(self._num_buffers):
                             try:
                                 with self._shm.buffer(i, readonly=True) as from_buf:
@@ -440,46 +412,25 @@ class Publisher:
                             except UninitializedMemory:
                                 pass
 
+                        # Close and replace old shm
                         self._shm.close()
                         await self._shm.wait_closed()
                         self._shm = new_shm
 
+                    # Write data into shm
                     with self._shm.buffer(buf_idx) as mem:
                         MessageMarshal._write(mem, header, buffers)
 
-                tcp_payload: bytes | None = None
-                for channel in channels:
 
-                    if self.pid == channel.pid and channel.shm_ok:
-                        continue  # Local transmission handled by channel.put
-
-                    elif (
-                        (not self._force_tcp)
-                        and self.pid != channel.pid
-                        and channel.shm_ok
-                    ):
-                        try:
-                            channel.protocol.send_tx_shm(self._msg_id, self._shm.name)
-                            await channel.protocol.drain()
-                            self._backpressure.lease(channel.id, buf_idx)
-                        except (ConnectionResetError, BrokenPipeError):
-                            logger.debug(
-                                f"Publisher {self.id}: Channel {channel.id} connection fail"
-                            )
-
-                    else:
-                        if tcp_payload is None:
-                            tcp_payload = header + b"".join(
-                                [buffer for buffer in buffers]
-                            )
-                        try:
-                            channel.protocol.send_tx_tcp(self._msg_id, tcp_payload)
-                            await channel.protocol.drain()
-                            self._backpressure.lease(channel.id, buf_idx)
-
-                        except (ConnectionResetError, BrokenPipeError):
-                            logger.debug(
-                                f"Publisher {self.id}: Channel {channel.id} connection fail"
-                            )
+                for channel in remote_channels:
+                    try:
+                        channel.transmit(self._msg_id, self._shm.name, tcp_payload)
+                        await channel.drain()
+                        self._backpressure.lease(channel.uuid, buf_idx)
+                            
+                    except (ConnectionResetError, BrokenPipeError):
+                        logger.debug(
+                            f"Publisher {self.id}: Channel {channel.uuid} connection fail"
+                        )
 
         self._msg_id += 1
