@@ -57,7 +57,7 @@ class Publisher:
     _graph_task: "asyncio.Task[None]"
     _connection_task: "asyncio.Task[None]"
     _channels: dict[UUID, PublisherServerProtocol]
-    _local_channel: LocalChannel
+    _local_channel: LocalChannel | None
     _address: Address
     _backpressure: Backpressure
     _num_buffers: int
@@ -89,6 +89,7 @@ class Publisher:
         num_buffers: int = 32,
         start_paused: bool = False,
         force_tcp: bool = False,
+        **kwargs
     ) -> "Publisher":
         """
         Create a new Publisher instance and register it with the graph server.
@@ -132,13 +133,17 @@ class Publisher:
         )
         sock = create_socket(host, port, start_port=start_port)
         loop = asyncio.get_running_loop()
+        
+        # Useful shortcircuit for forcing a particular communication; mostly for testing
+        _mode = TransmitMode.TCP if force_tcp else kwargs.get('_mode', TransmitMode.AUTO)
+
         server = await loop.create_server(
             lambda: PublisherServerProtocol(
                 pub._get_shm_info,
                 pub._on_channel_handshake,
                 pub._on_channel_ack,
                 pub._on_channel_disconnect,
-                mode = TransmitMode.TCP if force_tcp else TransmitMode.AUTO
+                mode = _mode
             ),
             sock=sock,
         )
@@ -164,9 +169,13 @@ class Publisher:
             graph_address=pub._graph_address,
         )
 
-        assert isinstance(channel, LocalChannel)
-        channel.local_backpressure = pub._backpressure
-        pub._local_channel = channel
+        # Unless we're FORCING TCP/SHM, this channel should ALWAYS be a LocalChannel
+        # LocalChannels have special shortcut functionality that directly manipulates
+        # the publisher's backpressure, so we inject that dependency here and store
+        # the local channel in the publisher.
+        if isinstance(channel, LocalChannel):
+            channel.local_backpressure = pub._backpressure
+            pub._local_channel = channel
 
         logger.debug(f"created pub {pub.id=} {topic=} {channel_server_address=}")
 
@@ -226,6 +235,7 @@ class Publisher:
         self._backpressure = Backpressure(num_buffers)
         self._last_backpressure_event = -1
         self._graph_address = graph_address
+        self._local_channel = None
 
     def _get_shm_info(self) -> tuple[str, int]:
         return self._shm.name, self._num_buffers
@@ -370,8 +380,9 @@ class Publisher:
             self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
-        # Get local channel and put variable there for local tx (always)
-        self._local_channel.put(self._msg_id, obj)
+        # Get local channel and put variable there for local tx
+        if self._local_channel is not None:
+            self._local_channel.put(self._msg_id, obj)
 
         remote_channels = [c for c in self._channels.values() if c.mode != TransmitMode.LOCAL]
 

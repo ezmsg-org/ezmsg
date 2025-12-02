@@ -55,6 +55,11 @@ class Channel(typing.Generic[T]):
     _graph_task: asyncio.Task[None]
     _graph_address: AddressType | None
 
+    _pub_protocol: PublisherClientProtocol
+    _pub_transport: asyncio.Transport
+    _pub_message_queue: asyncio.Queue[T]
+    _pub_process_task: asyncio.Task[None]
+
     def __init__(
         self,
         id: UUID,
@@ -161,17 +166,16 @@ class Channel(typing.Generic[T]):
             shm.close()
             await shm.wait_closed()
 
-        if isinstance(chan, RemoteChannel):
-            # Set up publisher connection (protocol already connected!)
-            chan._pub_message_queue = pub_message_queue
-            chan._pub_protocol = protocol
-            chan._pub_transport = transport
+        # Set up publisher connection (protocol already connected!)
+        chan._pub_message_queue = pub_message_queue
+        chan._pub_protocol = protocol
+        chan._pub_transport = transport
 
-            # Single task to process messages from protocol
-            chan._pub_process_task = asyncio.create_task(
-                chan._process_publisher_messages(),
-                name=f"chan-{chan.id}: _process_messages",
-            )
+        # Single task to process messages from protocol
+        chan._pub_process_task = asyncio.create_task(
+            chan._process_publisher_messages(),
+            name=f"chan-{chan.id}: _process_messages",
+        )
 
         logger.debug(f"created {type(chan).__name__}({chan.id}) {pub_id=} {pub_address=}")
 
@@ -179,6 +183,8 @@ class Channel(typing.Generic[T]):
 
     def close(self) -> None:
         self._graph_task.cancel()
+        self._pub_transport.close()
+        self._pub_process_task.cancel()
 
     async def wait_closed(self) -> None:
         """
@@ -186,6 +192,8 @@ class Channel(typing.Generic[T]):
         """
         with suppress(asyncio.CancelledError):
             await self._graph_task
+        with suppress(asyncio.CancelledError):
+            await self._pub_process_task
 
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -219,6 +227,9 @@ class Channel(typing.Generic[T]):
             self.backpressure.lease(client_id, buf_idx)
             queue.put_nowait((self.pub_id, msg_id))
         return not self.backpressure.available(buf_idx)
+    
+    async def _process_publisher_messages(self) -> None:
+        raise NotImplementedError
 
     @contextmanager
     def get(
@@ -273,24 +284,6 @@ class Channel(typing.Generic[T]):
         self.backpressure.free(client_id)
 
 class RemoteChannel(typing.Generic[T], Channel[T]):
-
-    _pub_protocol: PublisherClientProtocol
-    _pub_transport: asyncio.Transport
-    _pub_message_queue: asyncio.Queue[T]
-    _pub_process_task: asyncio.Task[None]
-    
-    def close(self):
-        super().close()
-        self._pub_transport.close()
-        self._pub_process_task.cancel()
-
-    async def wait_closed(self) -> None:
-        await super().wait_closed()
-        with suppress(asyncio.CancelledError):
-            await self._pub_process_task
-
-    async def _process_publisher_messages(self) -> None:
-        raise NotImplementedError
 
     def _acknowledge(self, msg_id: int) -> None:
         try:
@@ -444,16 +437,14 @@ class LocalChannel(Channel):
             raise RuntimeError("Local backpressure has already been set and cannot be changed")
         self._local_backpressure = value
 
-    # async def _process_publisher_messages(self) -> None:
-    #     try:
-    #         await asyncio.Future()
-    #     except asyncio.CancelledError:
-    #         pass
-    #     finally:
-    #         self.cache.clear()
-    #         logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
-    
-    # TODO: Maybe local channels are being dropped since the transport and protocol are dropped?
+    async def _process_publisher_messages(self) -> None:
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.cache.clear()
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     def put(self, msg_id: int, msg: typing.Any) -> None:
         """
