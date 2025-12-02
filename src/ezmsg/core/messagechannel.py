@@ -229,7 +229,12 @@ class Channel(typing.Generic[T]):
         return not self.backpressure.available(buf_idx)
     
     async def _process_publisher_messages(self) -> None:
-        raise NotImplementedError
+        try:
+            while True:
+                await self._pub_message_queue.get()
+        finally:
+            self.cache.clear()
+            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     @contextmanager
     def get(
@@ -279,7 +284,7 @@ class Channel(typing.Generic[T]):
                 if pub_id != self.pub_id:
                     queue.put_nowait((pub_id, msg_id))
                 
-            del self.clients[client_id]
+        del self.clients[client_id]
 
         self.backpressure.free(client_id)
 
@@ -436,15 +441,6 @@ class LocalChannel(Channel):
         if self._local_backpressure is not None:
             raise RuntimeError("Local backpressure has already been set and cannot be changed")
         self._local_backpressure = value
-
-    async def _process_publisher_messages(self) -> None:
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self.cache.clear()
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     def put(self, msg_id: int, msg: typing.Any) -> None:
         """

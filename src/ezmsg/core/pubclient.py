@@ -21,7 +21,6 @@ from .netprotocol import (
     read_str,
     encode_str,
     close_stream_writer,
-    close_server,
     Command,
     create_socket,
     DEFAULT_SHM_SIZE,
@@ -187,8 +186,14 @@ class Publisher:
         except asyncio.CancelledError:
             logger.debug(f"{self.log_name} cancelled")
         finally:
-            await close_server(server)
-            await CHANNELS.unregister(self.id, self.id, self._graph_address)
+            server.close()
+            await server.wait_closed()
+            logger.debug('Local Channel unregister start')
+            await CHANNELS.unregister(
+                self.id, 
+                graph_address=self._graph_address
+            )
+            logger.debug('Local Channel unregister done')
             logger.debug(f"{self.log_name} done")
 
     def __init__(

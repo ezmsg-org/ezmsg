@@ -69,22 +69,29 @@ class ChannelManager:
         return channel
 
     async def unregister(
-        self, pub_id: UUID, client_id: UUID, graph_address: AddressType | None = None
+        self, 
+        pub_id: UUID, 
+        client_id: UUID | None = None, 
+        graph_address: AddressType | None = None
     ) -> None:
         """
         Indicate to the ChannelManager that the client referred to by client_id 
         no longer needs access to the Channel associated with the publisher 
-        referred to by pub_id.vIf no clients need access to this channel, the 
+        referred to by pub_id. If no clients need access to this channel, the 
         channel will be closed and removed from the ChannelManager.
 
         :param pub_id: The UUID associated with the publisher
         :type pub_id: UUID
-        :param client_id: The UUID associated with the client to unregister
-        :type client_id: UUID
+        :param client_id: The UUID associated with the client to unregister. if None; client_id = pub_id
+        :type client_id: UUID | None
         :param graph_address: The address to the GraphServer that the requested publisher is managed by
         :type graph_address: AddressType | None
         """
         graph_address = _ensure_address(graph_address)
+
+        if client_id is None:
+            client_id = pub_id
+        
         channel = self._registry.get(graph_address, dict())[pub_id]
         channel.unregister(client_id)
 

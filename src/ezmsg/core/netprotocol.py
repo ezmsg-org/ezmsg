@@ -233,16 +233,6 @@ async def close_stream_writer(writer: asyncio.StreamWriter):
         pass
 
 
-async def close_server(server: Server):
-    server.close()
-    # ConnectionResetError can be raised on wait_closed.
-    # See: https://github.com/python/cpython/issues/83037
-    try:
-        await server.wait_closed()
-    except (ConnectionResetError, BrokenPipeError):
-        pass
-
-
 class Command(enum.Enum):
     """
     Enumeration of protocol commands for ezmsg network communication.
