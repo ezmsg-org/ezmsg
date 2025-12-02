@@ -19,9 +19,17 @@ class TCPMessage(typing.NamedTuple):
     msg_id: int
     tcp_data: bytes
 
+
 class SHMMessage(typing.NamedTuple):
     msg_id: int
     shm_name: str
+
+
+class TransmitMode(enum.Enum):
+    AUTO = enum.auto()
+    LOCAL = enum.auto()
+    SHM = enum.auto()
+    TCP = enum.auto()
 
 
 class PublisherProtocolState(enum.Enum):
@@ -34,10 +42,8 @@ class PublisherProtocolState(enum.Enum):
     # Message states
     COMMAND = enum.auto()
     MSG_ID = enum.auto()
-    SHM_NAME_LEN = enum.auto()
-    SHM_NAME_DATA = enum.auto()
-    TCP_SIZE = enum.auto()
-    TCP_DATA = enum.auto()
+    MSG_SIZE = enum.auto()
+    MSG_DATA = enum.auto()
 
 PublisherMessage = SHMMessage | TCPMessage
 T = typing.TypeVar('T', SHMMessage, TCPMessage)
@@ -45,14 +51,17 @@ T = typing.TypeVar('T', SHMMessage, TCPMessage)
 class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
     """High-performance protocol for publisher message stream"""
 
+    channel_id: str
     message_queue: asyncio.Queue[PublisherMessage]
+    current_msg_id: int
+    mode: TransmitMode
 
     def __init__(
         self,
-        channel_id: str,
+        uuid: UUID,
         message_queue: asyncio.Queue[T],
     ):
-        self.channel_id = channel_id
+        self.channel_id = str(uuid)
         self.message_queue = message_queue
         self.transport: asyncio.Transport | None = None
 
@@ -64,8 +73,7 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
 
         # Handshake state
         self.handshake_complete = asyncio.Future()
-        self.handshake_shm_received = asyncio.Event()
-        self.handshake_shm_name: str | None = None
+        self.handshake_shm_name = asyncio.Future()
         self.num_buffers: int | None = None
 
         # Parser state machine - start in handshake mode
@@ -73,11 +81,8 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
         self.expected_bytes = 8  # Expecting shm_name length
 
         # Message parsing state
-        self.current_msg_id: int | None = None
-        self.current_command: int | None = None  # Store as int, not bytes
-        self.payload_size: int | None = None
-        self.shm_name_len: int | None = None
-        self.mode: bytes | None = None
+        self.current_msg_id: int = -1
+        self.mode: TransmitMode = TransmitMode.AUTO
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore
         self.transport = transport
@@ -146,8 +151,7 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
                 self.buffer_offset : self.buffer_offset + self.expected_bytes
             ].decode("utf-8")
             self.buffer_offset += self.expected_bytes
-            self.handshake_shm_name = shm_name
-            self.handshake_shm_received.set()
+            self.handshake_shm_name.set_result(shm_name)
             self.state = PublisherProtocolState.HANDSHAKE_COMPLETE
             self.expected_bytes = 1
             return False  # Pause until handshake response is sent
@@ -175,99 +179,68 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
             return True
 
         elif self.state == PublisherProtocolState.HANDSHAKE_MODE:
-            self.mode = self.buffer[self.buffer_offset : self.buffer_offset + self.expected_bytes]
+            self.mode = TransmitMode(self.buffer[self.buffer_offset])
             self.buffer_offset += 1
-            self.state = PublisherProtocolState.COMMAND
-            self.expected_bytes = 1
-            self.handshake_complete.set_result((self.num_buffers, self.mode))
+            self.state = PublisherProtocolState.MSG_ID
+            self.expected_bytes = 8  # uint64
+            self.handshake_complete.set_result(self.num_buffers)
             return True
 
         # Message states
-        elif self.state == PublisherProtocolState.COMMAND:
-            cmd = self.buffer[self.buffer_offset]
-            self.buffer_offset += 1
-            self.current_command = cmd
-            self.state = PublisherProtocolState.MSG_ID
-            self.expected_bytes = 8  # uint64
-            return True
-
         elif self.state == PublisherProtocolState.MSG_ID:
             msg_id = int.from_bytes(
                 self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
             )
             self.buffer_offset += 8
             self.current_msg_id = msg_id
-
-            if self.current_command == Command.TX_SHM.value[0]:
-                self.state = PublisherProtocolState.SHM_NAME_LEN
-                self.expected_bytes = 8
-            elif self.current_command == Command.TX_TCP.value[0]:
-                self.state = PublisherProtocolState.TCP_SIZE
-                self.expected_bytes = 8
-            else:
-                raise ValueError("unexpected telemetry")
+            self.state = PublisherProtocolState.MSG_SIZE
+            self.expected_bytes = 8
             return True
 
-        elif self.state == PublisherProtocolState.SHM_NAME_LEN:
-            name_len = int.from_bytes(
+        elif self.state == PublisherProtocolState.MSG_SIZE:
+            msg_size = int.from_bytes(
                 self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
             )
             self.buffer_offset += 8
-            self.expected_bytes = name_len
-            self.state = PublisherProtocolState.SHM_NAME_DATA
+            self.expected_bytes = msg_size
+            self.state = PublisherProtocolState.MSG_DATA
             return True
 
-        elif self.state == PublisherProtocolState.SHM_NAME_DATA:
-            shm_name = self.buffer[
+        elif self.state == PublisherProtocolState.MSG_DATA:
+            msg_data = self.buffer[
                 self.buffer_offset : self.buffer_offset + self.expected_bytes
-            ].decode("utf-8")
+            ]
+
             self.buffer_offset += self.expected_bytes
-            if self.current_msg_id is not None and self.current_command is not None:
+
+            if self.mode == TransmitMode.SHM:
                 self.message_queue.put_nowait(
                     SHMMessage(
                         msg_id=self.current_msg_id,
-                        shm_name=shm_name,
+                        shm_name=msg_data.decode("utf-8"),
                     )
                 )
-            self._reset_state()
-            return True
 
-        elif self.state == PublisherProtocolState.TCP_SIZE:
-            buf_size = int.from_bytes(
-                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
-            )
-            self.buffer_offset += 8
-            self.expected_bytes = buf_size
-            self.state = PublisherProtocolState.TCP_DATA
-            return True
-
-        elif self.state == PublisherProtocolState.TCP_DATA:
-            # Use bytes() here - memoryview causes issues with pickle/marshal
-            obj_bytes = bytes(
-                self.buffer[
-                    self.buffer_offset : self.buffer_offset + self.expected_bytes
-                ]
-            )
-            self.buffer_offset += self.expected_bytes
-            if self.current_msg_id is not None and self.current_command is not None:
+            elif self.mode == TransmitMode.TCP:
                 self.message_queue.put_nowait(
                     TCPMessage(
                         msg_id=self.current_msg_id,
-                        tcp_data=obj_bytes,
+                        tcp_data=msg_data
                     )
                 )
-            self._reset_state()
+
+            else:
+                logger.warning(
+                    f"{self.channel_id}:{self.current_msg_id} dropped "
+                    f"unknown TransmitMode: {self.mode}"
+                )
+
+            self.state = PublisherProtocolState.MSG_ID
+            self.expected_bytes = 8  # uint64
             return True
 
         return False
 
-    def _reset_state(self) -> None:
-        self.state = PublisherProtocolState.COMMAND
-        self.expected_bytes = 1
-        self.current_msg_id = None
-        self.current_command = None
-        self.payload_size = None
-        self.shm_name_len = None
 
     def connection_lost(self, exc: Exception | None) -> None:
         if exc:
@@ -295,15 +268,13 @@ class PublisherServerProtocol(asyncio.Protocol):
     with its state/backpressure tracking.
     """
 
-    _channel_uuid: UUID | None
-
     def __init__(
         self,
-        force_tcp: bool,
         get_shm_info: typing.Callable[[], tuple[str, int]],
         on_handshake: typing.Callable[[UUID, "PublisherServerProtocol"], None],
         on_ack: typing.Callable[[UUID, int], None],
         on_disconnect: typing.Callable[[UUID], None] | None = None,
+        mode: TransmitMode = TransmitMode.AUTO,
     ):
         self._get_shm_info = get_shm_info
         self._on_handshake = on_handshake
@@ -321,9 +292,9 @@ class PublisherServerProtocol(asyncio.Protocol):
 
         self.channel_id: str | None = None
         self._channel_uuid: UUID | None = None
-        self.shm_ok: bool | None = None
-        self.pid: int | None = None
         self.num_buffers: int | None = None
+        self._shm_ok: bool | None = None
+        self._channel_pid: int | None = None
 
         self.handshake_complete: asyncio.Future[
             tuple[UUID, bool, int]
@@ -332,8 +303,7 @@ class PublisherServerProtocol(asyncio.Protocol):
         self._paused = False
         self._drain_waiter: asyncio.Future[None] | None = None
 
-        self.force_tcp: bool = force_tcp
-        self.mode: Command
+        self.mode: TransmitMode = mode
 
     @property
     def uuid(self) -> UUID:
@@ -437,14 +407,15 @@ class PublisherServerProtocol(asyncio.Protocol):
             self.buffer_offset += 8
             self.pid = pid
 
-            self.mode = Command.TX_TCP
-            if not self.force_tcp and self.shm_ok:
-                self.mode = Command.TX_LOCAL if pid == os.getpid() else Command.TX_SHM
+            if self.mode == TransmitMode.AUTO:
+                self.mode = TransmitMode.TCP
+                if self.shm_ok:
+                    self.mode = TransmitMode.LOCAL if pid == os.getpid() else TransmitMode.SHM
 
             if self.transport is not None and self.num_buffers is not None:
                 self.transport.write(Command.COMPLETE.value)
                 self.transport.write(uint64_to_bytes(self.num_buffers))
-                self.transport.write(self.mode.value)
+                self.transport.write(self.mode.value.to_bytes(length=1))
 
             if (self.shm_ok is not None and self.pid is not None):
                 self._on_handshake(self.uuid, self)
@@ -490,22 +461,21 @@ class PublisherServerProtocol(asyncio.Protocol):
         if self.transport is None:
             return
         
-        if self.mode == Command.TX_SHM:
+        if self.mode == TransmitMode.SHM:
             self.transport.write(
-                Command.TX_SHM.value + 
                 uint64_to_bytes(msg_id) + 
                 encode_str(shm_name)
             )
 
-        elif self.mode == Command.TX_TCP:
+        elif self.mode == TransmitMode.TCP:
             self.transport.write(
-                Command.TX_TCP.value
-                + uint64_to_bytes(msg_id)
-                + uint64_to_bytes(len(tcp_payload))
-                + tcp_payload
+                uint64_to_bytes(msg_id) +
+                uint64_to_bytes(len(tcp_payload)) +
+                tcp_payload
             )
+
         else:
-            raise ValueError(f"cannot transmit {self.mode=}")
+            raise ValueError(f"cannot transmit with {self.mode=}")
 
     async def drain(self) -> None:
         if self._paused and self._drain_waiter is not None:

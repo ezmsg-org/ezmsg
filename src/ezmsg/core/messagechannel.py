@@ -9,7 +9,7 @@ from contextlib import contextmanager, suppress
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
-from .publisherprotocol import PublisherClientProtocol, SHMMessage, TCPMessage
+from .publisherprotocol import PublisherClientProtocol, SHMMessage, TCPMessage, TransmitMode
 from .messagecache import MessageCache
 from .graphserver import GraphService
 from .netprotocol import (
@@ -108,26 +108,25 @@ class Channel(typing.Generic[T]):
             # would tell us what happened rather than drop connection
             raise ValueError(f"failed to create channel {pub_id=}")
 
-        id_str = await read_str(graph_reader)
+        uuid = UUID(await read_str(graph_reader))
         pub_address = await Address.from_stream(graph_reader)
 
         # Create a connection to the publisher
         loop = asyncio.get_running_loop()
         pub_message_queue: asyncio.Queue[T] = asyncio.Queue()
         transport, protocol = await loop.create_connection(
-            lambda: PublisherClientProtocol(id_str, pub_message_queue),
+            lambda: PublisherClientProtocol(uuid, pub_message_queue),
             *pub_address,
         )
 
         # Wait for protocol to receive shm_name
-        await protocol.handshake_shm_received.wait()
-        assert protocol.handshake_shm_name is not None
+        shm_name = await protocol.handshake_shm_name
 
         # Attach SHM
         shm = None
         shm_ok = False
         try:
-            shm = await graph_service.attach_shm(protocol.handshake_shm_name)
+            shm = await graph_service.attach_shm(shm_name)
             shm_ok = True
         except (ValueError, OSError):
             pass
@@ -136,19 +135,19 @@ class Channel(typing.Generic[T]):
         protocol.send_handshake_response(shm_ok, os.getpid())
 
         # Wait for handshake to complete (protocol receives COMPLETE + num_buffers)
-        num_buffers, mode = await protocol.handshake_complete
+        num_buffers = await protocol.handshake_complete
         assert num_buffers > 0, "publisher reports invalid num_buffers"
 
         # WE do all of this here, and make the proper channel; closing the publisher connection if Local
         chan: Channel | None = None
-        if protocol.mode == Command.TX_LOCAL.value:
-            chan = LocalChannel(UUID(id_str), pub_id, num_buffers, graph_address, cls._SENTINEL)
+        if protocol.mode == TransmitMode.LOCAL:
+            chan = LocalChannel(uuid, pub_id, num_buffers, graph_address, cls._SENTINEL)
         else:
-            if protocol.mode == Command.TX_SHM.value:
+            if protocol.mode == TransmitMode.SHM:
                 assert shm is not None, "publisher will transmit via SHM, but channel failed to attach"
-                chan = SHMChannel(UUID(id_str), pub_id, num_buffers, graph_address, shm, cls._SENTINEL)
-            elif protocol.mode == Command.TX_TCP.value:
-                chan = TCPChannel(UUID(id_str), pub_id, num_buffers, graph_address, cls._SENTINEL)
+                chan = SHMChannel(uuid, pub_id, num_buffers, graph_address, shm, cls._SENTINEL)
+            elif protocol.mode == TransmitMode.TCP:
+                chan = TCPChannel(uuid, pub_id, num_buffers, graph_address, cls._SENTINEL)
 
         if chan is None:
             raise ValueError(f"publisher negotiated for unknown channel type: {protocol.mode=}")
@@ -445,14 +444,16 @@ class LocalChannel(Channel):
             raise RuntimeError("Local backpressure has already been set and cannot be changed")
         self._local_backpressure = value
 
-    async def _process_publisher_messages(self) -> None:
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self.cache.clear()
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+    # async def _process_publisher_messages(self) -> None:
+    #     try:
+    #         await asyncio.Future()
+    #     except asyncio.CancelledError:
+    #         pass
+    #     finally:
+    #         self.cache.clear()
+    #         logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+    
+    # TODO: Maybe local channels are being dropped since the transport and protocol are dropped?
 
     def put(self, msg_id: int, msg: typing.Any) -> None:
         """

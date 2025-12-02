@@ -12,7 +12,7 @@ from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import LocalChannel
 from .messagemarshal import MessageMarshal, UninitializedMemory
-from .publisherprotocol import PublisherServerProtocol
+from .publisherprotocol import PublisherServerProtocol, TransmitMode
 
 from .netprotocol import (
     Address,
@@ -64,7 +64,6 @@ class Publisher:
     _running: asyncio.Event
     _msg_id: int
     _shm: SHMContext
-    _force_tcp: bool
     _last_backpressure_event: float
 
     _graph_address: AddressType | None
@@ -125,7 +124,6 @@ class Publisher:
             graph_address=graph_address,
             num_buffers=num_buffers,
             start_paused=start_paused,
-            force_tcp=force_tcp,
             _guard=cls._SENTINEL,
         )
 
@@ -136,11 +134,11 @@ class Publisher:
         loop = asyncio.get_running_loop()
         server = await loop.create_server(
             lambda: PublisherServerProtocol(
-                force_tcp,
                 pub._get_shm_info,
                 pub._on_channel_handshake,
                 pub._on_channel_ack,
                 pub._on_channel_disconnect,
+                mode = TransmitMode.TCP if force_tcp else TransmitMode.AUTO
             ),
             sock=sock,
         )
@@ -192,7 +190,6 @@ class Publisher:
         graph_address: AddressType | None = None,
         num_buffers: int = 32,
         start_paused: bool = False,
-        force_tcp: bool = False,
         _guard = None
     ) -> None:
         """
@@ -209,8 +206,6 @@ class Publisher:
         :type num_buffers: int
         :param start_paused: Whether to start in paused state.
         :type start_paused: bool
-        :param force_tcp: Whether to force TCP transport instead of shared memory.
-        :type force_tcp: bool
         """
         if _guard is not self._SENTINEL:
             raise TypeError(
@@ -229,7 +224,6 @@ class Publisher:
             self._running.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
-        self._force_tcp = force_tcp
         self._last_backpressure_event = -1
         self._graph_address = graph_address
 
@@ -379,7 +373,7 @@ class Publisher:
         # Get local channel and put variable there for local tx (always)
         self._local_channel.put(self._msg_id, obj)
 
-        remote_channels = [c for c in self._channels.values() if c.mode != Command.TX_LOCAL.value]
+        remote_channels = [c for c in self._channels.values() if c.mode != TransmitMode.LOCAL]
 
         if len(remote_channels):
             # If we have ANY remote channels, we definitely need to serialize object ONCE
@@ -393,7 +387,7 @@ class Publisher:
                 )
 
                 # If there's ANY SHM channels, we should populate SHM ONCE ...                            
-                if any(c.mode == Command.TX_SHM.value for c in remote_channels):
+                if any(c.mode == TransmitMode.SHM for c in remote_channels):
 
                     # ... But only if the message fits.  If it doesn't, we need to resize SHM.
                     if self._shm.buf_size < total_size:
@@ -420,7 +414,6 @@ class Publisher:
                     # Write data into shm
                     with self._shm.buffer(buf_idx) as mem:
                         MessageMarshal._write(mem, header, buffers)
-
 
                 for channel in remote_channels:
                     try:
