@@ -398,15 +398,6 @@ class Publisher:
                 header,
                 buffers,
             ):
-                
-                tcp_payload = None
-
-                if any(c.mode == TransmitMode.TCP for c in remote_channels):
-                    # Expensive call
-                    tcp_payload = header + b"".join(
-                        [buffer for buffer in buffers]
-                    )
-
                 # If there's ANY SHM channels, we should populate SHM ONCE ...                            
                 if any(c.mode == TransmitMode.SHM for c in remote_channels):
 
@@ -436,9 +427,33 @@ class Publisher:
                     with self._shm.buffer(buf_idx) as mem:
                         MessageMarshal._write(mem, header, buffers)
 
+                msg_id_bytes = uint64_to_bytes(self._msg_id)
+                total_size_bytes = uint64_to_bytes(total_size)
+                shm_name_bytes = encode_str(self._shm.name)
+
                 for channel in remote_channels:
+
+                    if channel.transport is None:
+                        continue
+
                     try:
-                        channel.transmit(self._msg_id, self._shm.name, tcp_payload)
+                        
+                        if channel.mode == TransmitMode.SHM:
+                            channel.transport.writelines([
+                                msg_id_bytes,
+                                shm_name_bytes
+                            ])
+
+                        elif channel.mode == TransmitMode.TCP:
+                            channel.transport.writelines([
+                                msg_id_bytes,
+                                total_size_bytes,
+                                header,
+                            ])
+
+                            for buffer in buffers:
+                                channel.transport.write(buffer)
+
                         await channel.drain()
                         self._backpressure.lease(channel.uuid, buf_idx)
                             

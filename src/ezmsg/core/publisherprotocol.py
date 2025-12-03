@@ -461,28 +461,6 @@ class PublisherServerProtocol(asyncio.Protocol):
         if self.transport is not None:
             self.transport.close()
 
-    def transmit(self, msg_id: int, shm_name: str, tcp_payload: bytes | None) -> None:
-        if self.transport is None:
-            return
-        
-        if self.mode == TransmitMode.SHM:
-            self.transport.write(
-                uint64_to_bytes(msg_id) + 
-                encode_str(shm_name)
-            )
-
-        elif self.mode == TransmitMode.TCP:
-            assert tcp_payload is not None, \
-                "must assemble tcp payload to transmit it"
-            self.transport.write(
-                uint64_to_bytes(msg_id) +
-                uint64_to_bytes(len(tcp_payload)) +
-                tcp_payload
-            )
-
-        else:
-            raise ValueError(f"cannot transmit with {self.mode=}")
-
     async def drain(self) -> None:
         if self._paused and self._drain_waiter is not None:
             await self._drain_waiter
