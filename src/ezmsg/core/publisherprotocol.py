@@ -3,6 +3,7 @@ import typing
 import logging
 import enum
 import os
+from collections import deque
 
 from uuid import UUID
 
@@ -55,6 +56,7 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
     message_queue: asyncio.Queue[PublisherMessage]
     current_msg_id: int
     mode: TransmitMode
+    num_buffers: int
 
     def __init__(
         self,
@@ -65,16 +67,15 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
         self.message_queue = message_queue
         self.transport: asyncio.Transport | None = None
 
-        # Pre-allocate buffer with reasonable size (1MB)
-        # This avoids repeated reallocations during growth
-        self.buffer = bytearray(1024 * 1024)
-        self.buffer_size = 0  # Actual data in buffer
-        self.buffer_offset = 0  # Read position
+        # Incoming data segmented to avoid staging large payload copies
+        self._segments: deque[memoryview] = deque()
+        self._seg_offset = 0  # offset into the leftmost segment
+        self._available = 0   # total bytes available across segments
 
         # Handshake state
         self.handshake_complete = asyncio.Future()
         self.handshake_shm_name = asyncio.Future()
-        self.num_buffers: int | None = None
+        self.num_buffers = 0
 
         # Parser state machine - start in handshake mode
         self.state = PublisherProtocolState.HANDSHAKE_SHM_NAME_LEN
@@ -83,6 +84,9 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
         # Message parsing state
         self.current_msg_id: int = -1
         self.mode: TransmitMode = TransmitMode.AUTO
+
+        # Per-slot TCP payload storage (indexed by msg_id % num_buffers)
+        self._tcp_slots: list[bytearray] = []
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore
         self.transport = transport
@@ -105,60 +109,57 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         """Hot path - called directly by event loop"""
-        data_len = len(data)
-
-        # Ensure buffer has space
-        if self.buffer_size + data_len > len(self.buffer):
-            # Compact buffer if offset is large enough
-            if self.buffer_offset > len(self.buffer) // 2:
-                remaining = self.buffer_size - self.buffer_offset
-                self.buffer[0:remaining] = self.buffer[
-                    self.buffer_offset : self.buffer_size
-                ]
-                self.buffer_offset = 0
-                self.buffer_size = remaining
-            else:
-                # Grow buffer
-                new_size = max(len(self.buffer) * 2, self.buffer_size + data_len)
-                self.buffer.extend(bytearray(new_size - len(self.buffer)))
-
-        # Copy data into buffer
-        self.buffer[self.buffer_size : self.buffer_size + data_len] = data
-        self.buffer_size += data_len
+        mv = memoryview(data)
+        self._segments.append(mv)
+        self._available += len(mv)
 
         # Process as many complete messages as possible
         while self._try_parse():
             pass
 
+    def _read_into(self, dest: memoryview) -> None:
+        """Read exactly len(dest) bytes into dest from segments."""
+        remaining = len(dest)
+        write_off = 0
+        while remaining > 0:
+            seg = self._segments[0]
+            take = min(remaining, len(seg) - self._seg_offset)
+            dest[write_off : write_off + take] = seg[self._seg_offset : self._seg_offset + take]
+            write_off += take
+            remaining -= take
+            self._seg_offset += take
+            self._available -= take
+            if self._seg_offset == len(seg):
+                self._segments.popleft()
+                self._seg_offset = 0
+
+    def _read_exact(self, n: int) -> bytes:
+        """Read exactly n bytes and return as bytes."""
+        buf = bytearray(n)
+        self._read_into(memoryview(buf))
+        return bytes(buf)
+
     def _try_parse(self) -> bool:
         """State machine parser - returns True if made progress"""
-        available = self.buffer_size - self.buffer_offset
-        if available < self.expected_bytes:
+        if self._available < self.expected_bytes:
             return False
 
         # Handshake states
         if self.state == PublisherProtocolState.HANDSHAKE_SHM_NAME_LEN:
-            name_len = int.from_bytes(
-                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
-            )
-            self.buffer_offset += 8
+            name_len = int.from_bytes(self._read_exact(8), "little")
             self.expected_bytes = name_len
             self.state = PublisherProtocolState.HANDSHAKE_SHM_NAME_DATA
             return True
 
         elif self.state == PublisherProtocolState.HANDSHAKE_SHM_NAME_DATA:
-            shm_name = self.buffer[
-                self.buffer_offset : self.buffer_offset + self.expected_bytes
-            ].decode("utf-8")
-            self.buffer_offset += self.expected_bytes
+            shm_name = self._read_exact(self.expected_bytes).decode("utf-8")
             self.handshake_shm_name.set_result(shm_name)
             self.state = PublisherProtocolState.HANDSHAKE_COMPLETE
             self.expected_bytes = 1
             return False  # Pause until handshake response is sent
 
         elif self.state == PublisherProtocolState.HANDSHAKE_COMPLETE:
-            complete_byte = self.buffer[self.buffer_offset]
-            self.buffer_offset += 1
+            complete_byte = self._read_exact(1)[0]
             if complete_byte != Command.COMPLETE.value[0]:
                 logger.error("Handshake failed: did not receive COMPLETE")
                 if self.transport:
@@ -169,18 +170,14 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
             return True
 
         elif self.state == PublisherProtocolState.HANDSHAKE_NUM_BUFFERS:
-            num_buffers = int.from_bytes(
-                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
-            )
-            self.buffer_offset += 8
+            num_buffers = int.from_bytes(self._read_exact(8), "little")
             self.num_buffers = num_buffers
             self.state = PublisherProtocolState.HANDSHAKE_MODE
             self.expected_bytes = 1
             return True
 
         elif self.state == PublisherProtocolState.HANDSHAKE_MODE:
-            self.mode = TransmitMode(self.buffer[self.buffer_offset])
-            self.buffer_offset += 1
+            self.mode = TransmitMode(self._read_exact(1)[0])
             self.state = PublisherProtocolState.MSG_ID
             self.expected_bytes = 8  # uint64
             self.handshake_complete.set_result(self.num_buffers)
@@ -188,44 +185,51 @@ class PublisherClientProtocol(typing.Generic[T], asyncio.Protocol):
 
         # Message states
         elif self.state == PublisherProtocolState.MSG_ID:
-            msg_id = int.from_bytes(
-                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
-            )
-            self.buffer_offset += 8
+            msg_id = int.from_bytes(self._read_exact(8), "little")
             self.current_msg_id = msg_id
             self.state = PublisherProtocolState.MSG_SIZE
             self.expected_bytes = 8
             return True
 
         elif self.state == PublisherProtocolState.MSG_SIZE:
-            msg_size = int.from_bytes(
-                self.buffer[self.buffer_offset : self.buffer_offset + 8], "little"
-            )
-            self.buffer_offset += 8
+            msg_size = int.from_bytes(self._read_exact(8), "little")
             self.expected_bytes = msg_size
             self.state = PublisherProtocolState.MSG_DATA
             return True
 
         elif self.state == PublisherProtocolState.MSG_DATA:
-            msg_data = self.buffer[
-                self.buffer_offset : self.buffer_offset + self.expected_bytes
-            ]
-
-            self.buffer_offset += self.expected_bytes
-
             if self.mode == TransmitMode.SHM:
+                shm_name_bytes = self._read_exact(self.expected_bytes)
                 self.message_queue.put_nowait(
                     SHMMessage(
                         msg_id=self.current_msg_id,
-                        shm_name=msg_data.decode("utf-8"),
+                        shm_name=shm_name_bytes.decode("utf-8"),
                     )
                 )
 
             elif self.mode == TransmitMode.TCP:
+                # Use per-slot storage to avoid overwriting in-flight payloads.
+                slot_count = max(1, self.num_buffers)
+                if len(self._tcp_slots) < slot_count:
+                    # Initialize slots lazily when num_buffers is known
+                    self._tcp_slots = [bytearray() for _ in range(slot_count)]
+
+                slot_idx = self.current_msg_id % slot_count
+                slot_buf = self._tcp_slots[slot_idx]
+
+                if len(slot_buf) < self.expected_bytes:
+                    slot_buf = bytearray(self.expected_bytes)
+                    self._tcp_slots[slot_idx] = slot_buf
+
+                # Read payload directly into slot buffer (single copy)
+                view = memoryview(slot_buf)[: self.expected_bytes]
+                self._read_into(view)
+                msg_view = view.toreadonly()
+
                 self.message_queue.put_nowait(
                     TCPMessage(
-                        msg_id=self.current_msg_id,
-                        tcp_data=msg_data
+                        msg_id=self.current_msg_id, 
+                        tcp_data=msg_view
                     )
                 )
 
