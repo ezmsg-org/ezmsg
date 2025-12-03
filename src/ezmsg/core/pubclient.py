@@ -398,9 +398,14 @@ class Publisher:
                 header,
                 buffers,
             ):
-                tcp_payload = header + b"".join(
-                    [buffer for buffer in buffers]
-                )
+                
+                tcp_payload = None
+
+                if any(c.mode == TransmitMode.TCP for c in remote_channels):
+                    # Expensive call
+                    tcp_payload = header + b"".join(
+                        [buffer for buffer in buffers]
+                    )
 
                 # If there's ANY SHM channels, we should populate SHM ONCE ...                            
                 if any(c.mode == TransmitMode.SHM for c in remote_channels):
