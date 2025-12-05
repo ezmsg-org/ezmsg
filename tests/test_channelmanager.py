@@ -20,7 +20,7 @@ class DummyChannel:
         self.waited = False
         self.local_bp: dict = {}
 
-    def register_client(self, client_id, queue, local_backpressure):
+    def register_client(self, client_id, queue, local_backpressure, handle=None):
         self.clients[client_id] = queue
         if local_backpressure is not None:
             self.local_bp[client_id] = local_backpressure
