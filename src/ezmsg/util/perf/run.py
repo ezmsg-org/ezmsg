@@ -231,7 +231,7 @@ def perf_run(
         server.stop()
         d = datetime(1, 1, 1) + timedelta(seconds=time.time() - start_time)
         dur_str = ":".join(
-            [str(n) for n in [d.day - 1, d.hour, d.minute, d.second] if n != 0]
+            [str(n) for n in [d.hour, d.minute, d.second]]
         )
         ez.logger.info(f"Tests concluded.  Wallclock Runtime: {dur_str}s")
 
