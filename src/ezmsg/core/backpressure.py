@@ -1,9 +1,11 @@
 import asyncio
+import time
 
 from uuid import UUID
 
 from typing import Literal
 
+from .profiling import LeaseDurationTelemetry
 
 class BufferLease:
     """
@@ -83,7 +85,9 @@ class Backpressure:
     empty: asyncio.Event
     pressure: int
 
-    def __init__(self, num_buffers: int) -> None:
+    def __init__(
+        self, num_buffers: int, telemetry: LeaseDurationTelemetry | None = None
+    ) -> None:
         """
         Initialize backpressure management for the specified number of buffers.
 
@@ -94,6 +98,7 @@ class Backpressure:
         self.empty = asyncio.Event()
         self.empty.set()
         self.pressure = 0
+        self._telemetry = telemetry
 
     @property
     def is_empty(self) -> bool:
@@ -138,6 +143,8 @@ class Backpressure:
             self.pressure += 1
         self.buffers[buf_idx].add(uuid)
         self.empty.clear()
+        if self._telemetry is not None:
+            self._telemetry.on_lease(uuid, buf_idx, time.perf_counter())
 
     def _free(self, uuid: UUID, buf_idx: int) -> None:
         """
@@ -152,6 +159,8 @@ class Backpressure:
             self.buffers[buf_idx].remove(uuid)
             if self.buffers[buf_idx].is_empty:
                 self.pressure -= 1
+            if self._telemetry is not None:
+                self._telemetry.on_free(uuid, buf_idx, time.perf_counter())
         except KeyError:
             pass
 
@@ -170,6 +179,8 @@ class Backpressure:
         if buf_idx is None:
             for idx in range(len(self.buffers)):
                 self._free(uuid, idx)
+            if self._telemetry is not None:
+                self._telemetry.on_free(uuid, None, time.perf_counter())
         else:
             self._free(uuid, buf_idx)
 

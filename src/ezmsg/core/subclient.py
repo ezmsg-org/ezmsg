@@ -37,6 +37,7 @@ class Subscriber:
     topic: str
 
     _graph_address: AddressType | None
+    handle: str
     _graph_task: asyncio.Task[None]
     _cur_pubs: set[UUID]
     _incoming: NotificationQueue
@@ -53,7 +54,11 @@ class Subscriber:
 
     @classmethod
     async def create(
-        cls, topic: str, graph_address: AddressType | None, **kwargs
+        cls,
+        topic: str,
+        graph_address: AddressType | None,
+        handle: str | None = None,
+        **kwargs,
     ) -> "Subscriber":
         """
         Create a new Subscriber instance and register it with the graph server.
@@ -74,7 +79,14 @@ class Subscriber:
         sub_id_str = await read_str(reader)
         sub_id = UUID(sub_id_str)
 
-        sub = cls(sub_id, topic, graph_address, _guard=cls._SENTINEL, **kwargs)
+        sub = cls(
+            sub_id,
+            topic,
+            graph_address,
+            handle=handle,
+            _guard=cls._SENTINEL,
+            **kwargs,
+        )
 
         sub._graph_task = asyncio.create_task(
             sub._graph_connection(reader, writer),
@@ -95,6 +107,7 @@ class Subscriber:
         id: UUID, 
         topic: str, 
         graph_address: AddressType | None, 
+        handle: str | None = None,
         _guard = None, 
         **kwargs
     ) -> None:
@@ -118,6 +131,7 @@ class Subscriber:
             )
         self.id = id
         self.topic = topic
+        self.handle = handle if handle is not None else topic
         self._graph_address = graph_address
 
         self._cur_pubs = set()
@@ -197,7 +211,11 @@ class Subscriber:
 
                     for pub_id in set(pub_ids - self._cur_pubs):
                         channel = await CHANNELS.register(
-                            pub_id, self.id, self._incoming, self._graph_address
+                            pub_id,
+                            self.id,
+                            self._incoming,
+                            self._graph_address,
+                            handle=self.handle,
                         )
                         self._channels[pub_id] = channel
 

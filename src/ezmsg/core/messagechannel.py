@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import typing
 import logging
 
@@ -11,6 +12,7 @@ from .messagemarshal import MessageMarshal
 from .backpressure import Backpressure
 from .messagecache import MessageCache
 from .graphserver import GraphService
+from .profiling import ChannelTelemetry, PROFILE_WINDOW_S
 from .netprotocol import (
     Command,
     Address,
@@ -52,6 +54,9 @@ class Channel:
     shm: SHMContext | None
     clients: dict[UUID, NotificationQueue | None]
     backpressure: Backpressure
+    _telemetry: ChannelTelemetry
+    _client_handles: dict[UUID, str]
+    _mode: str
 
     _graph_task: asyncio.Task[None]
     _pub_task: asyncio.Task[None]
@@ -78,12 +83,18 @@ class Channel:
         self.pub_id = pub_id
         self.num_buffers = num_buffers
         self.shm = shm
+        self.pid = os.getpid()
 
         self.cache = MessageCache(self.num_buffers)
-        self.backpressure = Backpressure(self.num_buffers)
+        self._telemetry = ChannelTelemetry(PROFILE_WINDOW_S)
+        self.backpressure = Backpressure(
+            self.num_buffers, telemetry=self._telemetry.leases
+        )
         self.clients = dict()
         self._graph_address = graph_address
         self._local_backpressure = None
+        self._client_handles = dict()
+        self._mode = "unknown"
 
     @classmethod
     async def create(
@@ -190,6 +201,13 @@ class Channel:
                 if not cmd:
                     break
 
+                elif cmd == Command.PROFILE.value:
+                    window_ms = await read_int(reader)
+                    payload = json.dumps(self.profile(window_ms / 1000.0))
+                    writer.write(Command.PROFILE_DATA.value)
+                    writer.write(encode_str(payload))
+                    await writer.drain()
+
                 else:
                     logger.warning(
                         f"Channel {self.id} rx unknown command from GraphServer: {cmd}"
@@ -215,6 +233,7 @@ class Channel:
                 buf_idx = msg_id % self.num_buffers
 
                 if msg == Command.TX_SHM.value:
+                    self._mode = "shm"
                     shm_name = await read_str(reader)
 
                     if self.shm is not None and self.shm.name != shm_name:
@@ -241,6 +260,7 @@ class Channel:
                     self.cache.put_from_mem(self.shm[buf_idx])
 
                 elif msg == Command.TX_TCP.value:
+                    self._mode = "tcp"
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
                     assert MessageMarshal.msg_id(obj_bytes) == msg_id
@@ -290,6 +310,7 @@ class Channel:
         if self._notify_clients(msg_id):
             self.cache.put_local(msg, msg_id)
             self._local_backpressure.lease(self.id, buf_idx)
+        self._mode = "local"
 
     @contextmanager
     def get(
@@ -333,6 +354,7 @@ class Channel:
         client_id: UUID,
         queue: NotificationQueue | None = None,
         local_backpressure: Backpressure | None = None,
+        handle: str | None = None,
     ) -> None:
         """
         Register an interested client and provide a queue for incoming message notifications.
@@ -343,8 +365,12 @@ class Channel:
         :type queue: asyncio.Queue[tuple[UUID, int]] | None
         :param local_backpressure: The backpressure object for the Publisher if it is in the same process
         :type local_backpressure: Backpressure
+        :param handle: Optional user-friendly handle for profiling
+        :type handle: str | None
         """
         self.clients[client_id] = queue
+        if handle is not None:
+            self._client_handles[client_id] = handle
         if client_id == self.pub_id:
             self._local_backpressure = local_backpressure
 
@@ -371,3 +397,20 @@ class Channel:
             self._local_backpressure = None
 
         del self.clients[client_id]
+        self._client_handles.pop(client_id, None)
+
+    def profile(self, window_s: float | None = None) -> dict[str, typing.Any]:
+        snapshot = self._telemetry.snapshot(
+            window_s=window_s, handles=self._client_handles
+        )
+        snapshot.update(
+            {
+                "type": "channel",
+                "channel_id": str(self.id),
+                "pub_id": str(self.pub_id),
+                "pid": self.pid,
+                "num_buffers": self.num_buffers,
+                "mode": self._mode,
+            }
+        )
+        return snapshot

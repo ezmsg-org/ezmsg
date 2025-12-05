@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import logging
 import time
@@ -13,6 +14,7 @@ from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import Channel
 from .messagemarshal import MessageMarshal, UninitializedMemory
+from .profiling import PublisherTelemetry, PROFILE_WINDOW_S
 
 from .netprotocol import (
     Address,
@@ -78,6 +80,7 @@ class Publisher:
     _last_backpressure_event: float
 
     _graph_address: AddressType | None
+    _telemetry: PublisherTelemetry
 
     @staticmethod
     def client_type() -> bytes:
@@ -226,7 +229,10 @@ class Publisher:
         if not start_paused:
             self._running.set()
         self._num_buffers = num_buffers
-        self._backpressure = Backpressure(num_buffers)
+        self._telemetry = PublisherTelemetry(PROFILE_WINDOW_S)
+        self._backpressure = Backpressure(
+            num_buffers, telemetry=self._telemetry.backpressure
+        )
         self._force_tcp = force_tcp
         self._last_backpressure_event = -1
         self._graph_address = graph_address
@@ -264,6 +270,19 @@ class Publisher:
             with suppress(asyncio.CancelledError):
                 await task
 
+    def profile(self, window_s: float | None = None) -> dict[str, Any]:
+        snapshot = self._telemetry.snapshot(window_s=window_s)
+        snapshot.update(
+            {
+                "type": "publisher",
+                "id": str(self.id),
+                "topic": self.topic,
+                "pid": self.pid,
+                "num_buffers": self._num_buffers,
+            }
+        )
+        return snapshot
+
     async def _graph_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -293,6 +312,12 @@ class Publisher:
                 elif cmd == Command.SYNC.value:
                     await self.sync()
                     writer.write(Command.COMPLETE.value)
+
+                elif cmd == Command.PROFILE.value:
+                    window_ms = await read_int(reader)
+                    payload = json.dumps(self.profile(window_ms / 1000.0))
+                    writer.write(Command.PROFILE_DATA.value)
+                    writer.write(encode_str(payload))
 
                 else:
                     logger.warning(
@@ -427,6 +452,7 @@ class Publisher:
 
         buf_idx = self._msg_id % self._num_buffers
         msg_id_bytes = uint64_to_bytes(self._msg_id)
+        msg_size: int | None = None
 
         if not self._backpressure.available(buf_idx):
             delta = time.time() - self._last_backpressure_event
@@ -446,6 +472,7 @@ class Publisher:
                 header,
                 buffers,
             ):
+                msg_size = total_size
                 total_size_bytes = uint64_to_bytes(total_size)
 
                 if not self._force_tcp and any(
@@ -507,4 +534,5 @@ class Publisher:
                             f"Publisher {self.id}: Channel {channel.id} connection fail"
                         )
 
+        self._telemetry.record_message(msg_size)
         self._msg_id += 1

@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 import pickle
 import os
 import socket
 import threading
+from typing import Any
 from contextlib import suppress
 from uuid import UUID, uuid1
 
@@ -11,6 +13,7 @@ from uuid import UUID, uuid1
 from . import __version__
 from .dag import DAG, CyclicException
 from .graph_util import get_compactified_graph, graph_string, prune_graph_connections
+from .profiling import PROFILE_WINDOW_S
 from .netprotocol import (
     Address,
     Command,
@@ -78,6 +81,7 @@ class GraphServer(threading.Thread):
         self.clients = {}
         self._client_tasks = {}
         self.shms = {}
+        self._profile_requests: dict[UUID, asyncio.Future] = {}
 
     @property
     def address(self) -> Address:
@@ -119,6 +123,10 @@ class GraphServer(threading.Thread):
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*self._client_tasks.values(), return_exceptions=True)
         self._client_tasks.clear()
+        for fut in list(self._profile_requests.values()):
+            if not fut.done():
+                fut.cancel()
+        self._profile_requests.clear()
 
         # Cancel SHM leases
         for info in self.shms.values():
@@ -338,6 +346,14 @@ class GraphServer(threading.Thread):
                         writer.write(uint64_to_bytes(len(dag_bytes)) + dag_bytes)
                         writer.write(Command.COMPLETE.value)
 
+                    elif req == Command.PROFILE.value:
+                        window_ms = await read_int(reader)
+                        profile = await self._collect_profiles(window_ms / 1000.0)
+                        writer.write(Command.PROFILE_DATA.value)
+                        writer.write(encode_str(json.dumps(profile)))
+                        writer.write(Command.COMPLETE.value)
+                        await writer.drain()
+
                     else:
                         logger.warning(f"GraphServer received unknown command {req}")
 
@@ -380,6 +396,15 @@ class GraphServer(threading.Thread):
 
                 if req == Command.COMPLETE.value:
                     self.clients[client_id].set_sync()
+                elif req == Command.PROFILE_DATA.value:
+                    payload = await read_str(reader)
+                    future = self._profile_requests.pop(client_id, None)
+                    if future is not None and not future.done():
+                        try:
+                            future.set_result(json.loads(payload))
+                        except json.JSONDecodeError as e:
+                            future.set_exception(e)
+                    self.clients[client_id].set_sync()
 
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Client {client_id} disconnected from GraphServer: {e}")
@@ -388,6 +413,9 @@ class GraphServer(threading.Thread):
             # Ensure any waiter on this client unblocks
             # with suppress(Exception):
             self.clients[client_id].set_sync()
+            future = self._profile_requests.pop(client_id, None)
+            if future is not None and not future.done():
+                future.cancel()
             self.clients.pop(client_id, None)
             await close_stream_writer(writer)
 
@@ -427,6 +455,64 @@ class GraphServer(threading.Thread):
         """Given a topic, return a set of all subscriber IDs upstream of that topic"""
         downstream_topics = self.graph.downstream(topic)
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
+
+    async def _profile_client(
+        self, info: ClientInfo, window_s: float
+    ) -> dict[str, Any] | None:
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._profile_requests[info.id] = fut
+
+        try:
+            async with info.sync_writer() as writer:
+                writer.write(Command.PROFILE.value)
+                writer.write(uint64_to_bytes(int(window_s * 1000)))
+                await writer.drain()
+
+            return await asyncio.wait_for(fut, timeout=1.0)
+
+        except asyncio.TimeoutError:
+            logger.debug(f"Profile request to {info.id} timed out")
+            return None
+
+        finally:
+            self._profile_requests.pop(info.id, None)
+
+    async def _collect_profiles(self, window_s: float) -> dict[str, Any]:
+        client_infos = [
+            info
+            for info in self.clients.values()
+            if isinstance(info, (PublisherInfo, ChannelInfo))
+        ]
+        results = await asyncio.gather(
+            *[self._profile_client(info, window_s) for info in client_infos],
+            return_exceptions=True,
+        )
+
+        publishers: list[dict[str, Any]] = []
+        channels: list[dict[str, Any]] = []
+
+        for info, result in zip(client_infos, results):
+            if isinstance(result, Exception) or result is None:
+                continue
+
+            if isinstance(info, PublisherInfo) and result.get("type") == "publisher":
+                publishers.append(result)
+
+            elif isinstance(info, ChannelInfo) and result.get("type") == "channel":
+                try:
+                    pub_info = self.clients.get(UUID(result["pub_id"]), None)
+                    if isinstance(pub_info, PublisherInfo):
+                        result.setdefault("topic", pub_info.topic)
+                except Exception:
+                    ...
+                channels.append(result)
+
+        return {
+            "window_s": window_s,
+            "publishers": publishers,
+            "channels": channels,
+        }
 
 
 class GraphService:
@@ -543,6 +629,24 @@ class GraphService:
         await asyncio.wait_for(reader.read(1), timeout=timeout)  # Complete
         await close_stream_writer(writer)
         return dag
+
+    async def profile(self, window_s: float | None = None) -> dict[str, Any]:
+        reader, writer = await self.open_connection()
+        if window_s is None:
+            window_s = PROFILE_WINDOW_S
+        writer.write(Command.PROFILE.value)
+        writer.write(uint64_to_bytes(int(window_s * 1000)))
+        await writer.drain()
+
+        response = await reader.read(1)
+        if response != Command.PROFILE_DATA.value:
+            await close_stream_writer(writer)
+            raise ValueError("Unexpected response to profile request")
+
+        payload = await read_str(reader)
+        await reader.read(1)  # COMPLETE
+        await close_stream_writer(writer)
+        return json.loads(payload)
 
     async def get_formatted_graph(
         self,

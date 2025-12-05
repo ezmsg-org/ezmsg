@@ -37,6 +37,7 @@ class ChannelManager:
         client_id: UUID,
         queue: NotificationQueue,
         graph_address: AddressType | None = None,
+        handle: str | None = None,
     ) -> Channel:
         """
         Acquire the channel associated with a particular publisher, creating it if necessary
@@ -49,10 +50,14 @@ class ChannelManager:
         :type queue: asyncio.Queue[tuple[UUID, int]]
         :param graph_address: The address to the GraphServer that the requested publisher is managed by
         :type graph_address: AddressType | None
+        :param handle: Optional label to associate with the subscribing client for profiling output
+        :type handle: str | None
         :return: A Channel for retreiving messages from the requested Publisher
         :rtype: Channel
         """
-        return await self._register(pub_id, client_id, queue, graph_address, None)
+        return await self._register(
+            pub_id, client_id, queue, graph_address, None, handle=handle
+        )
 
     async def register_local_pub(
         self,
@@ -85,6 +90,7 @@ class ChannelManager:
         queue: NotificationQueue | None = None,
         graph_address: AddressType | None = None,
         local_backpressure: Backpressure | None = None,
+        handle: str | None = None,
     ) -> Channel:
         graph_address = _ensure_address(graph_address)
         try:
@@ -94,7 +100,12 @@ class ChannelManager:
             channels = self._registry.get(graph_address, dict())
             channels[pub_id] = channel
             self._registry[graph_address] = channels
-        channel.register_client(client_id, queue, local_backpressure)
+        channel.register_client(
+            client_id,
+            queue,
+            local_backpressure,
+            handle=handle,
+        )
         return channel
 
     async def unregister(

@@ -296,6 +296,8 @@ class Command(enum.Enum):
     CHANNEL = enum.auto()
     SHM_OK = enum.auto()
     SHM_ATTACH_FAILED = enum.auto()
+    PROFILE = enum.auto()
+    PROFILE_DATA = enum.auto()
 
 
 def create_socket(

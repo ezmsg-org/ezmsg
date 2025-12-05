@@ -42,7 +42,7 @@ def cmdline() -> None:
     parser.add_argument(
         "command",
         help="command for ezmsg",
-        choices=["serve", "start", "shutdown", "graphviz", "mermaid"],
+        choices=["serve", "start", "shutdown", "graphviz", "mermaid", "profile"],
     )
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
@@ -70,12 +70,21 @@ def cmdline() -> None:
         action="store_true",
     )
 
+    parser.add_argument(
+        "-w",
+        "--window",
+        help="Profiling window (seconds) for the 'profile' command",
+        type=float,
+        default=None,
+    )
+
     class Args:
         command: str
         address: str | None
         target: str
         compact: int | None
         nobrowser: bool
+        window: float | None
 
     args = parser.parse_args(namespace=Args)
 
@@ -93,6 +102,7 @@ def cmdline() -> None:
             args.target,
             args.compact,
             args.nobrowser,
+            args.window,
         )
     )
 
@@ -103,6 +113,7 @@ async def run_command(
     target: str = "live",
     compact: int | None = None,
     nobrowser: bool = False,
+    window: float | None = None,
 ) -> None:
     """
     Run an ezmsg command with the specified parameters.
@@ -165,6 +176,10 @@ async def run_command(
             logger.warning(
                 f"Could not issue shutdown command to GraphServer @ {graph_service.address}; server not running?"
             )
+
+    elif cmd == "profile":
+        profile = await graph_service.profile(window)
+        print(json.dumps(profile, indent=2))
 
     elif cmd in ["graphviz", "mermaid"]:
         graph_out = await graph_service.get_formatted_graph(
