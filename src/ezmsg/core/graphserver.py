@@ -354,6 +354,12 @@ class GraphServer(threading.Thread):
                         writer.write(Command.COMPLETE.value)
                         await writer.drain()
 
+                    elif req == Command.PRUNE.value:
+                        pruned = self._prune_orphan_edges()
+                        writer.write(Command.COMPLETE.value)
+                        writer.write(encode_str(json.dumps(pruned)))
+                        await writer.drain()
+
                     else:
                         logger.warning(f"GraphServer received unknown command {req}")
 
@@ -455,6 +461,37 @@ class GraphServer(threading.Thread):
         """Given a topic, return a set of all subscriber IDs upstream of that topic"""
         downstream_topics = self.graph.downstream(topic)
         return [sub for sub in self._subscribers() if sub.topic in downstream_topics]
+
+    def _prune_orphan_edges(self) -> list[list[str]]:
+        """
+        Remove edges where the source topic has no active publisher.
+
+        This handles the case where a publisher process crashes or is killed
+        without proper cleanup, leaving stale edges in the graph.
+
+        Note: We only prune edges based on missing publishers, not missing
+        subscribers. A missing subscriber might just mean it hasn't connected
+        yet, while a missing publisher clearly indicates a stale edge.
+
+        :return: List of pruned edges as [from_topic, to_topic] pairs.
+        :rtype: list[list[str]]
+        """
+        active_pub_topics = {pub.topic for pub in self._publishers()}
+
+        orphan_edges: list[tuple[str, str]] = []
+
+        # Find edges where source has no active publisher
+        for from_topic, to_topics in list(self.graph.graph.items()):
+            if from_topic not in active_pub_topics:
+                for to_topic in list(to_topics):
+                    orphan_edges.append((from_topic, to_topic))
+
+        # Remove orphan edges
+        for from_topic, to_topic in orphan_edges:
+            self.graph.remove_edge(from_topic, to_topic)
+            logger.info(f"Pruned orphan edge: {from_topic} -> {to_topic}")
+
+        return [[f, t] for f, t in orphan_edges]
 
     async def _profile_client(
         self, info: ClientInfo, window_s: float
@@ -615,6 +652,25 @@ class GraphService:
         writer.write(Command.SHUTDOWN.value)
         await writer.drain()
         await close_stream_writer(writer)
+
+    async def prune(self) -> list[list[str]]:
+        """
+        Remove orphan edges from the graph.
+
+        Orphan edges are edges where the source topic has no active publisher.
+        This typically occurs when a publisher process crashes or is killed
+        without proper cleanup.
+
+        :return: List of pruned edges as [from_topic, to_topic] pairs.
+        :rtype: list[list[str]]
+        """
+        reader, writer = await self.open_connection()
+        writer.write(Command.PRUNE.value)
+        await writer.drain()
+        await reader.read(1)  # COMPLETE
+        payload = await read_str(reader)
+        await close_stream_writer(writer)
+        return json.loads(payload)
 
     async def dag(self, timeout: float | None = None) -> DAG:
         reader, writer = await self.open_connection()

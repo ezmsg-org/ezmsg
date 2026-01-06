@@ -298,6 +298,7 @@ class Command(enum.Enum):
     SHM_ATTACH_FAILED = enum.auto()
     PROFILE = enum.auto()
     PROFILE_DATA = enum.auto()
+    PRUNE = enum.auto()
 
 
 def create_socket(

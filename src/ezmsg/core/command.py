@@ -42,7 +42,7 @@ def cmdline() -> None:
     parser.add_argument(
         "command",
         help="command for ezmsg",
-        choices=["serve", "start", "shutdown", "graphviz", "mermaid", "profile"],
+        choices=["serve", "start", "shutdown", "graphviz", "mermaid", "profile", "prune"],
     )
 
     parser.add_argument("--address", help="Address for GraphServer", default=None)
@@ -193,6 +193,21 @@ async def run_command(
                         "%% If the graph does not render immediately, try toggling the 'Pan & Zoom' button."
                     )
                 webbrowser.open(mm(graph_out, target=target))
+
+    elif cmd == "prune":
+        try:
+            pruned = await graph_service.prune()
+            if pruned:
+                logger.info(f"Pruned {len(pruned)} orphan edge(s):")
+                for from_topic, to_topic in pruned:
+                    logger.info(f"  {from_topic} -> {to_topic}")
+            else:
+                logger.info("No orphan edges found")
+
+        except ConnectionRefusedError:
+            logger.warning(
+                f"Could not connect to GraphServer @ {graph_service.address}; server not running?"
+            )
 
 
 def mm(graph: str, target="live") -> str:
