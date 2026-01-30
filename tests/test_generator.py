@@ -1,3 +1,5 @@
+# NOTE: This file tests the deprecated ezmsg.util.generator module.
+# The @consumer usages here are the subject of the tests and should remain.
 from collections.abc import AsyncGenerator, Generator
 import copy
 import json

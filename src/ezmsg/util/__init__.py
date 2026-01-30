@@ -6,7 +6,7 @@ including message processing, logging, replay, transformation, and system utilit
 
 Key modules:
 - :mod:`ezmsg.util.debuglog`: Debug logging utilities
-- :mod:`ezmsg.util.generator`: Generator-based message processing decorators
+- :mod:`ezmsg.util.generator`: Generator-based message processing decorators (deprecated — use ``ezmsg.baseproc`` instead)
 - :mod:`ezmsg.util.messagecodec`: JSON encoding/decoding for message logging
 - :mod:`ezmsg.util.messagegate`: Message flow control and gating
 - :mod:`ezmsg.util.messagelogger`: File-based message logging

@@ -1,3 +1,20 @@
+"""
+.. deprecated::
+    This module is deprecated. Use ``ezmsg.baseproc`` (ezmsg-baseproc) instead.
+    The ``consumer``, ``compose``, ``GenState``, and ``Gen`` APIs in this module
+    will be removed in a future release.
+"""
+
+import warnings
+
+warnings.warn(
+    "ezmsg.util.generator is deprecated. "
+    "Use ezmsg.baseproc (BaseTransformer, BaseProducer, etc.) instead. "
+    "This module will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import ezmsg.core as ez
 import traceback
 from collections.abc import AsyncGenerator, Callable, Generator

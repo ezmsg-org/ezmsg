@@ -1,4 +1,9 @@
 """
+.. deprecated::
+    This example demonstrates deprecated generator-based patterns from
+    ``ezmsg.util.generator``. New code should use ``ezmsg.baseproc``
+    (BaseTransformer, BaseProducer, etc.) instead.
+
 This ezmsg example showcases a design pattern where core computational
     logic is encapsulated within a Python generator. This approach is
     beneficial for several reasons:
@@ -22,14 +27,61 @@ Overall, this pattern enables developers to write units in ezmsg that are portab
 """
 
 import asyncio
+import traceback
 import ezmsg.core as ez
 import numpy as np
 from typing import Any
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Callable, Generator
+from functools import wraps, reduce
 from ezmsg.util.messages.axisarray import AxisArray, replace
 from ezmsg.util.debuglog import DebugLog
 from ezmsg.util.gen_to_unit import gen_to_unit
-from ezmsg.util.generator import consumer, compose, Gen
+
+
+# --- Inlined helpers (previously from ezmsg.util.generator, now deprecated) ---
+
+def consumer(func):
+    """Prime a generator by advancing it to the first yield statement."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        gen = func(*args, **kwargs)
+        next(gen)
+        return gen
+    return wrapper
+
+
+def compose(*funcs):
+    """Compose a chain of generator functions into a single callable."""
+    return lambda x: reduce(lambda f, g: g.send(f), list(funcs), x)
+
+
+class GenState(ez.State):
+    gen: Generator[Any, Any, None]
+
+
+class Gen(ez.Unit):
+    STATE = GenState
+
+    INPUT = ez.InputStream(Any)
+    OUTPUT = ez.OutputStream(Any)
+
+    async def initialize(self) -> None:
+        self.construct_generator()
+
+    def construct_generator(self):
+        raise NotImplementedError
+
+    @ez.subscriber(INPUT)
+    @ez.publisher(OUTPUT)
+    async def on_message(self, message: Any) -> AsyncGenerator:
+        try:
+            ret = self.STATE.gen.send(message)
+            if ret is not None:
+                yield self.OUTPUT, ret
+        except (StopIteration, GeneratorExit):
+            ez.logger.debug(f"Generator closed in {self.address}")
+        except Exception:
+            ez.logger.info(traceback.format_exc())
 
 
 @consumer
