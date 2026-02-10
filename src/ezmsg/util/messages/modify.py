@@ -1,66 +1,86 @@
-from collections.abc import AsyncGenerator, Generator
-import traceback
+import warnings
+from collections.abc import AsyncGenerator
 
 import numpy as np
 
 import ezmsg.core as ez
 from .axisarray import AxisArray, replace
-from ..generator import consumer, GenState
 
 
-@consumer
-def modify_axis(
-    name_map: dict[str, str | None] | None = None,
-) -> Generator[AxisArray, AxisArray, None]:
+class ModifyAxisTransformer:
     """
     Modify an AxisArray's axes and dims according to a name_map.
+
+    This is a stateless transformer that renames dimensions and axes, with support
+    for dropping length-1 dimensions.
 
     :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
         Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
     :type name_map: dict[str, str | None] | None
-    :return: A primed generator object ready to yield an AxisArray with modified axes for each .send(axis_array).
-    :rtype: collections.abc.Generator[AxisArray, AxisArray, None]
     """
-    # State variables
-    axis_arr_in = AxisArray(np.array([]), dims=[""])
-    axis_arr_out = AxisArray(np.array([]), dims=[""])
 
-    while True:
-        axis_arr_in = yield axis_arr_out
+    def __init__(self, name_map: dict[str, str | None] | None = None):
+        self.name_map = name_map
 
-        if name_map is not None:
-            new_dims = [name_map.get(old_k, old_k) for old_k in axis_arr_in.dims]
-            new_axes = {
-                name_map.get(old_k, old_k): v for old_k, v in axis_arr_in.axes.items()
-            }
-            drop_ax_ix = [
-                ix
-                for ix, old_dim in enumerate(axis_arr_in.dims)
-                if new_dims[ix] is None
-            ]
-            if len(drop_ax_ix) > 0:
-                # Rewrite new_dims and new_axes without the dropped axes
-                new_dims = [_ for _ in new_dims if _ is not None]
-                new_axes.pop(None, None)
-                # Reshape data
-                # np.squeeze will raise ValueError if not len==1
-                axis_arr_out = replace(
-                    axis_arr_in,
-                    data=np.squeeze(axis_arr_in.data, axis=tuple(drop_ax_ix)),
-                    dims=new_dims,
-                    axes=new_axes,
-                )
-            else:
-                axis_arr_out = replace(axis_arr_in, dims=new_dims, axes=new_axes)
-        else:
-            axis_arr_out = axis_arr_in
+    def __call__(self, message: AxisArray) -> AxisArray:
+        if self.name_map is None:
+            return message
+
+        new_dims = [self.name_map.get(old_k, old_k) for old_k in message.dims]
+        new_axes = {
+            self.name_map.get(old_k, old_k): v for old_k, v in message.axes.items()
+        }
+        drop_ax_ix = [
+            ix
+            for ix, old_dim in enumerate(message.dims)
+            if new_dims[ix] is None
+        ]
+        if len(drop_ax_ix) > 0:
+            new_dims = [d for d in new_dims if d is not None]
+            new_axes.pop(None, None)
+            return replace(
+                message,
+                data=np.squeeze(message.data, axis=tuple(drop_ax_ix)),
+                dims=new_dims,
+                axes=new_axes,
+            )
+        return replace(message, dims=new_dims, axes=new_axes)
+
+    _send_warned: bool = False
+
+    def send(self, message: AxisArray) -> AxisArray:
+        """Alias for __call__. Deprecated — use ``__call__`` directly instead."""
+        if not ModifyAxisTransformer._send_warned:
+            ModifyAxisTransformer._send_warned = True
+            warnings.warn(
+                "ModifyAxisTransformer.send() is deprecated. Use __call__() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self(message)
+
+
+def modify_axis(
+    name_map: dict[str, str | None] | None = None,
+) -> ModifyAxisTransformer:
+    """
+    Create a :class:`ModifyAxisTransformer` instance.
+
+    This function exists for backward compatibility with code that previously used
+    the generator-based ``modify_axis``. The returned object supports ``.send(msg)``.
+
+    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
+        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
+    :type name_map: dict[str, str | None] | None
+    :return: A ModifyAxisTransformer instance.
+    :rtype: ModifyAxisTransformer
+    """
+    return ModifyAxisTransformer(name_map=name_map)
 
 
 class ModifyAxisSettings(ez.Settings):
     """
     Settings for ModifyAxis unit.
-
-    Configuration for modifying axis names and dimensions of AxisArray messages.
 
     :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
         Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
@@ -75,62 +95,28 @@ class ModifyAxis(ez.Unit):
     Unit for modifying axis names and dimensions of AxisArray messages.
 
     Renames dimensions and axes according to a name mapping, with support for
-    dropping dimensions. Uses zero-copy operations for efficient processing.
+    dropping dimensions.
     """
 
-    STATE = GenState
     SETTINGS = ModifyAxisSettings
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
     INPUT_SETTINGS = ez.InputStream(ModifyAxisSettings)
 
+    _transformer: ModifyAxisTransformer
+
     async def initialize(self) -> None:
-        """
-        Initialize the ModifyAxis unit.
-
-        Sets up the generator for axis modification operations.
-        """
-        self.construct_generator()
-
-    def construct_generator(self):
-        """
-        Construct the axis-modifying generator with current settings.
-
-        Creates a new modify_axis generator instance using the unit's name mapping.
-        """
-        self.STATE.gen = modify_axis(name_map=self.SETTINGS.name_map)
+        self._transformer = ModifyAxisTransformer(name_map=self.SETTINGS.name_map)
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: ez.Settings) -> None:
-        """
-        Handle incoming settings updates.
-
-        :param msg: New settings to apply.
-        :type msg: ez.Settings
-        """
         self.apply_settings(msg)
-        self.construct_generator()
+        self._transformer = ModifyAxisTransformer(name_map=self.SETTINGS.name_map)
 
     @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SIGNAL)
     async def on_message(self, message: AxisArray) -> AsyncGenerator:
-        """
-        Process incoming AxisArray messages and modify their axes.
-
-        Uses zero-copy operations to efficiently modify axis names and dimensions
-        while preserving data integrity.
-
-        :param message: Input AxisArray to modify.
-        :type message: AxisArray
-        :return: Async generator yielding AxisArray with modified axes.
-        :rtype: collections.abc.AsyncGenerator
-        """
-        try:
-            ret = self.STATE.gen.send(message)
-            if ret is not None:
-                yield self.OUTPUT_SIGNAL, ret
-        except (StopIteration, GeneratorExit):
-            ez.logger.debug(f"ModifyAxis closed in {self.address}")
-        except Exception:
-            ez.logger.info(traceback.format_exc())
+        ret = self._transformer(message)
+        if ret is not None:
+            yield self.OUTPUT_SIGNAL, ret
