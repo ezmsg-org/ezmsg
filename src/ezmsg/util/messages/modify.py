@@ -7,6 +7,18 @@ import ezmsg.core as ez
 from .axisarray import AxisArray, replace
 
 
+class ModifyAxisSettings(ez.Settings):
+    """
+    Settings for ModifyAxisTransformer and ModifyAxis unit.
+
+    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
+        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
+    :type name_map: dict[str, str | None] | None
+    """
+
+    name_map: dict[str, str | None] | None = None
+
+
 class ModifyAxisTransformer:
     """
     Modify an AxisArray's axes and dims according to a name_map.
@@ -14,21 +26,21 @@ class ModifyAxisTransformer:
     This is a stateless transformer that renames dimensions and axes, with support
     for dropping length-1 dimensions.
 
-    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
-        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
-    :type name_map: dict[str, str | None] | None
+    :param settings: Settings for the transformer.
+    :type settings: ModifyAxisSettings
     """
 
-    def __init__(self, name_map: dict[str, str | None] | None = None):
-        self.name_map = name_map
+    def __init__(self, settings: ModifyAxisSettings = ModifyAxisSettings()):
+        self.settings = settings
 
     def __call__(self, message: AxisArray) -> AxisArray:
-        if self.name_map is None:
+        name_map = self.settings.name_map
+        if name_map is None:
             return message
 
-        new_dims = [self.name_map.get(old_k, old_k) for old_k in message.dims]
+        new_dims = [name_map.get(old_k, old_k) for old_k in message.dims]
         new_axes = {
-            self.name_map.get(old_k, old_k): v for old_k, v in message.axes.items()
+            name_map.get(old_k, old_k): v for old_k, v in message.axes.items()
         }
         drop_ax_ix = [
             ix
@@ -75,19 +87,7 @@ def modify_axis(
     :return: A ModifyAxisTransformer instance.
     :rtype: ModifyAxisTransformer
     """
-    return ModifyAxisTransformer(name_map=name_map)
-
-
-class ModifyAxisSettings(ez.Settings):
-    """
-    Settings for ModifyAxis unit.
-
-    :param name_map: A dictionary where the keys are the names of the old dims and the values are the new names.
-        Use None as a value to drop the dimension. If the dropped dimension is not len==1 then an error is raised.
-    :type name_map: dict[str, str | None] | None
-    """
-
-    name_map: dict[str, str | None] | None = None
+    return ModifyAxisTransformer(ModifyAxisSettings(name_map=name_map))
 
 
 class ModifyAxis(ez.Unit):
@@ -107,12 +107,12 @@ class ModifyAxis(ez.Unit):
     _transformer: ModifyAxisTransformer
 
     async def initialize(self) -> None:
-        self._transformer = ModifyAxisTransformer(name_map=self.SETTINGS.name_map)
+        self._transformer = ModifyAxisTransformer(self.SETTINGS)
 
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: ez.Settings) -> None:
         self.apply_settings(msg)
-        self._transformer = ModifyAxisTransformer(name_map=self.SETTINGS.name_map)
+        self._transformer = ModifyAxisTransformer(self.SETTINGS)
 
     @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
     @ez.publisher(OUTPUT_SIGNAL)
