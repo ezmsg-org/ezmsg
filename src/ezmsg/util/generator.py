@@ -1,19 +1,14 @@
 """
-.. deprecated::
-    This module is deprecated. Use ``ezmsg.baseproc`` (ezmsg-baseproc) instead.
-    The ``consumer``, ``compose``, ``GenState``, and ``Gen`` APIs in this module
-    will be removed in a future release.
+Generator-based message processing decorators (legacy).
+
+.. note::
+    For new code, prefer ``ezmsg.baseproc`` (BaseTransformer, BaseProducer, etc.)
+    over the generator pattern in this module. The baseproc classes provide a cleaner
+    separation of state management, hashing, and processing, and are the recommended
+    approach for all new ezmsg units.
+
+    This module is maintained for backward compatibility and simple stateless use cases.
 """
-
-import warnings
-
-warnings.warn(
-    "ezmsg.util.generator is deprecated. "
-    "Use ezmsg.baseproc (BaseTransformer, BaseProducer, etc.) instead. "
-    "This module will be removed in a future release.",
-    DeprecationWarning,
-    stacklevel=2,
-)
 
 import ezmsg.core as ez
 import traceback

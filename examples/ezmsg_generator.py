@@ -1,6 +1,6 @@
 """
-.. deprecated::
-    This example demonstrates deprecated generator-based patterns from
+.. note::
+    This example demonstrates legacy generator-based patterns from
     ``ezmsg.util.generator``. New code should use ``ezmsg.baseproc``
     (BaseTransformer, BaseProducer, etc.) instead.
 
