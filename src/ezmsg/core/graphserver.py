@@ -4,8 +4,11 @@ import pickle
 import os
 import socket
 import threading
+import warnings
+from dataclasses import dataclass, field
 from contextlib import suppress
 from uuid import UUID, uuid1
+from typing import Any
 
 
 from . import __version__
@@ -36,6 +39,16 @@ from .shm import SHMContext, SHMInfo
 
 logger = logging.getLogger("ezmsg")
 
+LEGACY_OWNER = "legacy"
+
+
+@dataclass
+class SessionInfo:
+    id: UUID
+    writer: asyncio.StreamWriter
+    edges: set[tuple[str, str]] = field(default_factory=set)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class GraphServer(threading.Thread):
     """
@@ -61,6 +74,8 @@ class GraphServer(threading.Thread):
 
     graph: DAG
     clients: dict[UUID, ClientInfo]
+    sessions: dict[UUID, SessionInfo]
+    edge_owners: dict[tuple[str, str], set[UUID | str]]
     shms: dict[str, SHMInfo]
 
     _client_tasks: dict[UUID, "asyncio.Task[None]"]
@@ -77,6 +92,8 @@ class GraphServer(threading.Thread):
         # graph/server data
         self.graph = DAG()
         self.clients = {}
+        self.sessions = {}
+        self.edge_owners = {}
         self._client_tasks = {}
         self.shms = {}
         self._address = None
@@ -261,6 +278,20 @@ class GraphServer(threading.Thread):
                 # to avoid closing writer
                 return
 
+            elif req == Command.SESSION.value:
+                session_id = uuid1()
+                self.sessions[session_id] = SessionInfo(session_id, writer)
+                writer.write(encode_str(str(session_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[session_id] = asyncio.create_task(
+                    self._handle_session(session_id, reader, writer)
+                )
+
+                # NOTE: Created a session client, must return early
+                # to avoid closing writer
+                return
+
             else:
                 # We only want to handle one command at a time
                 async with self._command_lock:
@@ -302,23 +333,25 @@ class GraphServer(threading.Thread):
                     elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
                         from_topic = await read_str(reader)
                         to_topic = await read_str(reader)
-
-                        cmd = self.graph.add_edge
-                        if req == Command.DISCONNECT.value:
-                            cmd = self.graph.remove_edge
+                        topology_changed = False
 
                         try:
-                            cmd(from_topic, to_topic)
-                            for sub in self._downstream_subs(to_topic):
-                                await self._notify_subscriber(sub)
+                            if req == Command.CONNECT.value:
+                                topology_changed = self._connect_owner(
+                                    from_topic, to_topic, LEGACY_OWNER
+                                )
+                            else:
+                                topology_changed = self._disconnect_owner(
+                                    from_topic, to_topic, LEGACY_OWNER
+                                )
                             writer.write(Command.COMPLETE.value)
                         except CyclicException:
                             writer.write(Command.CYCLIC.value)
 
-                        await writer.drain()
+                        if topology_changed:
+                            await self._notify_downstream_for_topic(to_topic)
 
-                        if req == Command.DISCONNECT.value:
-                            await close_stream_writer(writer)
+                        await writer.drain()
 
                     elif req == Command.SYNC.value:
                         for pub in self._publishers():
@@ -393,10 +426,204 @@ class GraphServer(threading.Thread):
 
         finally:
             # Ensure any waiter on this client unblocks
-            # with suppress(Exception):
-            self.clients[client_id].set_sync()
+            info = self.clients.get(client_id)
+            if info is not None:
+                info.set_sync()
             self.clients.pop(client_id, None)
             await close_stream_writer(writer)
+
+    async def _handle_session(
+        self,
+        session_id: UUID,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        logger.debug(f"Graph Server: Session connected: {session_id}")
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req in [Command.SESSION_CONNECT.value, Command.SESSION_DISCONNECT.value]:
+                    from_topic = await read_str(reader)
+                    to_topic = await read_str(reader)
+
+                    async with self._command_lock:
+                        topology_changed = False
+                        try:
+                            if req == Command.SESSION_CONNECT.value:
+                                topology_changed = self._connect_owner(
+                                    from_topic, to_topic, session_id
+                                )
+                            else:
+                                topology_changed = self._disconnect_owner(
+                                    from_topic, to_topic, session_id
+                                )
+                            writer.write(Command.COMPLETE.value)
+                        except CyclicException:
+                            writer.write(Command.CYCLIC.value)
+
+                        if topology_changed:
+                            await self._notify_downstream_for_topic(to_topic)
+
+                    await writer.drain()
+
+                elif req == Command.SESSION_CLEAR.value:
+                    async with self._command_lock:
+                        notify_topics = self._clear_session_state(session_id)
+                        writer.write(Command.COMPLETE.value)
+                        for topic in notify_topics:
+                            await self._notify_downstream_for_topic(topic)
+
+                    await writer.drain()
+
+                elif req == Command.SESSION_REGISTER.value:
+                    num_bytes = await read_int(reader)
+                    payload = await reader.readexactly(num_bytes)
+                    metadata = pickle.loads(payload)
+
+                    async with self._command_lock:
+                        session = self.sessions.get(session_id)
+                        if session is not None:
+                            session.metadata = metadata
+                        writer.write(Command.COMPLETE.value)
+
+                    await writer.drain()
+
+                elif req == Command.SESSION_SNAPSHOT.value:
+                    async with self._command_lock:
+                        snapshot = self._snapshot()
+                        snapshot_bytes = pickle.dumps(snapshot)
+                        writer.write(uint64_to_bytes(len(snapshot_bytes)))
+                        writer.write(snapshot_bytes)
+                        writer.write(Command.COMPLETE.value)
+
+                    await writer.drain()
+
+                else:
+                    logger.warning(
+                        f"Session {session_id} rx unknown command from GraphServer: {req}"
+                    )
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Session {session_id} disconnected from GraphServer: {e}")
+
+        finally:
+            async with self._command_lock:
+                notify_topics = self._drop_session(session_id)
+
+            for topic in notify_topics:
+                await self._notify_downstream_for_topic(topic)
+
+            self._client_tasks.pop(session_id, None)
+            await close_stream_writer(writer)
+
+    def _connect_owner(
+        self, from_topic: str, to_topic: str, owner: UUID | str
+    ) -> bool:
+        edge = (from_topic, to_topic)
+        owners = self.edge_owners.setdefault(edge, set())
+
+        if owner in owners:
+            return False
+
+        topology_changed = len(owners) == 0
+        if topology_changed:
+            try:
+                self.graph.add_edge(from_topic, to_topic)
+            except CyclicException:
+                if len(owners) == 0:
+                    self.edge_owners.pop(edge, None)
+                raise
+
+        owners.add(owner)
+
+        if isinstance(owner, UUID):
+            session = self.sessions.get(owner)
+            if session is not None:
+                session.edges.add(edge)
+
+        return topology_changed
+
+    def _disconnect_owner(
+        self, from_topic: str, to_topic: str, owner: UUID | str
+    ) -> bool:
+        edge = (from_topic, to_topic)
+        owners = self.edge_owners.get(edge)
+        if owners is None or owner not in owners:
+            return False
+
+        owners.remove(owner)
+
+        if isinstance(owner, UUID):
+            session = self.sessions.get(owner)
+            if session is not None:
+                session.edges.discard(edge)
+
+        if len(owners) == 0:
+            self.edge_owners.pop(edge, None)
+            self.graph.remove_edge(from_topic, to_topic)
+            return True
+
+        return False
+
+    def _clear_session_state(self, session_id: UUID) -> set[str]:
+        notify_topics: set[str] = set()
+        session = self.sessions.get(session_id)
+        if session is None:
+            return notify_topics
+
+        for from_topic, to_topic in list(session.edges):
+            if self._disconnect_owner(from_topic, to_topic, session_id):
+                notify_topics.add(to_topic)
+
+        session.metadata.clear()
+        return notify_topics
+
+    def _drop_session(self, session_id: UUID) -> set[str]:
+        notify_topics: set[str] = set()
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            return notify_topics
+
+        for from_topic, to_topic in list(session.edges):
+            if self._disconnect_owner(from_topic, to_topic, session_id):
+                notify_topics.add(to_topic)
+
+        session.metadata.clear()
+        return notify_topics
+
+    def _snapshot(self) -> dict[str, Any]:
+        graph = {node: sorted(conns) for node, conns in self.graph.graph.items()}
+        edge_owners = [
+            {
+                "from_topic": from_topic,
+                "to_topic": to_topic,
+                "owners": [str(owner) for owner in sorted(owners, key=str)],
+            }
+            for (from_topic, to_topic), owners in sorted(self.edge_owners.items())
+        ]
+        sessions = {
+            str(session_id): {
+                "edges": sorted(
+                    [
+                        {"from_topic": from_topic, "to_topic": to_topic}
+                        for from_topic, to_topic in session.edges
+                    ],
+                    key=lambda edge: (edge["from_topic"], edge["to_topic"]),
+                ),
+                "metadata": session.metadata,
+            }
+            for session_id, session in sorted(self.sessions.items(), key=lambda item: str(item[0]))
+        }
+        return {"graph": graph, "edge_owners": edge_owners, "sessions": sessions}
+
+    async def _notify_downstream_for_topic(self, topic: str) -> None:
+        for sub in self._downstream_subs(topic):
+            await self._notify_subscriber(sub)
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
@@ -497,6 +724,12 @@ class GraphService:
         return reader, writer
 
     async def connect(self, from_topic: str, to_topic: str) -> None:
+        warnings.warn(
+            "GraphService.connect is deprecated. Prefer GraphContext.connect "
+            "to use a session-scoped control plane.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         reader, writer = await self.open_connection()
         writer.write(Command.CONNECT.value)
         writer.write(encode_str(from_topic))
@@ -509,6 +742,12 @@ class GraphService:
         await close_stream_writer(writer)
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
+        warnings.warn(
+            "GraphService.disconnect is deprecated. Prefer GraphContext.disconnect "
+            "to use a session-scoped control plane.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         reader, writer = await self.open_connection()
         writer.write(Command.DISCONNECT.value)
         writer.write(encode_str(from_topic))

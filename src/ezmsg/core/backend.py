@@ -1,7 +1,9 @@
 import asyncio
+from dataclasses import fields, is_dataclass
 from collections.abc import Callable, Mapping, Iterable
 from collections.abc import Collection as AbstractCollection
 import enum
+import inspect
 import logging
 import os
 import signal
@@ -16,8 +18,9 @@ from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
 from .component import Component
-from .stream import Stream
-from .unit import Unit, PROCESS_ATTR
+from .stream import Stream, InputStream, OutputStream
+from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
+from .settings import Settings
 
 from .graphserver import GraphService
 from .graphcontext import GraphContext
@@ -255,6 +258,132 @@ class GraphRunner:
     def running(self) -> bool:
         return self._started
 
+    def _serialize_metadata_value(self, value):
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if is_dataclass(value):
+            return {
+                field.name: self._serialize_metadata_value(getattr(value, field.name))
+                for field in fields(value)
+            }
+
+        if isinstance(value, dict):
+            return {
+                str(key): self._serialize_metadata_value(item)
+                for key, item in value.items()
+            }
+
+        if isinstance(value, (list, tuple, set)):
+            return [self._serialize_metadata_value(item) for item in value]
+
+        return repr(value)
+
+    def _type_name(self, tp: type) -> str:
+        return f"{tp.__module__}.{tp.__qualname__}"
+
+    def _component_metadata(self) -> dict[str, object]:
+        components: dict[str, dict[str, object]] = {}
+
+        def crawl(component: Component) -> list[Component]:
+            search: list[Component] = [component]
+            out: list[Component] = []
+            while search:
+                comp = search.pop()
+                out.append(comp)
+                search.extend(comp.components.values())
+            return out
+
+        for root in self._components.values():
+            for comp in crawl(root):
+                dynamic_settings = {
+                    "enabled": False,
+                    "input_topic": None,
+                    "settings_type": None,
+                }
+                input_settings = comp.streams.get("INPUT_SETTINGS")
+                if (
+                    isinstance(input_settings, InputStream)
+                    and inspect.isclass(input_settings.msg_type)
+                    and issubclass(input_settings.msg_type, Settings)
+                ):
+                    dynamic_settings = {
+                        "enabled": True,
+                        "input_topic": input_settings.address,
+                        "settings_type": self._type_name(input_settings.msg_type),
+                    }
+
+                stream_entries: dict[str, dict[str, object]] = {}
+                for stream_name, stream in comp.streams.items():
+                    entry: dict[str, object] = {
+                        "name": stream_name,
+                        "address": stream.address,
+                        "msg_type": self._type_name(stream.msg_type)
+                        if inspect.isclass(stream.msg_type)
+                        else repr(stream.msg_type),
+                    }
+                    if isinstance(stream, InputStream):
+                        entry["kind"] = "input"
+                        entry["leaky"] = stream.leaky
+                        entry["max_queue"] = stream.max_queue
+                    elif isinstance(stream, OutputStream):
+                        entry["kind"] = "output"
+                        entry["host"] = stream.host
+                        entry["port"] = stream.port
+                        entry["num_buffers"] = stream.num_buffers
+                        entry["buf_size"] = stream.buf_size
+                        entry["force_tcp"] = stream.force_tcp
+                    else:
+                        entry["kind"] = "stream"
+                    stream_entries[stream_name] = entry
+
+                task_entries: list[dict[str, object]] = []
+                for task_name, task in comp.tasks.items():
+                    task_entry: dict[str, object] = {"name": task_name}
+                    if hasattr(task, SUBSCRIBES_ATTR):
+                        sub_stream = getattr(task, SUBSCRIBES_ATTR)
+                        if hasattr(sub_stream, "name") and sub_stream.name in comp.streams:
+                            task_entry["subscribes"] = comp.streams[sub_stream.name].address
+                    if hasattr(task, PUBLISHES_ATTR):
+                        pub_streams = getattr(task, PUBLISHES_ATTR)
+                        task_entry["publishes"] = [
+                            comp.streams[stream.name].address
+                            for stream in pub_streams
+                            if hasattr(stream, "name") and stream.name in comp.streams
+                        ]
+                    task_entries.append(task_entry)
+
+                settings_type = getattr(comp.__class__, "__settings_type__", Settings)
+                metadata_entry: dict[str, object] = {
+                    "address": comp.address,
+                    "name": comp.name,
+                    "component_type": self._type_name(comp.__class__),
+                    "kind": (
+                        "collection"
+                        if isinstance(comp, Collection)
+                        else "unit"
+                        if isinstance(comp, Unit)
+                        else "component"
+                    ),
+                    "settings_type": self._type_name(settings_type),
+                    "startup_settings": self._serialize_metadata_value(comp.SETTINGS),
+                    "children": sorted(child.address for child in comp.components.values()),
+                    "streams": stream_entries,
+                    "tasks": sorted(task_entries, key=lambda task: str(task["name"])),
+                    "main": comp.main.__name__ if comp.main is not None else None,
+                    "threads": sorted(comp.threads.keys()),
+                    "dynamic_settings": dynamic_settings,
+                }
+                components[comp.address] = metadata_entry
+
+        return {
+            "schema_version": 1,
+            "root_name": self._root_name,
+            "components": {
+                address: components[address] for address in sorted(components.keys())
+            },
+        }
+
     def start(self) -> None:
         if self._started:
             raise RuntimeError("GraphRunner is already running")
@@ -359,6 +488,15 @@ class GraphRunner:
                     await graph_context.connect(*edge)
 
             asyncio.run_coroutine_threadsafe(setup_graph(), self._loop).result()
+
+            metadata = self._component_metadata()
+
+            async def register_graph_metadata() -> None:
+                await graph_context.register_metadata(metadata)
+
+            asyncio.run_coroutine_threadsafe(
+                register_graph_metadata(), self._loop
+            ).result()
 
             if len(self._execution_context.processes) > 1:
                 logger.info(

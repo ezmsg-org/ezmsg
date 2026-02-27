@@ -300,6 +300,14 @@ class Command(enum.Enum):
     SHM_OK = enum.auto()
     SHM_ATTACH_FAILED = enum.auto()
 
+    # GraphContext Session Commands (control plane)
+    SESSION = enum.auto()
+    SESSION_CONNECT = enum.auto()
+    SESSION_DISCONNECT = enum.auto()
+    SESSION_CLEAR = enum.auto()
+    SESSION_REGISTER = enum.auto()
+    SESSION_SNAPSHOT = enum.auto()
+
 
 def create_socket(
     host: str | None = None,
