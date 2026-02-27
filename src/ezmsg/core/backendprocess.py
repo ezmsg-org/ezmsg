@@ -9,6 +9,7 @@ import threading
 import weakref
 
 from abc import abstractmethod
+from dataclasses import dataclass
 from collections import defaultdict
 from collections.abc import Callable, Coroutine, Generator, Sequence
 from functools import wraps, partial
@@ -39,7 +40,30 @@ def _strict_shutdown_enabled() -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
+@dataclass
+class ShutdownSummary:
+    cancelled_tasks: int = 0
+    executor_active: int = 0
+    pending_tasks: int = 0
+    suppressed_errors: int = 0
+    forced_interrupt: bool = False
+
+    @property
+    def unclean(self) -> bool:
+        return bool(
+            self.executor_active
+            or self.pending_tasks
+            or self.suppressed_errors
+            or self.forced_interrupt
+        )
+
+
 class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._active_count = 0
+        self._active_lock = threading.Lock()
+
     def _adjust_thread_count(self) -> None:
         if self._broken:
             return
@@ -60,6 +84,22 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
         thread.daemon = True
         thread.start()
         self._threads.add(thread)
+
+    def submit(self, fn, /, *args, **kwargs):
+        fut = super().submit(fn, *args, **kwargs)
+        with self._active_lock:
+            self._active_count += 1
+
+        def _decrement(_):
+            with self._active_lock:
+                self._active_count -= 1
+
+        fut.add_done_callback(_decrement)
+        return fut
+
+    def active_count(self) -> int:
+        with self._active_lock:
+            return self._active_count
 
 
 class Complete(Exception):
@@ -178,11 +218,13 @@ class DefaultBackendProcess(BackendProcess):
     """
 
     pubs: dict[str, Publisher]
+    _shutdown_errors: bool
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
         context = GraphContext(self.graph_address)
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
+        self._shutdown_errors = False
 
         try:
             self.pubs = dict()
@@ -445,6 +487,8 @@ class DefaultBackendProcess(BackendProcess):
             except Exception:
                 logger.error(f"Exception in Task: {task_address}")
                 logger.error(traceback.format_exc())
+                if self.term_ev.is_set():
+                    self._shutdown_errors = True
                 if strict_shutdown:
                     raise
 
@@ -522,6 +566,7 @@ def run_loop(loop: asyncio.AbstractEventLoop):
 @contextmanager
 def new_threaded_event_loop(
     ev: threading.Event | None = None,
+    shutdown_summary: ShutdownSummary | None = None,
 ) -> Generator[asyncio.AbstractEventLoop, None, None]:
     """
     Create a new asyncio event loop running in a separate thread.
@@ -531,6 +576,8 @@ def new_threaded_event_loop(
 
     :param ev: Optional event to signal when the loop is ready.
     :type ev: threading.Event | None
+    :param shutdown_summary: Optional shutdown summary object to populate.
+    :type shutdown_summary: ShutdownSummary | None
     :return: Context manager yielding the event loop.
     :rtype: Generator[asyncio.AbstractEventLoop, None, None]
     """
@@ -539,10 +586,10 @@ def new_threaded_event_loop(
     shutdown_suppress = threading.Event()
     suppressed_shutdown_errors = {"count": 0}
     suppressed_lock = threading.Lock()
+    executor = None
     if not strict_shutdown:
-        loop.set_default_executor(
-            _DaemonThreadPoolExecutor(thread_name_prefix="EZMSG")
-        )
+        executor = _DaemonThreadPoolExecutor(thread_name_prefix="EZMSG")
+        loop.set_default_executor(executor)
         def _loop_exception_handler(
             loop_obj: asyncio.AbstractEventLoop, context: dict
         ) -> None:
@@ -568,7 +615,7 @@ def new_threaded_event_loop(
         if not strict_shutdown:
             shutdown_suppress.set()
             # Cancel and await remaining tasks before stopping the loop.
-            async def _cancel_remaining() -> int:
+            async def _cancel_remaining(timeout: float = 1.0) -> tuple[int, int]:
                 tasks = [
                     t
                     for t in asyncio.all_tasks()
@@ -576,27 +623,36 @@ def new_threaded_event_loop(
                 ]
                 for t in tasks:
                     t.cancel()
-                if tasks:
-                    await asyncio.wait(tasks)
-                return len(tasks)
+                if not tasks:
+                    return 0, 0
+                _, pending = await asyncio.wait(tasks, timeout=timeout)
+                return len(tasks), len(pending)
 
             cancelled_count = 0
+            pending_count = 0
             forced_interrupt = False
             fut = asyncio.run_coroutine_threadsafe(_cancel_remaining(), loop)
             try:
-                cancelled_count = fut.result()
+                cancelled_count, pending_count = fut.result()
             except KeyboardInterrupt:
                 forced_interrupt = True
                 fut.cancel()
             except Exception:
                 cancelled_count = 0
+                pending_count = 0
 
             suppressed_count = suppressed_shutdown_errors["count"]
-            if cancelled_count or suppressed_count or forced_interrupt:
+            if cancelled_count or suppressed_count or forced_interrupt or pending_count:
                 if forced_interrupt and not cancelled_count and not suppressed_count:
                     logger.warning(
                         "Shutdown interrupted; tasks may still be running. "
                         "Re-run with EZMSG_STRICT_SHUTDOWN=1 to debug tasks with poor shutdown behavior."
+                    )
+                elif pending_count:
+                    logger.warning(
+                        "Shutdown timed out waiting for %d task(s). "
+                        "Re-run with EZMSG_STRICT_SHUTDOWN=1 to debug tasks with poor shutdown behavior.",
+                        pending_count,
                     )
                 else:
                     logger.warning(
@@ -606,6 +662,15 @@ def new_threaded_event_loop(
                         suppressed_count,
                         cancelled_count,
                     )
+
+            if shutdown_summary is not None:
+                shutdown_summary.cancelled_tasks = cancelled_count
+                shutdown_summary.pending_tasks = pending_count
+                shutdown_summary.executor_active = (
+                    executor.active_count() if executor is not None else 0
+                )
+                shutdown_summary.suppressed_errors = suppressed_count
+                shutdown_summary.forced_interrupt = forced_interrupt
 
         loop.call_soon_threadsafe(loop.stop)
         thread.join()

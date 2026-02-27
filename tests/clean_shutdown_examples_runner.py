@@ -142,8 +142,29 @@ def main() -> None:
             + ", ".join(sorted(SYSTEMS))
         )
     system = SYSTEMS[case]()
-    print("READY", flush=True)
-    ez.run(SYSTEM=system)
+    runner = ez.GraphRunner(SYSTEM=system)
+    ready_emitted = threading.Event()
+    done = threading.Event()
+
+    def _emit_ready() -> None:
+        if not ready_emitted.is_set():
+            print("READY", flush=True)
+            ready_emitted.set()
+
+    def _watch_ready() -> None:
+        while not done.is_set():
+            if runner.running:
+                _emit_ready()
+                return
+            time.sleep(0.01)
+        _emit_ready()
+
+    threading.Thread(target=_watch_ready, daemon=True).start()
+    try:
+        runner.run_blocking()
+    finally:
+        done.set()
+        _emit_ready()
 
 
 if __name__ == "__main__":
