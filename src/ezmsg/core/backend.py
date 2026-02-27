@@ -464,7 +464,15 @@ class GraphRunner:
     def _exit_with_sigint(self) -> None:
         code = 0xC000013A if os.name == "nt" else 130
         if os.name == "nt":
-            os._exit(code)
+            try:
+                import ctypes
+            except Exception:
+                os._exit(1)
+            try:
+                ctypes.windll.kernel32.ExitProcess(ctypes.c_uint(code).value)
+            except Exception:
+                os._exit(ctypes.c_int32(code).value)
+            return
 
         prev_handler = None
         try:
