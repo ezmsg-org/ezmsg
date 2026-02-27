@@ -44,6 +44,7 @@ def _strict_shutdown_enabled() -> bool:
 class ShutdownSummary:
     cancelled_tasks: int = 0
     executor_active: int = 0
+    pending_tasks: int = 0
     suppressed_errors: int = 0
     forced_interrupt: bool = False
 
@@ -51,6 +52,7 @@ class ShutdownSummary:
     def unclean(self) -> bool:
         return bool(
             self.executor_active
+            or self.pending_tasks
             or self.suppressed_errors
             or self.forced_interrupt
         )
@@ -613,7 +615,7 @@ def new_threaded_event_loop(
         if not strict_shutdown:
             shutdown_suppress.set()
             # Cancel and await remaining tasks before stopping the loop.
-            async def _cancel_remaining() -> int:
+            async def _cancel_remaining(timeout: float = 1.0) -> tuple[int, int]:
                 tasks = [
                     t
                     for t in asyncio.all_tasks()
@@ -621,27 +623,36 @@ def new_threaded_event_loop(
                 ]
                 for t in tasks:
                     t.cancel()
-                if tasks:
-                    await asyncio.wait(tasks)
-                return len(tasks)
+                if not tasks:
+                    return 0, 0
+                _, pending = await asyncio.wait(tasks, timeout=timeout)
+                return len(tasks), len(pending)
 
             cancelled_count = 0
+            pending_count = 0
             forced_interrupt = False
             fut = asyncio.run_coroutine_threadsafe(_cancel_remaining(), loop)
             try:
-                cancelled_count = fut.result()
+                cancelled_count, pending_count = fut.result()
             except KeyboardInterrupt:
                 forced_interrupt = True
                 fut.cancel()
             except Exception:
                 cancelled_count = 0
+                pending_count = 0
 
             suppressed_count = suppressed_shutdown_errors["count"]
-            if cancelled_count or suppressed_count or forced_interrupt:
+            if cancelled_count or suppressed_count or forced_interrupt or pending_count:
                 if forced_interrupt and not cancelled_count and not suppressed_count:
                     logger.warning(
                         "Shutdown interrupted; tasks may still be running. "
                         "Re-run with EZMSG_STRICT_SHUTDOWN=1 to debug tasks with poor shutdown behavior."
+                    )
+                elif pending_count:
+                    logger.warning(
+                        "Shutdown timed out waiting for %d task(s). "
+                        "Re-run with EZMSG_STRICT_SHUTDOWN=1 to debug tasks with poor shutdown behavior.",
+                        pending_count,
                     )
                 else:
                     logger.warning(
@@ -654,6 +665,7 @@ def new_threaded_event_loop(
 
             if shutdown_summary is not None:
                 shutdown_summary.cancelled_tasks = cancelled_count
+                shutdown_summary.pending_tasks = pending_count
                 shutdown_summary.executor_active = (
                     executor.active_count() if executor is not None else 0
                 )

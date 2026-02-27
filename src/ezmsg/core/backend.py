@@ -462,13 +462,16 @@ class GraphRunner:
         return main_shutdown_errors or loop_unclean
 
     def _exit_with_sigint(self) -> None:
+        code = 0xC000013A if os.name == "nt" else 130
+        if os.name == "nt":
+            os._exit(code)
+
         prev_handler = None
         try:
             prev_handler = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             signal.raise_signal(signal.SIGINT)
         except Exception:
-            code = 0xC000013A if os.name == "nt" else 130
             raise SystemExit(code)
         finally:
             if prev_handler is not None:
@@ -477,7 +480,6 @@ class GraphRunner:
                 except Exception:
                     pass
 
-        code = 0xC000013A if os.name == "nt" else 130
         raise SystemExit(code)
 
     def _cleanup(self) -> None:
