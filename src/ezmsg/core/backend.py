@@ -4,6 +4,7 @@ from collections.abc import Collection as AbstractCollection
 import enum
 import logging
 import os
+import signal
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
@@ -23,6 +24,7 @@ from .graphcontext import GraphContext
 from .backendprocess import (
     BackendProcess,
     DefaultBackendProcess,
+    ShutdownSummary,
     new_threaded_event_loop,
 )
 
@@ -170,6 +172,7 @@ class GraphRunner:
     _graph_context: GraphContext | None
     _loop: asyncio.AbstractEventLoop | None
     _loop_cm: object | None
+    _loop_shutdown_summary: ShutdownSummary | None
     _main_process: BackendProcess | None
     _spawned_processes: list[BackendProcess]
     _start_participant: bool
@@ -208,6 +211,7 @@ class GraphRunner:
         self._graph_context = None
         self._loop = None
         self._loop_cm = None
+        self._loop_shutdown_summary = None
         self._main_process = None
         self._spawned_processes = []
         self._start_participant = False
@@ -320,7 +324,10 @@ class GraphRunner:
         if self._execution_context is None:
             return False
 
-        self._loop_cm = new_threaded_event_loop()
+        self._loop_shutdown_summary = ShutdownSummary()
+        self._loop_cm = new_threaded_event_loop(
+            shutdown_summary=self._loop_shutdown_summary
+        )
         self._loop = self._loop_cm.__enter__()
 
         try:
@@ -389,12 +396,15 @@ class GraphRunner:
         self._main_process = self._execution_context.processes[0]
         self._start_processes(self._execution_context.processes[1:])
 
+        interrupts = 0
+        forced_sigint = False
         try:
             self._main_process.process(self._loop)
             self._join_spawned_processes()
             logger.info("All processes exited normally")
 
         except KeyboardInterrupt:
+            interrupts += 1
             logger.info(
                 "Attempting graceful shutdown, interrupt again to force quit..."
             )
@@ -404,6 +414,8 @@ class GraphRunner:
                 self._join_spawned_processes()
 
             except KeyboardInterrupt:
+                interrupts += 1
+                forced_sigint = True
                 logger.warning("Interrupt intercepted, force quitting")
                 self._execution_context.start_barrier.abort()
                 self._execution_context.stop_barrier.abort()
@@ -411,10 +423,62 @@ class GraphRunner:
                     proc.terminate()
 
         finally:
-            self._join_spawned_processes()
-            self._cleanup()
+            while True:
+                try:
+                    self._join_spawned_processes()
+                    self._cleanup()
+                    break
+                except KeyboardInterrupt:
+                    interrupts += 1
+                    if interrupts >= 2:
+                        forced_sigint = True
+                        logger.warning("Interrupt intercepted, force quitting")
+                        if self._execution_context is not None:
+                            self._execution_context.start_barrier.abort()
+                            self._execution_context.stop_barrier.abort()
+                        for proc in self._spawned_processes:
+                            proc.terminate()
+                        self._cleanup()
+                        break
+                    logger.info(
+                        "Interrupt received during cleanup; attempting graceful shutdown..."
+                    )
+                    if self._execution_context is not None:
+                        self._execution_context.term_ev.set()
             self._started = False
             self._stopped = True
+            if interrupts and not forced_sigint and self._shutdown_was_unclean():
+                forced_sigint = True
+            if forced_sigint:
+                self._exit_with_sigint()
+
+    def _shutdown_was_unclean(self) -> bool:
+        main_shutdown_errors = bool(
+            self._main_process is not None
+            and getattr(self._main_process, "_shutdown_errors", False)
+        )
+        summary = self._loop_shutdown_summary
+        loop_unclean = bool(summary is not None and summary.unclean)
+        return main_shutdown_errors or loop_unclean
+
+    def _exit_with_sigint(self) -> None:
+        prev_handler = None
+        try:
+            prev_handler = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            signal.raise_signal(signal.SIGINT)
+        except Exception:
+            code = 0xC000013A if os.name == "nt" else 130
+            raise SystemExit(code)
+        finally:
+            if prev_handler is not None:
+                try:
+                    signal.signal(signal.SIGINT, prev_handler)
+                except Exception:
+                    pass
+
+        code = 0xC000013A if os.name == "nt" else 130
+        raise SystemExit(code)
 
     def _cleanup(self) -> None:
         if self._cleanup_done:
