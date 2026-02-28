@@ -118,13 +118,15 @@ def _run_process(
     t_err.join(timeout=2.0)
 
     if allowed_returncodes is None:
-        if signals > 0:
-            if os.name == "nt":
-                allowed_returncodes = {0, 1, 3221225786}
-            else:
-                allowed_returncodes = {0, -signal.SIGINT, 130}
-        else:
+        if signals <= 0:
             allowed_returncodes = {0}
+        elif signals == 1:
+            allowed_returncodes = {0}
+        else:
+            if os.name == "nt":
+                allowed_returncodes = {3221225786}
+            else:
+                allowed_returncodes = {-signal.SIGINT, 130}
 
     if proc.returncode not in allowed_returncodes:
         out = "".join(stdout_lines)
@@ -136,7 +138,13 @@ def _run_process(
         )
 
 
-def _run_shutdown_case(target: str, *, signals: int = 1, timeout: float = 15.0) -> None:
+def _run_shutdown_case(
+    target: str,
+    *,
+    signals: int = 1,
+    timeout: float = 15.0,
+    allowed_returncodes: set[int] | None = None,
+) -> None:
     env = os.environ.copy()
     env.pop("EZMSG_STRICT_SHUTDOWN", None)
     env["EZMSG_SHUTDOWN_TEST"] = target
@@ -146,6 +154,7 @@ def _run_shutdown_case(target: str, *, signals: int = 1, timeout: float = 15.0) 
         signals=signals,
         ready_token="READY",
         timeout=timeout,
+        allowed_returncodes=allowed_returncodes,
     )
 
 
@@ -162,6 +171,7 @@ def _run_example_case(
     start_method: str,
     signals: int = 0,
     timeout: float = 20.0,
+    allowed_returncodes: set[int] | None = None,
 ) -> None:
     env = os.environ.copy()
     env["EZMSG_SHUTDOWN_EXAMPLE"] = case
@@ -173,23 +183,31 @@ def _run_example_case(
         ready_token="READY",
         timeout=timeout,
         start_delay=1.0,
+        allowed_returncodes=allowed_returncodes,
     )
 
 
+def _sigint_returncodes() -> set[int]:
+    if os.name == "nt":
+        return {1, 3221225786}
+    return {-signal.SIGINT, 130}
+
+
 def test_shutdown_blocking_disk():
-    _run_shutdown_case("blocking_disk")
+    _run_shutdown_case("blocking_disk", allowed_returncodes=_sigint_returncodes())
 
 
 def test_shutdown_blocking_socket():
-    _run_shutdown_case("blocking_socket")
+    _run_shutdown_case("blocking_socket", allowed_returncodes=_sigint_returncodes())
 
 
 def test_shutdown_exception_on_cancel():
-    _run_shutdown_case("exception_on_cancel")
+    _run_shutdown_case("exception_on_cancel", allowed_returncodes=_sigint_returncodes())
 
 
 def test_shutdown_ignore_cancel():
     _run_shutdown_case("ignore_cancel", signals=2)
+
 
 @pytest.mark.parametrize("case", ["complete", "normalterm", "normalterm_thread"])
 @pytest.mark.parametrize("start_method", _available_start_methods())
@@ -199,4 +217,9 @@ def test_examples_complete_without_sigint(case: str, start_method: str) -> None:
 
 @pytest.mark.parametrize("start_method", _available_start_methods())
 def test_infinite_requires_sigint(start_method: str) -> None:
-    _run_example_case("infinite", start_method=start_method, signals=1)
+    _run_example_case(
+        "infinite",
+        start_method=start_method,
+        signals=1,
+        allowed_returncodes={0},
+    )

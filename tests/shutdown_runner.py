@@ -2,6 +2,7 @@ import asyncio
 import os
 import socket
 import threading
+import time
 import signal
 import sys
 
@@ -73,8 +74,28 @@ def main() -> None:
             "EZMSG_SHUTDOWN_TEST must be one of: " + ", ".join(sorted(UNITS))
         )
     runner = ez.GraphRunner(SYSTEM=UNITS[target]())
-    print("READY", flush=True)
-    runner.run_blocking()
+    ready_emitted = threading.Event()
+    done = threading.Event()
+
+    def _emit_ready() -> None:
+        if not ready_emitted.is_set():
+            print("READY", flush=True)
+            ready_emitted.set()
+
+    def _watch_ready() -> None:
+        while not done.is_set():
+            if runner.running:
+                _emit_ready()
+                return
+            time.sleep(0.01)
+        _emit_ready()
+
+    threading.Thread(target=_watch_ready, daemon=True).start()
+    try:
+        runner.run_blocking()
+    finally:
+        done.set()
+        _emit_ready()
 
 
 if __name__ == "__main__":
