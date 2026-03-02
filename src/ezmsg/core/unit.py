@@ -2,7 +2,7 @@ import time
 import inspect
 import functools
 import warnings
-from .stream import InputStream, OutputStream
+from .stream import InputStream, OutputStream, Topic
 from .component import ComponentMeta, Component
 from .settings import Settings
 
@@ -55,6 +55,12 @@ class UnitMeta(ComponentMeta):
                     cls.__threads__[thread_name] = thread
 
         for field_name, field_value in fields.items():
+            if isinstance(field_value, Topic):
+                raise TypeError(
+                    f"{name}.{field_name} is a {type(field_value).__name__}. "
+                    "Units may only declare InputStream / OutputStream endpoints. "
+                    "Use Topic / Relay endpoints on Collections only."
+                )
             if callable(field_value):
                 if hasattr(field_value, TASK_ATTR):
                     cls.__tasks__[field_name] = field_value
