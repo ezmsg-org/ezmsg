@@ -37,6 +37,44 @@ StreamMetadataType: TypeAlias = (
 
 
 @dataclass
+class TopicMetadata:
+    name: str
+    address: str
+    msg_type: str
+
+
+@dataclass
+class InputTopicMetadata(TopicMetadata): ...
+
+
+@dataclass
+class OutputTopicMetadata(TopicMetadata): ...
+
+
+TopicMetadataType: TypeAlias = TopicMetadata | InputTopicMetadata | OutputTopicMetadata
+
+
+@dataclass
+class InputRelayMetadata(InputTopicMetadata):
+    leaky: bool = False
+    max_queue: int | None = None
+    copy_on_forward: bool = True
+
+
+@dataclass
+class OutputRelayMetadata(OutputTopicMetadata):
+    host: str | None = None
+    port: int | None = None
+    num_buffers: int | None = None
+    buf_size: int | None = None
+    force_tcp: bool | None = None
+    copy_on_forward: bool = True
+
+
+RelayMetadataType: TypeAlias = InputRelayMetadata | OutputRelayMetadata
+
+
+@dataclass
 class TaskMetadata:
     name: str
     subscribes: str | None = None
@@ -55,17 +93,19 @@ class ComponentMetadata:
     component_type: str
     settings_type: str
     initial_settings: InitialSettingsType
-    streams: dict[str, StreamMetadataType]
     dynamic_settings: DynamicSettingsMetadata
 
 
 @dataclass
 class CollectionMetadata(ComponentMetadata):
+    topics: dict[str, TopicMetadataType]
+    relays: dict[str, RelayMetadataType]
     children: list[str]
 
 
 @dataclass
 class UnitMetadata(ComponentMetadata):
+    streams: dict[str, StreamMetadataType]
     tasks: list[TaskMetadata]
     main: str | None
     threads: list[str]

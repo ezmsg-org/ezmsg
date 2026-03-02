@@ -3,6 +3,14 @@ import pytest
 import ezmsg.core as ez
 
 from ezmsg.core.backend import ExecutionContext
+from ezmsg.core.graphmeta import (
+    CollectionMetadata,
+    InputRelayMetadata,
+    InputStreamMetadata,
+    OutputStreamMetadata,
+    OutputTopicMetadata,
+    UnitMetadata,
+)
 
 
 @pytest.mark.parametrize(
@@ -154,3 +162,28 @@ def test_output_relay_rewrites_edges_and_syncs_settings():
     assert relay.SETTINGS.num_buffers == 8
     assert relay.SETTINGS.force_tcp is True
     assert relay.SETTINGS.copy_on_forward is False
+
+
+def test_metadata_separates_collection_topics_relays_and_unit_streams():
+    system = _InputRelaySystem()
+    ctx = ExecutionContext.setup({"SYSTEM": system})
+    assert ctx is not None
+
+    runner = ez.GraphRunner(components={"SYSTEM": system})
+    metadata = runner._component_metadata()
+
+    passthrough_meta = metadata.components[system.PASSTHROUGH.address]
+    assert isinstance(passthrough_meta, CollectionMetadata)
+    assert "IN" in passthrough_meta.relays
+    assert isinstance(passthrough_meta.relays["IN"], InputRelayMetadata)
+    assert passthrough_meta.relays["IN"].leaky is True
+    assert passthrough_meta.relays["IN"].max_queue == 7
+    assert "OUT" in passthrough_meta.topics
+    assert isinstance(passthrough_meta.topics["OUT"], OutputTopicMetadata)
+
+    source_meta = metadata.components[system.SOURCE.address]
+    sink_meta = metadata.components[system.SINK.address]
+    assert isinstance(source_meta, UnitMetadata)
+    assert isinstance(source_meta.streams["OUTPUT"], OutputStreamMetadata)
+    assert isinstance(sink_meta, UnitMetadata)
+    assert isinstance(sink_meta.streams["INPUT"], InputStreamMetadata)

@@ -20,7 +20,16 @@ from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
 from .component import Component
-from .stream import Stream, InputStream, OutputStream, InputRelay, OutputRelay
+from .stream import (
+    Stream,
+    InputStream,
+    OutputStream,
+    Topic,
+    InputTopic,
+    OutputTopic,
+    InputRelay,
+    OutputRelay,
+)
 from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
 from .settings import Settings
 from .graphmeta import (
@@ -28,10 +37,17 @@ from .graphmeta import (
     ComponentMetadata,
     ComponentMetadataType,
     DynamicSettingsMetadata,
+    InputRelayMetadata,
     InputStreamMetadata,
+    InputTopicMetadata,
+    OutputRelayMetadata,
     OutputStreamMetadata,
+    OutputTopicMetadata,
+    RelayMetadataType,
     StreamMetadataType,
     StreamMetadata,
+    TopicMetadata,
+    TopicMetadataType,
     TaskMetadata,
     GraphMetadata,
     UnitMetadata,
@@ -431,6 +447,7 @@ class GraphRunner:
 
         for root in self._components.values():
             for comp in crawl_components(root):
+                is_collection = isinstance(comp, Collection)
                 input_settings = comp.streams.get("INPUT_SETTINGS")
                 dynamic_settings = DynamicSettingsMetadata(
                     enabled=isinstance(input_settings, InputStream),
@@ -447,33 +464,95 @@ class GraphRunner:
                 )
 
                 stream_entries: dict[str, StreamMetadataType] = {}
+                topic_entries: dict[str, TopicMetadataType] = {}
+                relay_entries: dict[str, RelayMetadataType] = {}
                 for stream_name, stream in comp.streams.items():
-                    if isinstance(stream, InputStream):
-                        entry = InputStreamMetadata(
+                    msg_type = self._stream_type_name(stream.msg_type)
+                    if isinstance(stream, InputRelay):
+                        relay_entries[stream_name] = InputRelayMetadata(
                             name=stream_name,
                             address=stream.address,
-                            msg_type=self._stream_type_name(stream.msg_type),
+                            msg_type=msg_type,
                             leaky=stream.leaky,
                             max_queue=stream.max_queue,
+                            copy_on_forward=stream.copy_on_forward,
                         )
-                    elif isinstance(stream, OutputStream):
-                        entry = OutputStreamMetadata(
+                    elif isinstance(stream, OutputRelay):
+                        relay_entries[stream_name] = OutputRelayMetadata(
                             name=stream_name,
                             address=stream.address,
-                            msg_type=self._stream_type_name(stream.msg_type),
+                            msg_type=msg_type,
                             host=stream.host,
                             port=stream.port,
                             num_buffers=stream.num_buffers,
                             buf_size=stream.buf_size,
                             force_tcp=stream.force_tcp,
+                            copy_on_forward=stream.copy_on_forward,
                         )
-                    else:
-                        entry = StreamMetadata(
+                    elif isinstance(stream, InputTopic):
+                        topic_entries[stream_name] = InputTopicMetadata(
                             name=stream_name,
                             address=stream.address,
-                            msg_type=self._stream_type_name(stream.msg_type),
+                            msg_type=msg_type,
                         )
-                    stream_entries[stream_name] = entry
+                    elif isinstance(stream, OutputTopic):
+                        topic_entries[stream_name] = OutputTopicMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                        )
+                    elif isinstance(stream, Topic):
+                        topic_entries[stream_name] = TopicMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                        )
+                    elif isinstance(stream, InputStream):
+                        if is_collection:
+                            topic_entries[stream_name] = InputTopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = InputStreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                                leaky=stream.leaky,
+                                max_queue=stream.max_queue,
+                            )
+                    elif isinstance(stream, OutputStream):
+                        if is_collection:
+                            topic_entries[stream_name] = OutputTopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = OutputStreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                                host=stream.host,
+                                port=stream.port,
+                                num_buffers=stream.num_buffers,
+                                buf_size=stream.buf_size,
+                                force_tcp=stream.force_tcp,
+                            )
+                    else:
+                        if is_collection:
+                            topic_entries[stream_name] = TopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = StreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
 
                 task_entries: list[TaskMetadata] = []
                 for task_name, task in comp.tasks.items():
@@ -507,7 +586,6 @@ class GraphRunner:
                     component_type=self._type_name(comp.__class__),
                     settings_type=settings_type_name,
                     initial_settings=self._settings_snapshot(comp.SETTINGS),
-                    streams=stream_entries,
                     dynamic_settings=dynamic_settings,
                 )
 
@@ -515,6 +593,8 @@ class GraphRunner:
                 if isinstance(comp, Collection):
                     metadata_entry = CollectionMetadata(
                         **component_common,
+                        topics=topic_entries,
+                        relays=relay_entries,
                         children=sorted(
                             child.address for child in comp.components.values()
                         ),
@@ -522,6 +602,7 @@ class GraphRunner:
                 elif isinstance(comp, Unit):
                     metadata_entry = UnitMetadata(
                         **component_common,
+                        streams=stream_entries,
                         tasks=sorted(task_entries, key=lambda task: task.name),
                         main=comp.main.__name__ if comp.main is not None else None,
                         threads=sorted(comp.threads.keys()),
