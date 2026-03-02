@@ -82,8 +82,8 @@ class Listener(ez.Unit):
 
 
 class PassthroughCollection(ez.Collection):
-    INPUT = ez.InputStream(int)
-    OUTPUT = ez.OutputStream(int)
+    INPUT = ez.InputTopic(int)
+    OUTPUT = ez.OutputTopic(int)
 
     def network(self) -> ez.NetworkDefinition:
         return ((self.INPUT, self.OUTPUT),)
@@ -136,7 +136,7 @@ class NoPubNoSubSystem(ez.Collection):
 
 
 class PubNoSubCollection(ez.Collection):
-    OUTPUT = ez.OutputStream(int)
+    OUTPUT = ez.OutputTopic(int)
     GENERATE = Generator()
     LOG = DebugLog()
 
@@ -148,7 +148,7 @@ class PubNoSubCollection(ez.Collection):
 
 
 class SubNoPubCollection(ez.Collection):
-    INPUT = ez.InputStream(int)
+    INPUT = ez.InputTopic(int)
     LISTEN = Listener()
 
     def network(self) -> ez.NetworkDefinition:
@@ -175,7 +175,7 @@ class PubNoSubPassthroughCollection(ez.Collection):
     COLLECTION = PubNoSubCollection()
     PASSTHROUGH = PassthroughCollection()
 
-    OUTPUT = ez.OutputStream(int)
+    OUTPUT = ez.OutputTopic(int)
 
     def network(self) -> ez.NetworkDefinition:
         return (
@@ -188,7 +188,7 @@ class SubNoPubPassthroughCollection(ez.Collection):
     COLLECTION = SubNoPubCollection()
     PASSTHROUGH = PassthroughCollection()
 
-    INPUT = ez.InputStream(int)
+    INPUT = ez.InputTopic(int)
 
     def network(self) -> ez.NetworkDefinition:
         return (
