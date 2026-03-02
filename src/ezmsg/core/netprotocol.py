@@ -9,6 +9,7 @@ from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
 from asyncio.base_events import Server
+from .graphmeta import GraphMetadata
 
 VERSION = b"1"
 UINT64_SIZE = 8
@@ -163,6 +164,16 @@ class ChannelInfo(ClientInfo):
     """
 
     pub_id: UUID
+
+
+@dataclass
+class SessionInfo(ClientInfo):
+    """
+    Session-scoped control-plane client information.
+    """
+
+    edges: set[tuple[str, str]] = field(default_factory=set)
+    metadata: GraphMetadata | None = None
 
 
 def uint64_to_bytes(i: int) -> bytes:

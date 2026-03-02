@@ -1,11 +1,12 @@
 import asyncio
-from dataclasses import fields, is_dataclass
 from collections.abc import Callable, Mapping, Iterable
 from collections.abc import Collection as AbstractCollection
+from dataclasses import asdict, is_dataclass
 import enum
 import inspect
 import logging
 import os
+import pickle
 import signal
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
@@ -21,6 +22,19 @@ from .component import Component
 from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
 from .settings import Settings
+from .graphmeta import (
+    CollectionMetadata,
+    ComponentMetadata,
+    ComponentMetadataType,
+    DynamicSettingsMetadata,
+    InputStreamMetadata,
+    OutputStreamMetadata,
+    StreamMetadataType,
+    StreamMetadata,
+    TaskMetadata,
+    GraphMetadata,
+    UnitMetadata,
+)
 
 from .graphserver import GraphService
 from .graphcontext import GraphContext
@@ -34,6 +48,21 @@ from .backendprocess import (
 from .util import either_dict_or_kwargs
 
 logger = logging.getLogger("ezmsg")
+
+
+def crawl_components(
+    component: Component,
+    callback: Callable[[Component], None] | None = None,
+) -> list[Component]:
+    search: list[Component] = [component]
+    out: list[Component] = []
+    while len(search):
+        comp = search.pop()
+        out.append(comp)
+        search += list(comp.components.values())
+        if callback is not None:
+            callback(comp)
+    return out
 
 
 class ExecutionContext:
@@ -114,15 +143,6 @@ class ExecutionContext:
                 if isinstance(from_topic, enum.Enum):
                     from_topic = from_topic.name
                 graph_connections.append((from_topic, to_topic))
-
-        def crawl_components(
-            component: Component, callback: Callable[[Component], None]
-        ) -> None:
-            search: list[Component] = [component]
-            while len(search):
-                comp = search.pop()
-                search += list(comp.components.values())
-                callback(comp)
 
         def gather_edges(comp: Component):
             if isinstance(comp, Collection):
@@ -258,131 +278,142 @@ class GraphRunner:
     def running(self) -> bool:
         return self._started
 
-    def _serialize_metadata_value(self, value):
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-
-        if is_dataclass(value):
-            return {
-                field.name: self._serialize_metadata_value(getattr(value, field.name))
-                for field in fields(value)
-            }
-
-        if isinstance(value, dict):
-            return {
-                str(key): self._serialize_metadata_value(item)
-                for key, item in value.items()
-            }
-
-        if isinstance(value, (list, tuple, set)):
-            return [self._serialize_metadata_value(item) for item in value]
-
-        return repr(value)
-
     def _type_name(self, tp: type) -> str:
         return f"{tp.__module__}.{tp.__qualname__}"
 
-    def _component_metadata(self) -> dict[str, object]:
-        components: dict[str, dict[str, object]] = {}
+    def _stream_type_name(self, stream_type: object) -> str:
+        if inspect.isclass(stream_type):
+            return self._type_name(stream_type)
+        return repr(stream_type)
 
-        def crawl(component: Component) -> list[Component]:
-            search: list[Component] = [component]
-            out: list[Component] = []
-            while search:
-                comp = search.pop()
-                out.append(comp)
-                search.extend(comp.components.values())
-            return out
+    def _settings_repr(self, value: object) -> dict[str, object] | str:
+        if is_dataclass(value):
+            try:
+                asdict_value = asdict(value)
+                if isinstance(asdict_value, dict):
+                    return asdict_value
+            except Exception:
+                pass
+
+        return repr(value)
+
+    def _settings_snapshot(self, value: object) -> tuple[bytes | None, dict[str, object] | str]:
+        try:
+            pickled = pickle.dumps(value)
+        except Exception as exc:
+            logger.warning(f"Could not pickle settings for metadata: {exc}")
+            pickled = None
+        return pickled, self._settings_repr(value)
+
+    def _component_metadata(self) -> GraphMetadata:
+        components: dict[str, ComponentMetadataType] = {}
 
         for root in self._components.values():
-            for comp in crawl(root):
-                dynamic_settings = {
-                    "enabled": False,
-                    "input_topic": None,
-                    "settings_type": None,
-                }
+            for comp in crawl_components(root):
                 input_settings = comp.streams.get("INPUT_SETTINGS")
-                if (
-                    isinstance(input_settings, InputStream)
-                    and inspect.isclass(input_settings.msg_type)
-                    and issubclass(input_settings.msg_type, Settings)
-                ):
-                    dynamic_settings = {
-                        "enabled": True,
-                        "input_topic": input_settings.address,
-                        "settings_type": self._type_name(input_settings.msg_type),
-                    }
+                dynamic_settings = DynamicSettingsMetadata(
+                    enabled=isinstance(input_settings, InputStream),
+                    input_topic=(
+                        input_settings.address
+                        if isinstance(input_settings, InputStream)
+                        else None
+                    ),
+                    settings_type=(
+                        self._stream_type_name(input_settings.msg_type)
+                        if isinstance(input_settings, InputStream)
+                        else None
+                    ),
+                )
 
-                stream_entries: dict[str, dict[str, object]] = {}
+                stream_entries: dict[str, StreamMetadataType] = {}
                 for stream_name, stream in comp.streams.items():
-                    entry: dict[str, object] = {
-                        "name": stream_name,
-                        "address": stream.address,
-                        "msg_type": self._type_name(stream.msg_type)
-                        if inspect.isclass(stream.msg_type)
-                        else repr(stream.msg_type),
-                    }
                     if isinstance(stream, InputStream):
-                        entry["kind"] = "input"
-                        entry["leaky"] = stream.leaky
-                        entry["max_queue"] = stream.max_queue
+                        entry = InputStreamMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=self._stream_type_name(stream.msg_type),
+                            leaky=stream.leaky,
+                            max_queue=stream.max_queue,
+                        )
                     elif isinstance(stream, OutputStream):
-                        entry["kind"] = "output"
-                        entry["host"] = stream.host
-                        entry["port"] = stream.port
-                        entry["num_buffers"] = stream.num_buffers
-                        entry["buf_size"] = stream.buf_size
-                        entry["force_tcp"] = stream.force_tcp
+                        entry = OutputStreamMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=self._stream_type_name(stream.msg_type),
+                            host=stream.host,
+                            port=stream.port,
+                            num_buffers=stream.num_buffers,
+                            buf_size=stream.buf_size,
+                            force_tcp=stream.force_tcp,
+                        )
                     else:
-                        entry["kind"] = "stream"
+                        entry = StreamMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=self._stream_type_name(stream.msg_type),
+                        )
                     stream_entries[stream_name] = entry
 
-                task_entries: list[dict[str, object]] = []
+                task_entries: list[TaskMetadata] = []
                 for task_name, task in comp.tasks.items():
-                    task_entry: dict[str, object] = {"name": task_name}
+                    task_entry = TaskMetadata(name=task_name)
+
                     if hasattr(task, SUBSCRIBES_ATTR):
                         sub_stream = getattr(task, SUBSCRIBES_ATTR)
                         if hasattr(sub_stream, "name") and sub_stream.name in comp.streams:
-                            task_entry["subscribes"] = comp.streams[sub_stream.name].address
+                            task_entry.subscribes = comp.streams[sub_stream.name].address
+
                     if hasattr(task, PUBLISHES_ATTR):
                         pub_streams = getattr(task, PUBLISHES_ATTR)
-                        task_entry["publishes"] = [
+                        task_entry.publishes = [
                             comp.streams[stream.name].address
                             for stream in pub_streams
                             if hasattr(stream, "name") and stream.name in comp.streams
                         ]
+
                     task_entries.append(task_entry)
 
                 settings_type = getattr(comp.__class__, "__settings_type__", Settings)
-                metadata_entry: dict[str, object] = {
-                    "address": comp.address,
-                    "name": comp.name,
-                    "component_type": self._type_name(comp.__class__),
-                    "kind": (
-                        "collection"
-                        if isinstance(comp, Collection)
-                        else "unit"
-                        if isinstance(comp, Unit)
-                        else "component"
-                    ),
-                    "settings_type": self._type_name(settings_type),
-                    "startup_settings": self._serialize_metadata_value(comp.SETTINGS),
-                    "children": sorted(child.address for child in comp.components.values()),
-                    "streams": stream_entries,
-                    "tasks": sorted(task_entries, key=lambda task: str(task["name"])),
-                    "main": comp.main.__name__ if comp.main is not None else None,
-                    "threads": sorted(comp.threads.keys()),
-                    "dynamic_settings": dynamic_settings,
-                }
+                settings_type_name = (
+                    self._type_name(settings_type)
+                    if inspect.isclass(settings_type)
+                    else repr(settings_type)
+                )
+
+                component_common = dict(
+                    address=comp.address,
+                    name=comp.name,
+                    component_type=self._type_name(comp.__class__),
+                    settings_type=settings_type_name,
+                    initial_settings=self._settings_snapshot(comp.SETTINGS),
+                    streams=stream_entries,
+                    dynamic_settings=dynamic_settings,
+                )
+
+                metadata_entry: ComponentMetadataType
+                if isinstance(comp, Collection):
+                    metadata_entry = CollectionMetadata(
+                        **component_common,
+                        children=sorted(
+                            child.address for child in comp.components.values()
+                        ),
+                    )
+                elif isinstance(comp, Unit):
+                    metadata_entry = UnitMetadata(
+                        **component_common,
+                        tasks=sorted(task_entries, key=lambda task: task.name),
+                        main=comp.main.__name__ if comp.main is not None else None,
+                        threads=sorted(comp.threads.keys()),
+                    )
+                else:
+                    metadata_entry = ComponentMetadata(**component_common)
                 components[comp.address] = metadata_entry
 
-        return {
-            "schema_version": 1,
-            "root_name": self._root_name,
-            "components": {
-                address: components[address] for address in sorted(components.keys())
-            },
-        }
+        return GraphMetadata(
+            schema_version=1,
+            root_name=self._root_name,
+            components={address: components[address] for address in sorted(components)},
+        )
 
     def start(self) -> None:
         if self._started:

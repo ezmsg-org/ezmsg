@@ -1,6 +1,7 @@
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
+from collections.abc import Hashable
 
 
 class CyclicException(Exception):
@@ -15,6 +16,8 @@ class CyclicException(Exception):
 
 
 GraphType = defaultdict[str, set[str]]
+EdgeType = tuple[str, str]
+OwnerType = Hashable | None
 
 
 @dataclass
@@ -28,6 +31,9 @@ class DAG:
     """
 
     graph: GraphType = field(default_factory=lambda: defaultdict(set), init=False)
+    edge_owners: dict[EdgeType, set[OwnerType]] = field(
+        default_factory=dict, init=False
+    )
 
     @property
     def nodes(self) -> set[str]:
@@ -60,47 +66,94 @@ class DAG:
                 invgraph[to_node].add(from_node)
         return invgraph
 
-    def add_edge(self, from_node: str, to_node: str) -> None:
+    def add_edge(
+        self, from_node: str, to_node: str, owner: OwnerType = None
+    ) -> bool:
         """
         Ensure an edge exists in the graph.
 
-        Adds an edge from from_node to to_node. Does nothing if the edge already exists.
+        Adds an edge from from_node to to_node for the given owner.
+        If this is an additional owner for an existing edge, topology does not change.
         If the edge would make the graph cyclic, raises CyclicException.
 
         :param from_node: Source node name
         :type from_node: str
         :param to_node: Destination node name
         :type to_node: str
+        :param owner: Owner token for this edge; ``None`` is treated as persistent.
+        :type owner: collections.abc.Hashable | None
         :raises CyclicException: If adding the edge would create a cycle
+        :return: True if graph topology changed; False if this only added an owner.
+        :rtype: bool
         """
         if from_node == to_node:
             raise CyclicException
 
-        test_graph = deepcopy(self.graph)
-        test_graph[from_node].add(to_node)
-        test_graph[to_node]
+        edge = (from_node, to_node)
+        owners = self.edge_owners.setdefault(edge, set())
+        if owner in owners:
+            return False
 
-        if from_node in _bfs(test_graph, from_node):
-            raise CyclicException
+        topology_changed = len(owners) == 0
+        if topology_changed:
+            test_graph = deepcopy(self.graph)
+            test_graph[from_node].add(to_node)
+            test_graph[to_node]
 
-        # No cycles!  Modify referenced data structure
-        self.graph[from_node].add(to_node)
-        self.graph[to_node]
+            if from_node in _bfs(test_graph, from_node):
+                if len(owners) == 0:
+                    self.edge_owners.pop(edge, None)
+                raise CyclicException
 
-    def remove_edge(self, from_node: str, to_node: str) -> None:
+            # No cycles! Modify referenced data structure
+            self.graph[from_node].add(to_node)
+            self.graph[to_node]
+
+        owners.add(owner)
+        return topology_changed
+
+    def remove_edge(
+        self, from_node: str, to_node: str, owner: OwnerType = None
+    ) -> bool:
         """
         Ensure an edge is not present in the graph.
 
-        Removes an edge from from_node to to_node. Does nothing if the edge doesn't exist.
+        Removes ownership of an edge from from_node to to_node.
+        Topology only changes when the last owner is removed.
         Automatically prunes unconnected nodes after removal.
 
         :param from_node: Source node name
         :type from_node: str
         :param to_node: Destination node name
         :type to_node: str
+        :param owner: Owner token for this edge; ``None`` targets persistent ownership.
+        :type owner: collections.abc.Hashable | None
+        :return: True if graph topology changed; False if owner was absent or still shared.
+        :rtype: bool
         """
-        self.graph.get(from_node, set()).discard(to_node)
-        self._prune()
+        edge = (from_node, to_node)
+        owners = self.edge_owners.get(edge, None)
+        if owners is None or owner not in owners:
+            return False
+
+        owners.remove(owner)
+
+        topology_changed = False
+        if len(owners) == 0:
+            self.edge_owners.pop(edge, None)
+            self.graph.get(from_node, set()).discard(to_node)
+            self._prune()
+            topology_changed = True
+
+        return topology_changed
+
+    def remove_owner(self, owner: OwnerType) -> set[EdgeType]:
+        removed_edges: set[EdgeType] = set()
+        for edge in list(self.edge_owners.keys()):
+            if owner in self.edge_owners.get(edge, set()):
+                if self.remove_edge(*edge, owner=owner):
+                    removed_edges.add(edge)
+        return removed_edges
 
     def downstream(self, from_node: str) -> list[str]:
         """

@@ -1,10 +1,13 @@
 import asyncio
 import logging
-import pickle
 import typing
+import enum
+import pickle
 
 from uuid import UUID
 from types import TracebackType
+from dataclasses import dataclass
+from contextlib import suppress
 
 from .dag import CyclicException
 from .netprotocol import (
@@ -19,8 +22,23 @@ from .netprotocol import (
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
+from .graphmeta import GraphMetadata, GraphSnapshot
 
 logger = logging.getLogger("ezmsg")
+
+
+class _SessionResponseKind(enum.Enum):
+    BYTE = enum.auto()
+    SNAPSHOT = enum.auto()
+
+
+@dataclass
+class _SessionCommand:
+    command: Command
+    args: tuple[str, ...]
+    payload: bytes | None
+    response_kind: _SessionResponseKind
+    response_fut: "asyncio.Future[typing.Any]"
 
 
 class GraphContext:
@@ -54,7 +72,8 @@ class GraphContext:
     _session_id: UUID | None
     _session_reader: asyncio.StreamReader | None
     _session_writer: asyncio.StreamWriter | None
-    _session_lock: asyncio.Lock
+    _session_task: asyncio.Task[None] | None
+    _session_commands: asyncio.Queue[_SessionCommand | None] | None
 
     def __init__(
         self,
@@ -69,7 +88,8 @@ class GraphContext:
         self._session_id = None
         self._session_reader = None
         self._session_writer = None
-        self._session_lock = asyncio.Lock()
+        self._session_task = None
+        self._session_commands = None
 
     @property
     def graph_address(self) -> AddressType | None:
@@ -117,18 +137,16 @@ class GraphContext:
         :param to_topic: The destination topic name
         :type to_topic: str
         """
-        if self._session_writer is not None:
-            response = await self._session_command(
-                Command.SESSION_CONNECT,
-                from_topic,
-                to_topic,
-            )
-            if response == Command.CYCLIC.value:
-                raise CyclicException
-            if response != Command.COMPLETE.value:
-                raise RuntimeError("Unexpected response to session connect")
-        else:
-            await GraphService(self.graph_address).connect(from_topic, to_topic)
+        response = await self._session_command(
+            Command.SESSION_CONNECT,
+            from_topic,
+            to_topic,
+            response_kind=_SessionResponseKind.BYTE,
+        )
+        if response == Command.CYCLIC.value:
+            raise CyclicException
+        if response != Command.COMPLETE.value:
+            raise RuntimeError("Unexpected response to session connect")
         self._edges.add((from_topic, to_topic))
 
     async def disconnect(self, from_topic: str, to_topic: str) -> None:
@@ -140,16 +158,14 @@ class GraphContext:
         :param to_topic: The destination topic name
         :type to_topic: str
         """
-        if self._session_writer is not None:
-            response = await self._session_command(
-                Command.SESSION_DISCONNECT,
-                from_topic,
-                to_topic,
-            )
-            if response != Command.COMPLETE.value:
-                raise RuntimeError("Unexpected response to session disconnect")
-        else:
-            await GraphService(self.graph_address).disconnect(from_topic, to_topic)
+        response = await self._session_command(
+            Command.SESSION_DISCONNECT,
+            from_topic,
+            to_topic,
+            response_kind=_SessionResponseKind.BYTE,
+        )
+        if response != Command.COMPLETE.value:
+            raise RuntimeError("Unexpected response to session disconnect")
         self._edges.discard((from_topic, to_topic))
 
     async def sync(self, timeout: float | None = None) -> None:
@@ -195,26 +211,97 @@ class GraphContext:
         self._session_id = session_id
         self._session_reader = reader
         self._session_writer = writer
+        self._session_commands = asyncio.Queue()
+        self._session_task = asyncio.create_task(
+            self._session_io_loop(),
+            name=f"graphctx-session-{session_id}",
+        )
+
+    def _require_session(self) -> tuple[asyncio.Queue[_SessionCommand | None], asyncio.Task[None]]:
+        if self._session_commands is None or self._session_task is None:
+            raise RuntimeError(
+                "GraphContext session is not active. Use GraphContext as an async context manager."
+            )
+        return self._session_commands, self._session_task
+
+    async def _session_io_loop(self) -> None:
+        reader = self._session_reader
+        writer = self._session_writer
+        commands = self._session_commands
+        if reader is None or writer is None or commands is None:
+            return
+
+        try:
+            while True:
+                cmd = await commands.get()
+                if cmd is None:
+                    break
+
+                writer.write(cmd.command.value)
+                for arg in cmd.args:
+                    writer.write(encode_str(arg))
+                if cmd.payload is not None:
+                    writer.write(uint64_to_bytes(len(cmd.payload)))
+                    writer.write(cmd.payload)
+                await writer.drain()
+
+                if cmd.response_kind == _SessionResponseKind.BYTE:
+                    response = await reader.read(1)
+
+                elif cmd.response_kind == _SessionResponseKind.SNAPSHOT:
+                    num_bytes = await read_int(reader)
+                    snapshot_bytes = await reader.readexactly(num_bytes)
+                    complete = await reader.read(1)
+                    if complete != Command.COMPLETE.value:
+                        raise RuntimeError("Unexpected response to session snapshot")
+                    response = pickle.loads(snapshot_bytes)
+
+                else:
+                    raise RuntimeError(f"Unsupported response kind: {cmd.response_kind}")
+
+                if not cmd.response_fut.done():
+                    cmd.response_fut.set_result(response)
+
+        except Exception as exc:
+            while True:
+                try:
+                    pending = commands.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                if pending is not None and not pending.response_fut.done():
+                    pending.response_fut.set_exception(exc)
+        finally:
+            while True:
+                try:
+                    pending = commands.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                if pending is not None and not pending.response_fut.done():
+                    pending.response_fut.set_exception(
+                        RuntimeError("GraphContext session closed")
+                    )
 
     async def _close_session(self) -> None:
+        commands = self._session_commands
+        task = self._session_task
         writer = self._session_writer
         if writer is None:
             return
 
-        try:
-            await self._session_command(Command.SESSION_CLEAR)
-        except (
-            ConnectionRefusedError,
-            ConnectionResetError,
-            BrokenPipeError,
-            asyncio.IncompleteReadError,
-        ):
-            pass
+        if commands is not None:
+            await commands.put(None)
+        if task is not None:
+            with suppress(asyncio.CancelledError):
+                await task
 
         await close_stream_writer(writer)
         self._session_id = None
         self._session_reader = None
         self._session_writer = None
+        self._session_task = None
+        self._session_commands = None
         self._edges.clear()
 
     async def _session_command(
@@ -222,57 +309,41 @@ class GraphContext:
         command: Command,
         *args: str,
         payload: bytes | None = None,
-        expect_snapshot: bool = False,
+        response_kind: _SessionResponseKind = _SessionResponseKind.BYTE,
     ) -> typing.Any:
-        reader = self._session_reader
-        writer = self._session_writer
-        if reader is None or writer is None:
-            raise RuntimeError("GraphContext session is not active")
+        commands, task = self._require_session()
+        if task.done():
+            raise RuntimeError("GraphContext session task is not running")
 
-        async with self._session_lock:
-            writer.write(command.value)
-            for arg in args:
-                writer.write(encode_str(arg))
-            if payload is not None:
-                writer.write(uint64_to_bytes(len(payload)))
-                writer.write(payload)
-            await writer.drain()
+        response_fut: asyncio.Future[typing.Any] = asyncio.get_running_loop().create_future()
+        await commands.put(
+            _SessionCommand(
+                command=command,
+                args=tuple(args),
+                payload=payload,
+                response_kind=response_kind,
+                response_fut=response_fut,
+            )
+        )
+        return await response_fut
 
-            if expect_snapshot:
-                num_bytes = await read_int(reader)
-                snapshot_bytes = await reader.readexactly(num_bytes)
-                response = await reader.read(1)
-                if response != Command.COMPLETE.value:
-                    raise RuntimeError("Unexpected response to session snapshot")
-                return pickle.loads(snapshot_bytes)
-
-            return await reader.read(1)
-
-    async def register_metadata(self, metadata: dict[str, typing.Any]) -> None:
-        if self._session_writer is None:
-            logger.warning("No active GraphContext session; metadata registration skipped")
-            return
-
+    async def register_metadata(self, metadata: GraphMetadata) -> None:
+        payload = pickle.dumps(metadata)
         response = await self._session_command(
-            Command.SESSION_REGISTER, payload=pickle.dumps(metadata)
+            Command.SESSION_REGISTER,
+            payload=payload,
+            response_kind=_SessionResponseKind.BYTE,
         )
         if response != Command.COMPLETE.value:
             raise RuntimeError("Unexpected response to session metadata registration")
 
-    async def snapshot(self) -> dict[str, typing.Any]:
-        if self._session_writer is None:
-            dag = await GraphService(self.graph_address).dag()
-            return {
-                "graph": {node: sorted(conns) for node, conns in dag.graph.items()},
-                "edge_owners": [],
-                "sessions": {},
-            }
-
+    async def snapshot(self) -> GraphSnapshot:
         snapshot = await self._session_command(
-            Command.SESSION_SNAPSHOT, expect_snapshot=True
+            Command.SESSION_SNAPSHOT,
+            response_kind=_SessionResponseKind.SNAPSHOT,
         )
-        if not isinstance(snapshot, dict):
-            raise RuntimeError("Session snapshot payload was not a dictionary")
+        if not isinstance(snapshot, GraphSnapshot):
+            raise RuntimeError("Session snapshot payload was not a GraphSnapshot")
         return snapshot
 
     async def _shutdown_servers(self) -> None:
@@ -315,25 +386,21 @@ class GraphContext:
 
         if self._session_writer is not None:
             try:
-                response = await self._session_command(Command.SESSION_CLEAR)
+                response = await self._session_command(
+                    Command.SESSION_CLEAR,
+                    response_kind=_SessionResponseKind.BYTE,
+                )
                 if response != Command.COMPLETE.value:
-                    logger.warning("GraphServer returned unexpected response to SESSION_CLEAR")
+                    logger.warning(
+                        "GraphServer returned unexpected response to SESSION_CLEAR"
+                    )
             except (
                 ConnectionRefusedError,
                 BrokenPipeError,
                 ConnectionResetError,
                 asyncio.IncompleteReadError,
+                RuntimeError,
             ) as e:
                 logger.warning(f"Could not clear GraphContext session state: {e}")
-        else:
-            for edge in self._edges:
-                try:
-                    await GraphService(self.graph_address).disconnect(*edge)
-                except (
-                    ConnectionRefusedError,
-                    BrokenPipeError,
-                    ConnectionResetError,
-                ) as e:
-                    logger.warning(f"Could not remove edge {edge} from GraphServer: {e}")
 
         self._edges.clear()
