@@ -8,6 +8,7 @@ import logging
 import os
 import pickle
 import signal
+from dataclasses import dataclass
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
@@ -19,7 +20,7 @@ from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
 from .component import Component
-from .stream import Stream, InputStream, OutputStream
+from .stream import Stream, InputStream, OutputStream, InputRelay, OutputRelay
 from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
 from .settings import Settings
 from .graphmeta import (
@@ -35,6 +36,7 @@ from .graphmeta import (
     GraphMetadata,
     UnitMetadata,
 )
+from .relay import _CollectionRelayUnit, _RelaySettings
 
 from .graphserver import GraphService
 from .graphcontext import GraphContext
@@ -63,6 +65,16 @@ def crawl_components(
         if callback is not None:
             callback(comp)
     return out
+
+
+@dataclass
+class _RelayBinding:
+    kind: str  # "input" or "output"
+    endpoint_topic: str
+    relay_in_topic: str
+    relay_out_topic: str
+    endpoint: InputRelay | OutputRelay
+    relay_unit: _CollectionRelayUnit
 
 
 class ExecutionContext:
@@ -127,39 +139,140 @@ class ExecutionContext:
         start_participant: bool = False,
     ) -> "ExecutionContext | None":
         graph_connections: list[tuple[str, str]] = []
+        relay_bindings: dict[str, _RelayBinding] = {}
 
         for name, component in components.items():
             component._set_name(name)
             component._set_location([root_name] if root_name is not None else [])
 
+        def normalize_topic(endpoint: Stream | str | enum.Enum, where: str) -> str:
+            if isinstance(endpoint, Stream):
+                return endpoint.address
+            if isinstance(endpoint, enum.Enum):
+                return endpoint.name
+            if isinstance(endpoint, str):
+                return endpoint
+            raise TypeError(
+                f"Invalid endpoint type in {where}: {type(endpoint)}. "
+                "Expected Stream, str, or Enum."
+            )
+
         if connections is not None:
             for from_topic, to_topic in connections:
-                if isinstance(from_topic, Stream):
-                    from_topic = from_topic.address
-                if isinstance(to_topic, Stream):
-                    to_topic = to_topic.address
-                if isinstance(to_topic, enum.Enum):
-                    to_topic = to_topic.name
-                if isinstance(from_topic, enum.Enum):
-                    from_topic = from_topic.name
-                graph_connections.append((from_topic, to_topic))
+                graph_connections.append(
+                    (
+                        normalize_topic(from_topic, "connections"),
+                        normalize_topic(to_topic, "connections"),
+                    )
+                )
 
+        def input_relay_settings(relay: InputRelay) -> _RelaySettings:
+            return _RelaySettings(
+                leaky=relay.leaky,
+                max_queue=relay.max_queue,
+                copy_on_forward=relay.copy_on_forward,
+            )
+
+        def output_relay_settings(relay: OutputRelay) -> _RelaySettings:
+            return _RelaySettings(
+                host=relay.host,
+                port=relay.port,
+                num_buffers=relay.num_buffers,
+                buf_size=relay.buf_size,
+                force_tcp=relay.force_tcp,
+                copy_on_forward=relay.copy_on_forward,
+            )
+
+        def add_collection_relay_units(comp: Component) -> None:
+            if not isinstance(comp, Collection):
+                return
+
+            for endpoint_name, endpoint in comp.streams.items():
+                if isinstance(endpoint, InputRelay):
+                    relay_name = f"__relay_in_{endpoint_name}"
+                    if relay_name in comp.components:
+                        raise ValueError(
+                            f"{comp.address} already defines component '{relay_name}'."
+                        )
+
+                    relay_unit = _CollectionRelayUnit(input_relay_settings(endpoint))
+                    relay_unit._set_name(relay_name)
+                    relay_unit._set_location(comp.location + [comp.name])
+                    comp.components[relay_name] = relay_unit
+                    setattr(comp, relay_name, relay_unit)
+
+                    relay_bindings[endpoint.address] = _RelayBinding(
+                        kind="input",
+                        endpoint_topic=endpoint.address,
+                        relay_in_topic=relay_unit.INPUT.address,
+                        relay_out_topic=relay_unit.OUTPUT.address,
+                        endpoint=endpoint,
+                        relay_unit=relay_unit,
+                    )
+
+                elif isinstance(endpoint, OutputRelay):
+                    relay_name = f"__relay_out_{endpoint_name}"
+                    if relay_name in comp.components:
+                        raise ValueError(
+                            f"{comp.address} already defines component '{relay_name}'."
+                        )
+
+                    relay_unit = _CollectionRelayUnit(output_relay_settings(endpoint))
+                    relay_unit._set_name(relay_name)
+                    relay_unit._set_location(comp.location + [comp.name])
+                    comp.components[relay_name] = relay_unit
+                    setattr(comp, relay_name, relay_unit)
+
+                    relay_bindings[endpoint.address] = _RelayBinding(
+                        kind="output",
+                        endpoint_topic=endpoint.address,
+                        relay_in_topic=relay_unit.INPUT.address,
+                        relay_out_topic=relay_unit.OUTPUT.address,
+                        endpoint=endpoint,
+                        relay_unit=relay_unit,
+                    )
+
+        for component in components.values():
+            if isinstance(component, Collection):
+                crawl_components(component, add_collection_relay_units)
         def gather_edges(comp: Component):
             if isinstance(comp, Collection):
                 for from_stream, to_stream in comp.network():
-                    if isinstance(from_stream, Stream):
-                        from_stream = from_stream.address
-                    if isinstance(to_stream, Stream):
-                        to_stream = to_stream.address
-                    if isinstance(to_stream, enum.Enum):
-                        to_stream = to_stream.name
-                    if isinstance(from_stream, enum.Enum):
-                        from_stream = from_stream.name
-                    graph_connections.append((from_stream, to_stream))
+                    graph_connections.append(
+                        (
+                            normalize_topic(from_stream, f"{comp.address}.network"),
+                            normalize_topic(to_stream, f"{comp.address}.network"),
+                        )
+                    )
 
         for component in components.values():
             if isinstance(component, Collection):
                 crawl_components(component, gather_edges)
+
+        if relay_bindings:
+            rewritten_connections: list[tuple[str, str]] = []
+            for from_topic, to_topic in graph_connections:
+                to_binding = relay_bindings.get(to_topic, None)
+                if to_binding is not None and to_binding.kind == "output":
+                    to_topic = to_binding.relay_in_topic
+
+                from_binding = relay_bindings.get(from_topic, None)
+                if from_binding is not None and from_binding.kind == "input":
+                    from_topic = from_binding.relay_out_topic
+
+                rewritten_connections.append((from_topic, to_topic))
+
+            for binding in relay_bindings.values():
+                if binding.kind == "input":
+                    rewritten_connections.append(
+                        (binding.endpoint_topic, binding.relay_in_topic)
+                    )
+                else:
+                    rewritten_connections.append(
+                        (binding.relay_out_topic, binding.endpoint_topic)
+                    )
+
+            graph_connections = rewritten_connections
 
         processes = collect_processes(components.values(), process_components)
 
@@ -171,6 +284,14 @@ class ExecutionContext:
                         comp.configure()
 
                 crawl_components(component, configure_collections)
+
+        for binding in relay_bindings.values():
+            if isinstance(binding.endpoint, InputRelay):
+                binding.relay_unit.apply_settings(input_relay_settings(binding.endpoint))
+            elif isinstance(binding.endpoint, OutputRelay):
+                binding.relay_unit.apply_settings(
+                    output_relay_settings(binding.endpoint)
+                )
 
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]

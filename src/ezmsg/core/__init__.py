@@ -14,6 +14,11 @@ __all__ = [
     "Settings",
     "Collection",
     "NetworkDefinition",
+    "Topic",
+    "InputTopic",
+    "OutputTopic",
+    "InputRelay",
+    "OutputRelay",
     "InputStream",
     "OutputStream",
     "Unit",
@@ -44,7 +49,15 @@ from .state import State
 from .settings import Settings
 from .collection import Collection, NetworkDefinition
 from .unit import Unit, task, publisher, subscriber, main, timeit, process, thread
-from .stream import InputStream, OutputStream
+from .stream import (
+    Topic,
+    InputTopic,
+    OutputTopic,
+    InputRelay,
+    OutputRelay,
+    InputStream,
+    OutputStream,
+)
 from .backend import run, GraphRunner, GraphRunnerStartError
 from .backendprocess import Complete, NormalTermination
 from .graphserver import GraphServer
