@@ -462,22 +462,24 @@ class GraphServer(threading.Thread):
                                 topology_changed = self._disconnect_owner(
                                     from_topic, to_topic, session_id
                                 )
-                            writer.write(Command.COMPLETE.value)
                         except CyclicException:
                             writer.write(Command.CYCLIC.value)
+                            await writer.drain()
+                            continue
 
                         if topology_changed:
                             await self._notify_downstream_for_topic(to_topic)
 
+                        writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req == Command.SESSION_CLEAR.value:
                     async with self._command_lock:
                         notify_topics = self._clear_session_state(session_id)
-                        writer.write(Command.COMPLETE.value)
                         for topic in notify_topics:
                             await self._notify_downstream_for_topic(topic)
 
+                        writer.write(Command.COMPLETE.value)
                     await writer.drain()
 
                 elif req == Command.SESSION_REGISTER.value:
