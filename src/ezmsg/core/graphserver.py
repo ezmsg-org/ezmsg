@@ -15,12 +15,16 @@ from .graphmeta import (
     Edge,
     GraphMetadata,
     GraphSnapshot,
+    ProcessHello,
+    ProcessOwnershipUpdate,
+    SnapshotProcess,
     SnapshotSession,
 )
 from .netprotocol import (
     Address,
     Command,
     ClientInfo,
+    ProcessInfo,
     SessionInfo,
     SubscriberInfo,
     PublisherInfo,
@@ -283,6 +287,20 @@ class GraphServer(threading.Thread):
                 # to avoid closing writer
                 return
 
+            elif req == Command.PROCESS.value:
+                process_client_id = uuid1()
+                self.clients[process_client_id] = ProcessInfo(process_client_id, writer)
+                writer.write(encode_str(str(process_client_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[process_client_id] = asyncio.create_task(
+                    self._handle_process(process_client_id, reader, writer)
+                )
+
+                # NOTE: Created a process control client, must return early
+                # to avoid closing writer
+                return
+
             else:
                 # We only want to handle one command at a time
                 async with self._command_lock:
@@ -480,6 +498,137 @@ class GraphServer(threading.Thread):
             self._client_tasks.pop(session_id, None)
             await close_stream_writer(writer)
 
+    def _process_info(self, process_client_id: UUID) -> ProcessInfo | None:
+        info = self.clients.get(process_client_id)
+        if isinstance(info, ProcessInfo):
+            return info
+        return None
+
+    async def _handle_process(
+        self,
+        process_client_id: UUID,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        logger.debug(f"Graph Server: Process control connected: {process_client_id}")
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req == Command.PROCESS_REGISTER.value:
+                    response = await self._handle_process_register_request(
+                        process_client_id, reader
+                    )
+                    writer.write(response)
+                    await writer.drain()
+
+                elif req == Command.PROCESS_UPDATE_OWNERSHIP.value:
+                    response = await self._handle_process_update_ownership_request(
+                        process_client_id, reader
+                    )
+                    writer.write(response)
+                    await writer.drain()
+
+                else:
+                    logger.warning(
+                        f"Process control {process_client_id} rx unknown command: {req}"
+                    )
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(
+                f"Process control {process_client_id} disconnected from GraphServer: {e}"
+            )
+
+        finally:
+            self.clients.pop(process_client_id, None)
+            self._client_tasks.pop(process_client_id, None)
+            await close_stream_writer(writer)
+
+    async def _handle_process_register_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        num_bytes = await read_int(reader)
+        payload = await reader.readexactly(num_bytes)
+        hello: ProcessHello | None = None
+        try:
+            hello_obj = pickle.loads(payload)
+            if isinstance(hello_obj, ProcessHello):
+                hello = hello_obj
+            else:
+                raise RuntimeError("process registration payload was not ProcessHello")
+        except Exception as exc:
+            logger.warning(
+                "Process control %s registration parse failed; ignoring payload: %s",
+                process_client_id,
+                exc,
+            )
+
+        if hello is None:
+            return Command.COMPLETE.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.COMPLETE.value
+
+            process_info.process_id = hello.process_id
+            process_info.pid = hello.pid
+            process_info.host = hello.host
+            process_info.units = set(hello.units)
+
+        return Command.COMPLETE.value
+
+    async def _handle_process_update_ownership_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        num_bytes = await read_int(reader)
+        payload = await reader.readexactly(num_bytes)
+        update: ProcessOwnershipUpdate | None = None
+        try:
+            update_obj = pickle.loads(payload)
+            if isinstance(update_obj, ProcessOwnershipUpdate):
+                update = update_obj
+            else:
+                raise RuntimeError(
+                    "process ownership payload was not ProcessOwnershipUpdate"
+                )
+        except Exception as exc:
+            logger.warning(
+                "Process control %s ownership update parse failed; ignoring payload: %s",
+                process_client_id,
+                exc,
+            )
+
+        if update is None:
+            return Command.COMPLETE.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.COMPLETE.value
+
+            if (
+                process_info.process_id is not None
+                and process_info.process_id != update.process_id
+            ):
+                logger.warning(
+                    "Process control %s process_id mismatch: %s != %s",
+                    process_client_id,
+                    process_info.process_id,
+                    update.process_id,
+                )
+            elif process_info.process_id is None:
+                process_info.process_id = update.process_id
+
+            process_info.units.update(update.added_units)
+            process_info.units.difference_update(update.removed_units)
+
+        return Command.COMPLETE.value
+
     def _connect_owner(
         self, from_topic: str, to_topic: str, owner: UUID | str | None
     ) -> bool:
@@ -632,7 +781,32 @@ class GraphServer(threading.Thread):
                 key=lambda item: str(item[0]),
             )
         }
-        return GraphSnapshot(graph=graph, edge_owners=edge_owners, sessions=sessions)
+        processes = {
+            str(client_id): SnapshotProcess(
+                process_id=(
+                    process.process_id
+                    if process.process_id is not None
+                    else str(client_id)
+                ),
+                pid=process.pid,
+                host=process.host,
+                units=sorted(process.units),
+            )
+            for client_id, process in sorted(
+                [
+                    (client_id, info)
+                    for client_id, info in self.clients.items()
+                    if isinstance(info, ProcessInfo)
+                ],
+                key=lambda item: str(item[0]),
+            )
+        }
+        return GraphSnapshot(
+            graph=graph,
+            edge_owners=edge_owners,
+            sessions=sessions,
+            processes=processes,
+        )
 
     async def _notify_downstream_for_topic(self, topic: str) -> None:
         for sub in self._downstream_subs(topic):

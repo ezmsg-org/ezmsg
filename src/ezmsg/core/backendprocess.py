@@ -26,6 +26,7 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR
 
 from .graphcontext import GraphContext
+from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
@@ -223,6 +224,8 @@ class DefaultBackendProcess(BackendProcess):
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
         context = GraphContext(self.graph_address)
+        process_client = ProcessControlClient(self.graph_address)
+        process_register_future: concurrent.futures.Future[None] | None = None
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
         self._shutdown_errors = False
 
@@ -315,6 +318,17 @@ class DefaultBackendProcess(BackendProcess):
             logger.debug("Waiting at start barrier!")
             self.start_barrier.wait()
 
+            async def register_process_control() -> None:
+                try:
+                    await process_client.register([unit.address for unit in self.units])
+                except Exception as exc:
+                    logger.warning(f"Process control registration failed: {exc}")
+
+            process_register_future = asyncio.run_coroutine_threadsafe(
+                register_process_control(),
+                loop,
+            )
+
             for unit in self.units:
                 for thread_fn in unit.threads.values():
                     loop.run_in_executor(None, thread_fn, unit)
@@ -406,6 +420,15 @@ class DefaultBackendProcess(BackendProcess):
                     revert_future.result(timeout=10.0)
                 except TimeoutError:
                     logger.warning("Timed out waiting for retry on context revert")
+
+            process_close_future = asyncio.run_coroutine_threadsafe(
+                process_client.close(),
+                loop=loop,
+            )
+            with suppress(Exception):
+                if process_register_future is not None:
+                    process_register_future.result(timeout=0.5)
+                process_close_future.result()
 
             logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")
 

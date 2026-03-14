@@ -123,6 +123,21 @@ class GraphMetadata:
     components: dict[str, ComponentMetadataType]
 
 
+@dataclass
+class ProcessHello:
+    process_id: str
+    pid: int
+    host: str
+    units: list[str]
+
+
+@dataclass
+class ProcessOwnershipUpdate:
+    process_id: str
+    added_units: list[str] = field(default_factory=list)
+    removed_units: list[str] = field(default_factory=list)
+
+
 class Edge(NamedTuple):
     from_topic: str
     to_topic: str
@@ -135,7 +150,16 @@ class SnapshotSession:
 
 
 @dataclass
+class SnapshotProcess:
+    process_id: str
+    pid: int | None
+    host: str | None
+    units: list[str]
+
+
+@dataclass
 class GraphSnapshot:
     graph: dict[str, list[str]]
     edge_owners: dict[Edge, list[str]]
     sessions: dict[str, SnapshotSession]
+    processes: dict[str, SnapshotProcess] = field(default_factory=dict)

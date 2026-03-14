@@ -176,6 +176,18 @@ class SessionInfo(ClientInfo):
     metadata: GraphMetadata | None = None
 
 
+@dataclass
+class ProcessInfo(ClientInfo):
+    """
+    Process-scoped control-plane client information.
+    """
+
+    process_id: str | None = None
+    pid: int | None = None
+    host: str | None = None
+    units: set[str] = field(default_factory=set)
+
+
 def uint64_to_bytes(i: int) -> bytes:
     """
     Convert a 64-bit unsigned integer to bytes.
@@ -318,6 +330,11 @@ class Command(enum.Enum):
     SESSION_CLEAR = enum.auto()
     SESSION_REGISTER = enum.auto()
     SESSION_SNAPSHOT = enum.auto()
+
+    # Backend Process Control Commands
+    PROCESS = enum.auto()
+    PROCESS_REGISTER = enum.auto()
+    PROCESS_UPDATE_OWNERSHIP = enum.auto()
 
 
 def create_socket(
