@@ -274,11 +274,22 @@ def thread(func: Callable):
     Thread functions run concurrently with the main message processing and can be used
     for background tasks, monitoring, or other concurrent operations.
 
+    .. deprecated::
+       ``@thread`` is deprecated and will be removed in a future release.
+       Prefer explicit background work using ``loop.run_in_executor(...)`` or
+       explicit task management in ``initialize()``/``shutdown()``.
+
     :param func: The function to run as a background thread
     :type func: collections.abc.Callable
     :return: The decorated function
     :rtype: collections.abc.Callable
     """
+    warnings.warn(
+        "`@ez.thread` is deprecated and will be removed in a future release. "
+        "Prefer explicit background work via `loop.run_in_executor(...)`.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     setattr(func, THREAD_ATTR, True)
     return func
 
