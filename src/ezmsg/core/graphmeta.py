@@ -1,3 +1,5 @@
+import enum
+
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, NamedTuple
 
@@ -124,7 +126,7 @@ class GraphMetadata:
 
 
 @dataclass
-class ProcessHello:
+class ProcessRegistration:
     process_id: str
     pid: int
     host: str
@@ -136,6 +138,36 @@ class ProcessOwnershipUpdate:
     process_id: str
     added_units: list[str] = field(default_factory=list)
     removed_units: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SettingsSnapshotValue:
+    serialized: bytes | None
+    repr_value: dict[str, Any] | str
+
+
+class SettingsEventType(enum.Enum):
+    INITIAL_SETTINGS = "INITIAL_SETTINGS"
+    SETTINGS_UPDATED = "SETTINGS_UPDATED"
+
+
+@dataclass
+class SettingsChangedEvent:
+    seq: int
+    event_type: SettingsEventType
+    component_address: str
+    timestamp: float
+    source_session_id: str | None
+    source_process_id: str | None
+    value: SettingsSnapshotValue
+
+
+@dataclass
+class ProcessSettingsUpdate:
+    process_id: str
+    component_address: str
+    value: SettingsSnapshotValue
+    timestamp: float
 
 
 class Edge(NamedTuple):

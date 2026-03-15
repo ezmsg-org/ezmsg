@@ -3,15 +3,16 @@ import concurrent.futures
 import logging
 import inspect
 import os
+import pickle
 import time
 import traceback
 import threading
 import weakref
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from collections import defaultdict
-from collections.abc import Callable, Coroutine, Generator, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Sequence
 from functools import wraps, partial
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
@@ -26,6 +27,7 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR
 
 from .graphcontext import GraphContext
+from .graphmeta import SettingsSnapshotValue
 from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
@@ -221,6 +223,22 @@ class DefaultBackendProcess(BackendProcess):
     pubs: dict[str, Publisher]
     _shutdown_errors: bool
 
+    def _settings_snapshot_value(self, value: object) -> SettingsSnapshotValue:
+        try:
+            serialized = pickle.dumps(value)
+        except Exception:
+            serialized = None
+
+        if is_dataclass(value):
+            try:
+                repr_value = asdict(value)
+                if isinstance(repr_value, dict):
+                    return SettingsSnapshotValue(serialized=serialized, repr_value=repr_value)
+            except Exception:
+                pass
+
+        return SettingsSnapshotValue(serialized=serialized, repr_value=repr(value))
+
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
         context = GraphContext(self.graph_address)
@@ -287,8 +305,30 @@ class DefaultBackendProcess(BackendProcess):
                             loop,
                         ).result()
                         task_name = f"SUBSCRIBER|{stream.address}"
+                        report_settings_update: (
+                            Callable[[object], Awaitable[None]] | None
+                        ) = None
+                        if stream.name == "INPUT_SETTINGS":
+                            component_address = unit.address
+
+                            async def report_settings_update_cb(
+                                msg: object,
+                                *,
+                                _component_address: str = component_address,
+                            ) -> None:
+                                value = self._settings_snapshot_value(msg)
+                                await process_client.report_settings_update(
+                                    component_address=_component_address,
+                                    value=value,
+                                )
+
+                            report_settings_update = report_settings_update_cb
+
                         coro_callables[task_name] = partial(
-                            handle_subscriber, sub, sub_callables[stream.address]
+                            handle_subscriber,
+                            sub,
+                            sub_callables[stream.address],
+                            on_message=report_settings_update,
                         )
 
                     elif isinstance(stream, OutputStream):
@@ -519,7 +559,9 @@ class DefaultBackendProcess(BackendProcess):
 
 
 async def handle_subscriber(
-    sub: Subscriber, callables: set[Callable[..., Coroutine[Any, Any, None]]]
+    sub: Subscriber,
+    callables: set[Callable[..., Coroutine[Any, Any, None]]],
+    on_message: Callable[[Any], Awaitable[None]] | None = None,
 ):
     """
     Handle incoming messages from a subscriber and distribute to callables.
@@ -547,6 +589,13 @@ async def handle_subscriber(
         if sub.leaky:
             msg = await sub.recv()
             try:
+                if on_message is not None:
+                    try:
+                        await on_message(msg)
+                    except Exception as exc:
+                        logger.warning(
+                            f"Failed to report subscriber message metadata: {exc}"
+                        )
                 for callable in list(callables):
                     try:
                         await callable(msg)
@@ -557,6 +606,13 @@ async def handle_subscriber(
         else:
             async with sub.recv_zero_copy() as msg:
                 try:
+                    if on_message is not None:
+                        try:
+                            await on_message(msg)
+                        except Exception as exc:
+                            logger.warning(
+                                f"Failed to report subscriber message metadata: {exc}"
+                            )
                     for callable in list(callables):
                         try:
                             await callable(msg)

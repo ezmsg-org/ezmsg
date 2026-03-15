@@ -4,6 +4,7 @@ import pickle
 import os
 import socket
 import threading
+import time
 from contextlib import suppress
 from uuid import UUID, uuid1
 
@@ -15,8 +16,12 @@ from .graphmeta import (
     Edge,
     GraphMetadata,
     GraphSnapshot,
-    ProcessHello,
+    ProcessRegistration,
     ProcessOwnershipUpdate,
+    ProcessSettingsUpdate,
+    SettingsChangedEvent,
+    SettingsEventType,
+    SettingsSnapshotValue,
     SnapshotProcess,
     SnapshotSession,
 )
@@ -77,6 +82,12 @@ class GraphServer(threading.Thread):
 
     _client_tasks: dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
+    _settings_current: dict[str, SettingsSnapshotValue]
+    _settings_source_session: dict[str, UUID | None]
+    _settings_events: list[SettingsChangedEvent]
+    _settings_event_seq: int
+    _settings_owned_by_session: dict[UUID, set[str]]
+    _settings_subscribers: dict[UUID, asyncio.Queue[SettingsChangedEvent]]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -92,6 +103,12 @@ class GraphServer(threading.Thread):
         self._client_tasks = {}
         self.shms = {}
         self._address = None
+        self._settings_current = {}
+        self._settings_source_session = {}
+        self._settings_events = []
+        self._settings_event_seq = 0
+        self._settings_owned_by_session = {}
+        self._settings_subscribers = {}
 
     @property
     def address(self) -> Address:
@@ -284,6 +301,22 @@ class GraphServer(threading.Thread):
                 )
 
                 # NOTE: Created a session client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.SESSION_SETTINGS_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                after_seq = int(await read_str(reader))
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_settings_subscriber(
+                        subscriber_id, after_seq, reader, writer
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
                 # to avoid closing writer
                 return
 
@@ -480,6 +513,17 @@ class GraphServer(threading.Thread):
                     await self._handle_session_snapshot_request(writer)
                     await writer.drain()
 
+                elif req == Command.SESSION_SETTINGS_SNAPSHOT.value:
+                    await self._handle_session_settings_snapshot_request(writer)
+                    await writer.drain()
+
+                elif req == Command.SESSION_SETTINGS_EVENTS.value:
+                    after_seq = int(await read_str(reader))
+                    await self._handle_session_settings_events_request(
+                        writer, after_seq
+                    )
+                    await writer.drain()
+
                 else:
                     logger.warning(
                         f"Session {session_id} rx unknown command from GraphServer: {req}"
@@ -533,6 +577,13 @@ class GraphServer(threading.Thread):
                     writer.write(response)
                     await writer.drain()
 
+                elif req == Command.PROCESS_SETTINGS_UPDATE.value:
+                    response = await self._handle_process_settings_update_request(
+                        process_client_id, reader
+                    )
+                    writer.write(response)
+                    await writer.drain()
+
                 else:
                     logger.warning(
                         f"Process control {process_client_id} rx unknown command: {req}"
@@ -548,18 +599,86 @@ class GraphServer(threading.Thread):
             self._client_tasks.pop(process_client_id, None)
             await close_stream_writer(writer)
 
+    def _queue_settings_event(
+        self, queue: asyncio.Queue[SettingsChangedEvent], event: SettingsChangedEvent
+    ) -> None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Keep most recent samples under backpressure.
+            with suppress(asyncio.QueueEmpty):
+                queue.get_nowait()
+            with suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
+
+    async def _settings_sender(
+        self,
+        subscriber_id: UUID,
+        queue: asyncio.Queue[SettingsChangedEvent],
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            while True:
+                event = await queue.get()
+                payload = pickle.dumps(event)
+                writer.write(uint64_to_bytes(len(payload)))
+                writer.write(payload)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(f"Settings subscriber {subscriber_id} disconnected on send")
+        except asyncio.CancelledError:
+            raise
+
+    async def _handle_settings_subscriber(
+        self,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        queue: asyncio.Queue[SettingsChangedEvent] = asyncio.Queue(maxsize=1024)
+
+        async with self._command_lock:
+            self._settings_subscribers[subscriber_id] = queue
+            for event in self._settings_events:
+                if event.seq > after_seq:
+                    self._queue_settings_event(queue, event)
+
+        sender_task = asyncio.create_task(
+            self._settings_sender(subscriber_id, queue, writer),
+            name=f"settings-sender-{subscriber_id}",
+        )
+
+        try:
+            while True:
+                req = await reader.read(1)
+                if not req:
+                    break
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Settings subscriber {subscriber_id} disconnected: {e}")
+        finally:
+            async with self._command_lock:
+                self._settings_subscribers.pop(subscriber_id, None)
+            self._client_tasks.pop(subscriber_id, None)
+            sender_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sender_task
+            await close_stream_writer(writer)
+
     async def _handle_process_register_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> bytes:
         num_bytes = await read_int(reader)
         payload = await reader.readexactly(num_bytes)
-        hello: ProcessHello | None = None
+        registration: ProcessRegistration | None = None
         try:
-            hello_obj = pickle.loads(payload)
-            if isinstance(hello_obj, ProcessHello):
-                hello = hello_obj
+            payload_obj = pickle.loads(payload)
+            if isinstance(payload_obj, ProcessRegistration):
+                registration = payload_obj
             else:
-                raise RuntimeError("process registration payload was not ProcessHello")
+                raise RuntimeError(
+                    "process registration payload was not ProcessRegistration"
+                )
         except Exception as exc:
             logger.warning(
                 "Process control %s registration parse failed; ignoring payload: %s",
@@ -567,7 +686,7 @@ class GraphServer(threading.Thread):
                 exc,
             )
 
-        if hello is None:
+        if registration is None:
             return Command.COMPLETE.value
 
         async with self._command_lock:
@@ -575,10 +694,10 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.COMPLETE.value
 
-            process_info.process_id = hello.process_id
-            process_info.pid = hello.pid
-            process_info.host = hello.host
-            process_info.units = set(hello.units)
+            process_info.process_id = registration.process_id
+            process_info.pid = registration.pid
+            process_info.host = registration.host
+            process_info.units = set(registration.units)
 
         return Command.COMPLETE.value
 
@@ -629,6 +748,51 @@ class GraphServer(threading.Thread):
 
         return Command.COMPLETE.value
 
+    async def _handle_process_settings_update_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        num_bytes = await read_int(reader)
+        payload = await reader.readexactly(num_bytes)
+        update: ProcessSettingsUpdate | None = None
+        try:
+            update_obj = pickle.loads(payload)
+            if isinstance(update_obj, ProcessSettingsUpdate):
+                update = update_obj
+            else:
+                raise RuntimeError(
+                    "process settings payload was not ProcessSettingsUpdate"
+                )
+        except Exception as exc:
+            logger.warning(
+                "Process control %s settings update parse failed; ignoring payload: %s",
+                process_client_id,
+                exc,
+            )
+
+        if update is None:
+            return Command.COMPLETE.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.COMPLETE.value
+
+            if process_info.process_id is None:
+                process_info.process_id = update.process_id
+
+            self._settings_current[update.component_address] = update.value
+            self._settings_source_session[update.component_address] = None
+            self._append_settings_event_locked(
+                event_type=SettingsEventType.SETTINGS_UPDATED,
+                component_address=update.component_address,
+                value=update.value,
+                source_session_id=None,
+                source_process_id=update.process_id,
+                timestamp=update.timestamp,
+            )
+
+        return Command.COMPLETE.value
+
     def _connect_owner(
         self, from_topic: str, to_topic: str, owner: UUID | str | None
     ) -> bool:
@@ -654,6 +818,64 @@ class GraphServer(threading.Thread):
         if isinstance(info, SessionInfo):
             return info
         return None
+
+    def _append_settings_event_locked(
+        self,
+        event_type: SettingsEventType,
+        component_address: str,
+        value: SettingsSnapshotValue,
+        source_session_id: str | None,
+        source_process_id: str | None,
+        timestamp: float | None = None,
+    ) -> None:
+        self._settings_event_seq += 1
+        event = SettingsChangedEvent(
+            seq=self._settings_event_seq,
+            event_type=event_type,
+            component_address=component_address,
+            timestamp=timestamp if timestamp is not None else time.time(),
+            source_session_id=source_session_id,
+            source_process_id=source_process_id,
+            value=value,
+        )
+        self._settings_events.append(event)
+
+        for queue in self._settings_subscribers.values():
+            self._queue_settings_event(queue, event)
+
+        # Bound memory growth for long-lived servers.
+        max_events = 10_000
+        if len(self._settings_events) > max_events:
+            del self._settings_events[0 : len(self._settings_events) - max_events]
+
+    def _remove_settings_for_session_locked(self, session_id: UUID) -> None:
+        component_addresses = self._settings_owned_by_session.pop(session_id, set())
+        for component_address in component_addresses:
+            if self._settings_source_session.get(component_address) == session_id:
+                self._settings_current.pop(component_address, None)
+                self._settings_source_session.pop(component_address, None)
+
+    def _apply_session_metadata_settings_locked(
+        self, session_id: UUID, metadata: GraphMetadata
+    ) -> None:
+        session_components: set[str] = set()
+        for component in metadata.components.values():
+            value = SettingsSnapshotValue(
+                serialized=component.initial_settings[0],
+                repr_value=component.initial_settings[1],
+            )
+            self._settings_current[component.address] = value
+            self._settings_source_session[component.address] = session_id
+            session_components.add(component.address)
+            self._append_settings_event_locked(
+                event_type=SettingsEventType.INITIAL_SETTINGS,
+                component_address=component.address,
+                value=value,
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
+
+        self._settings_owned_by_session[session_id] = session_components
 
     async def _handle_session_edge_request(
         self,
@@ -709,7 +931,9 @@ class GraphServer(threading.Thread):
         async with self._command_lock:
             session = self._session_info(session_id)
             if session is not None and metadata is not None:
+                self._remove_settings_for_session_locked(session_id)
                 session.metadata = metadata
+                self._apply_session_metadata_settings_locked(session_id, metadata)
 
         return Command.COMPLETE.value
 
@@ -723,6 +947,29 @@ class GraphServer(threading.Thread):
             writer.write(snapshot_bytes)
             writer.write(Command.COMPLETE.value)
 
+    async def _handle_session_settings_snapshot_request(
+        self, writer: asyncio.StreamWriter
+    ) -> None:
+        async with self._command_lock:
+            snapshot = {
+                component_address: self._settings_current[component_address]
+                for component_address in sorted(self._settings_current)
+            }
+            snapshot_bytes = pickle.dumps(snapshot)
+            writer.write(uint64_to_bytes(len(snapshot_bytes)))
+            writer.write(snapshot_bytes)
+            writer.write(Command.COMPLETE.value)
+
+    async def _handle_session_settings_events_request(
+        self, writer: asyncio.StreamWriter, after_seq: int
+    ) -> None:
+        async with self._command_lock:
+            events = [event for event in self._settings_events if event.seq > after_seq]
+            event_bytes = pickle.dumps(events)
+            writer.write(uint64_to_bytes(len(event_bytes)))
+            writer.write(event_bytes)
+            writer.write(Command.COMPLETE.value)
+
     def _clear_session_state(self, session_id: UUID) -> set[str]:
         notify_topics: set[str] = set()
         session = self._session_info(session_id)
@@ -733,6 +980,7 @@ class GraphServer(threading.Thread):
             if self._disconnect_owner(from_topic, to_topic, session_id):
                 notify_topics.add(to_topic)
 
+        self._remove_settings_for_session_locked(session_id)
         session.metadata = None
         return notify_topics
 
@@ -746,6 +994,7 @@ class GraphServer(threading.Thread):
             if self._disconnect_owner(from_topic, to_topic, session_id):
                 notify_topics.add(to_topic)
 
+        self._remove_settings_for_session_locked(session_id)
         session.metadata = None
         self.clients.pop(session_id, None)
         return notify_topics

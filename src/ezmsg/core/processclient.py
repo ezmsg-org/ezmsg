@@ -3,10 +3,16 @@ import logging
 import os
 import pickle
 import socket
+import time
 
 from uuid import UUID, uuid1
 
-from .graphmeta import ProcessHello, ProcessOwnershipUpdate
+from .graphmeta import (
+    ProcessRegistration,
+    ProcessOwnershipUpdate,
+    ProcessSettingsUpdate,
+    SettingsSnapshotValue,
+)
 from .graphserver import GraphService
 from .netprotocol import (
     AddressType,
@@ -65,7 +71,7 @@ class ProcessControlClient:
 
     async def register(self, units: list[str]) -> None:
         await self.connect()
-        payload = ProcessHello(
+        payload = ProcessRegistration(
             process_id=self._process_id,
             pid=os.getpid(),
             host=socket.gethostname(),
@@ -85,6 +91,21 @@ class ProcessControlClient:
             removed_units=sorted(set(removed_units or [])),
         )
         await self._payload_command(Command.PROCESS_UPDATE_OWNERSHIP, payload)
+
+    async def report_settings_update(
+        self,
+        component_address: str,
+        value: SettingsSnapshotValue,
+        timestamp: float | None = None,
+    ) -> None:
+        await self.connect()
+        payload = ProcessSettingsUpdate(
+            process_id=self._process_id,
+            component_address=component_address,
+            value=value,
+            timestamp=timestamp if timestamp is not None else time.time(),
+        )
+        await self._payload_command(Command.PROCESS_SETTINGS_UPDATE, payload)
 
     async def close(self) -> None:
         writer = self._writer

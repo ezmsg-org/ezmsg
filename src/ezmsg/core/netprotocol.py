@@ -330,11 +330,15 @@ class Command(enum.Enum):
     SESSION_CLEAR = enum.auto()
     SESSION_REGISTER = enum.auto()
     SESSION_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_EVENTS = enum.auto()
+    SESSION_SETTINGS_SUBSCRIBE = enum.auto()
 
     # Backend Process Control Commands
     PROCESS = enum.auto()
     PROCESS_REGISTER = enum.auto()
     PROCESS_UPDATE_OWNERSHIP = enum.auto()
+    PROCESS_SETTINGS_UPDATE = enum.auto()
 
 
 def create_socket(

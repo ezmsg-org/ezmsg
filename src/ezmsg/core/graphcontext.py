@@ -22,14 +22,19 @@ from .netprotocol import (
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .graphmeta import GraphMetadata, GraphSnapshot
+from .graphmeta import (
+    GraphMetadata,
+    GraphSnapshot,
+    SettingsChangedEvent,
+    SettingsSnapshotValue,
+)
 
 logger = logging.getLogger("ezmsg")
 
 
 class _SessionResponseKind(enum.Enum):
     BYTE = enum.auto()
-    SNAPSHOT = enum.auto()
+    PICKLED = enum.auto()
 
 
 @dataclass
@@ -248,13 +253,13 @@ class GraphContext:
                 if cmd.response_kind == _SessionResponseKind.BYTE:
                     response = await reader.read(1)
 
-                elif cmd.response_kind == _SessionResponseKind.SNAPSHOT:
+                elif cmd.response_kind == _SessionResponseKind.PICKLED:
                     num_bytes = await read_int(reader)
-                    snapshot_bytes = await reader.readexactly(num_bytes)
+                    payload_bytes = await reader.readexactly(num_bytes)
                     complete = await reader.read(1)
                     if complete != Command.COMPLETE.value:
-                        raise RuntimeError("Unexpected response to session snapshot")
-                    response = pickle.loads(snapshot_bytes)
+                        raise RuntimeError("Unexpected pickled response from session")
+                    response = pickle.loads(payload_bytes)
 
                 else:
                     raise RuntimeError(f"Unsupported response kind: {cmd.response_kind}")
@@ -340,11 +345,65 @@ class GraphContext:
     async def snapshot(self) -> GraphSnapshot:
         snapshot = await self._session_command(
             Command.SESSION_SNAPSHOT,
-            response_kind=_SessionResponseKind.SNAPSHOT,
+            response_kind=_SessionResponseKind.PICKLED,
         )
         if not isinstance(snapshot, GraphSnapshot):
             raise RuntimeError("Session snapshot payload was not a GraphSnapshot")
         return snapshot
+
+    async def settings_snapshot(self) -> dict[str, SettingsSnapshotValue]:
+        snapshot = await self._session_command(
+            Command.SESSION_SETTINGS_SNAPSHOT,
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(snapshot, dict):
+            raise RuntimeError("Settings snapshot payload was not a dictionary")
+        if not all(isinstance(value, SettingsSnapshotValue) for value in snapshot.values()):
+            raise RuntimeError("Settings snapshot payload contained invalid values")
+        return snapshot
+
+    async def settings_events(self, after_seq: int = 0) -> list[SettingsChangedEvent]:
+        events = await self._session_command(
+            Command.SESSION_SETTINGS_EVENTS,
+            str(after_seq),
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(events, list):
+            raise RuntimeError("Settings event payload was not a list")
+        if not all(isinstance(event, SettingsChangedEvent) for event in events):
+            raise RuntimeError("Settings event payload contained invalid entries")
+        return events
+
+    async def subscribe_settings_events(
+        self,
+        *,
+        after_seq: int = 0,
+    ) -> typing.AsyncIterator[SettingsChangedEvent]:
+        reader, writer = await GraphService(self.graph_address).open_connection()
+        writer.write(Command.SESSION_SETTINGS_SUBSCRIBE.value)
+        writer.write(encode_str(str(after_seq)))
+        await writer.drain()
+
+        _subscriber_id = UUID(await read_str(reader))
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            await close_stream_writer(writer)
+            raise RuntimeError("Failed to subscribe to settings events")
+
+        try:
+            while True:
+                payload_size = await read_int(reader)
+                payload = await reader.readexactly(payload_size)
+                event = pickle.loads(payload)
+                if not isinstance(event, SettingsChangedEvent):
+                    raise RuntimeError(
+                        "Settings subscription received invalid event payload"
+                    )
+                yield event
+        except asyncio.IncompleteReadError:
+            return
+        finally:
+            await close_stream_writer(writer)
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
