@@ -16,6 +16,8 @@ from .graphmeta import (
     Edge,
     GraphMetadata,
     GraphSnapshot,
+    ProcessControlRequest,
+    ProcessControlResponse,
     ProcessRegistration,
     ProcessOwnershipUpdate,
     ProcessSettingsUpdate,
@@ -88,6 +90,9 @@ class GraphServer(threading.Thread):
     _settings_event_seq: int
     _settings_owned_by_session: dict[UUID, set[str]]
     _settings_subscribers: dict[UUID, asyncio.Queue[SettingsChangedEvent]]
+    _pending_process_requests: dict[
+        str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
+    ]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -109,6 +114,7 @@ class GraphServer(threading.Thread):
         self._settings_event_seq = 0
         self._settings_owned_by_session = {}
         self._settings_subscribers = {}
+        self._pending_process_requests = {}
 
     @property
     def address(self) -> Address:
@@ -524,6 +530,10 @@ class GraphServer(threading.Thread):
                     )
                     await writer.drain()
 
+                elif req == Command.SESSION_PROCESS_REQUEST.value:
+                    await self._handle_session_process_request(writer, reader)
+                    await writer.drain()
+
                 else:
                     logger.warning(
                         f"Session {session_id} rx unknown command from GraphServer: {req}"
@@ -567,22 +577,30 @@ class GraphServer(threading.Thread):
                     response = await self._handle_process_register_request(
                         process_client_id, reader
                     )
-                    writer.write(response)
-                    await writer.drain()
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
 
                 elif req == Command.PROCESS_UPDATE_OWNERSHIP.value:
                     response = await self._handle_process_update_ownership_request(
                         process_client_id, reader
                     )
-                    writer.write(response)
-                    await writer.drain()
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
 
                 elif req == Command.PROCESS_SETTINGS_UPDATE.value:
                     response = await self._handle_process_settings_update_request(
                         process_client_id, reader
                     )
-                    writer.write(response)
-                    await writer.drain()
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
+
+                elif req == Command.PROCESS_ROUTE_RESPONSE.value:
+                    await self._handle_process_route_response_request(
+                        process_client_id, reader
+                    )
 
                 else:
                     logger.warning(
@@ -595,9 +613,51 @@ class GraphServer(threading.Thread):
             )
 
         finally:
+            process_info = self._process_info(process_client_id)
+
+            async with self._command_lock:
+                request_ids = [
+                    request_id
+                    for request_id, (owner_process_id, _) in self._pending_process_requests.items()
+                    if owner_process_id == process_client_id
+                ]
+                for request_id in request_ids:
+                    pending = self._pending_process_requests.pop(request_id, None)
+                    if pending is None:
+                        continue
+                    _, response_fut = pending
+                    if not response_fut.done():
+                        response_fut.set_result(
+                            ProcessControlResponse(
+                                request_id=request_id,
+                                ok=False,
+                                error="Owning process disconnected before response",
+                                process_id=(
+                                    process_info.process_id if process_info is not None else None
+                                ),
+                            )
+                        )
+
             self.clients.pop(process_client_id, None)
             self._client_tasks.pop(process_client_id, None)
             await close_stream_writer(writer)
+
+    async def _write_process_response(
+        self,
+        process_client_id: UUID,
+        fallback_writer: asyncio.StreamWriter,
+        response: bytes,
+    ) -> None:
+        process_info = self._process_info(process_client_id)
+        if process_info is None:
+            fallback_writer.write(response)
+            await fallback_writer.drain()
+            return
+
+        async with process_info.write_lock:
+            writer = process_info.writer
+            writer.write(response)
+            await writer.drain()
 
     def _queue_settings_event(
         self, queue: asyncio.Queue[SettingsChangedEvent], event: SettingsChangedEvent
@@ -792,6 +852,151 @@ class GraphServer(threading.Thread):
             )
 
         return Command.COMPLETE.value
+
+    async def _handle_process_route_response_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> None:
+        num_bytes = await read_int(reader)
+        payload = await reader.readexactly(num_bytes)
+        response: ProcessControlResponse | None = None
+        try:
+            response_obj = pickle.loads(payload)
+            if isinstance(response_obj, ProcessControlResponse):
+                response = response_obj
+            else:
+                raise RuntimeError(
+                    "process route response payload was not ProcessControlResponse"
+                )
+        except Exception as exc:
+            logger.warning(
+                "Process control %s route response parse failed; ignoring payload: %s",
+                process_client_id,
+                exc,
+            )
+
+        if response is None:
+            return
+
+        async with self._command_lock:
+            pending = self._pending_process_requests.pop(response.request_id, None)
+
+        if pending is None:
+            logger.warning(
+                "Process control %s returned unknown request_id: %s",
+                process_client_id,
+                response.request_id,
+            )
+            return
+
+        owner_process_id, response_fut = pending
+        if owner_process_id != process_client_id:
+            if not response_fut.done():
+                response_fut.set_result(
+                    ProcessControlResponse(
+                        request_id=response.request_id,
+                        ok=False,
+                        error=(
+                            "Received response from unexpected process "
+                            f"{process_client_id}; expected {owner_process_id}"
+                        ),
+                        process_id=response.process_id,
+                    )
+                )
+            return
+
+        if not response_fut.done():
+            response_fut.set_result(response)
+
+    def _process_for_unit(self, unit_address: str) -> ProcessInfo | None:
+        for info in self.clients.values():
+            if isinstance(info, ProcessInfo) and unit_address in info.units:
+                return info
+        return None
+
+    async def _route_process_request(
+        self,
+        unit_address: str,
+        operation: str,
+        payload: bytes | None,
+        timeout: float,
+    ) -> ProcessControlResponse:
+        request_id = str(uuid1())
+        response_fut: asyncio.Future[ProcessControlResponse] = (
+            asyncio.get_running_loop().create_future()
+        )
+        request = ProcessControlRequest(
+            request_id=request_id,
+            unit_address=unit_address,
+            operation=operation,
+            payload=payload,
+        )
+
+        async with self._command_lock:
+            process_info = self._process_for_unit(unit_address)
+            if process_info is None:
+                return ProcessControlResponse(
+                    request_id=request_id,
+                    ok=False,
+                    error=f"No process owns unit '{unit_address}'",
+                )
+
+            self._pending_process_requests[request_id] = (process_info.id, response_fut)
+
+            try:
+                async with process_info.write_lock:
+                    process_writer = process_info.writer
+                    request_bytes = pickle.dumps(request)
+                    process_writer.write(Command.PROCESS_ROUTE_REQUEST.value)
+                    process_writer.write(uint64_to_bytes(len(request_bytes)))
+                    process_writer.write(request_bytes)
+                    await process_writer.drain()
+            except Exception as exc:
+                self._pending_process_requests.pop(request_id, None)
+                return ProcessControlResponse(
+                    request_id=request_id,
+                    ok=False,
+                    error=f"Failed to route request to owning process: {exc}",
+                    process_id=process_info.process_id,
+                )
+
+        try:
+            return await asyncio.wait_for(response_fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            async with self._command_lock:
+                self._pending_process_requests.pop(request_id, None)
+            return ProcessControlResponse(
+                request_id=request_id,
+                ok=False,
+                error=(
+                    f"Timed out waiting for process response "
+                    f"(unit={unit_address}, operation={operation}, timeout={timeout}s)"
+                ),
+                process_id=process_info.process_id,
+            )
+
+    async def _handle_session_process_request(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+    ) -> None:
+        unit_address = await read_str(reader)
+        operation = await read_str(reader)
+        timeout = float(await read_str(reader))
+        payload_size = await read_int(reader)
+        payload: bytes | None = None
+        if payload_size > 0:
+            payload = await reader.readexactly(payload_size)
+
+        response = await self._route_process_request(
+            unit_address=unit_address,
+            operation=operation,
+            payload=payload,
+            timeout=timeout,
+        )
+        response_bytes = pickle.dumps(response)
+        writer.write(uint64_to_bytes(len(response_bytes)))
+        writer.write(response_bytes)
+        writer.write(Command.COMPLETE.value)
 
     def _connect_owner(
         self, from_topic: str, to_topic: str, owner: UUID | str | None

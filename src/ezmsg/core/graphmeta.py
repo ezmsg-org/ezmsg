@@ -170,6 +170,23 @@ class ProcessSettingsUpdate:
     timestamp: float
 
 
+@dataclass
+class ProcessControlRequest:
+    request_id: str
+    unit_address: str
+    operation: str
+    payload: bytes | None = None
+
+
+@dataclass
+class ProcessControlResponse:
+    request_id: str
+    ok: bool
+    payload: bytes | None = None
+    error: str | None = None
+    process_id: str | None = None
+
+
 class Edge(NamedTuple):
     from_topic: str
     to_topic: str

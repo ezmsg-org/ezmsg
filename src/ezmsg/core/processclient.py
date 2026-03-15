@@ -6,8 +6,12 @@ import socket
 import time
 
 from uuid import UUID, uuid1
+from contextlib import suppress
+from collections.abc import Awaitable, Callable
 
 from .graphmeta import (
+    ProcessControlRequest,
+    ProcessControlResponse,
     ProcessRegistration,
     ProcessOwnershipUpdate,
     ProcessSettingsUpdate,
@@ -18,6 +22,7 @@ from .netprotocol import (
     AddressType,
     Command,
     close_stream_writer,
+    read_int,
     read_str,
     uint64_to_bytes,
 )
@@ -31,7 +36,12 @@ class ProcessControlClient:
     _client_id: UUID | None
     _reader: asyncio.StreamReader | None
     _writer: asyncio.StreamWriter | None
-    _lock: asyncio.Lock
+    _write_lock: asyncio.Lock
+    _ack_queue: asyncio.Queue[bytes]
+    _io_task: asyncio.Task[None] | None
+    _request_handler: Callable[
+        [ProcessControlRequest], ProcessControlResponse | Awaitable[ProcessControlResponse]
+    ] | None
 
     def __init__(
         self, graph_address: AddressType | None = None, process_id: str | None = None
@@ -41,7 +51,10 @@ class ProcessControlClient:
         self._client_id = None
         self._reader = None
         self._writer = None
-        self._lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
+        self._ack_queue = asyncio.Queue()
+        self._io_task = None
+        self._request_handler = None
 
     @property
     def process_id(self) -> str:
@@ -68,6 +81,19 @@ class ProcessControlClient:
         self._client_id = client_id
         self._reader = reader
         self._writer = writer
+        self._io_task = asyncio.create_task(
+            self._io_loop(),
+            name=f"process-control-{client_id}",
+        )
+
+    def set_request_handler(
+        self,
+        handler: Callable[
+            [ProcessControlRequest], ProcessControlResponse | Awaitable[ProcessControlResponse]
+        ]
+        | None,
+    ) -> None:
+        self._request_handler = handler
 
     async def register(self, units: list[str]) -> None:
         await self.connect()
@@ -112,26 +138,158 @@ class ProcessControlClient:
         if writer is None:
             return
 
+        io_task = self._io_task
+        self._io_task = None
+        if io_task is not None:
+            io_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await io_task
+
         self._reader = None
         self._writer = None
         self._client_id = None
         await close_stream_writer(writer)
 
     async def _payload_command(self, command: Command, payload_obj: object) -> None:
+        await self._write_payload(command, payload_obj, expect_complete=True)
+
+    async def _write_payload(
+        self,
+        command: Command,
+        payload_obj: object,
+        *,
+        expect_complete: bool,
+    ) -> None:
         reader = self._reader
         writer = self._writer
         if reader is None or writer is None:
             raise RuntimeError("Process control connection is not active")
 
         payload = pickle.dumps(payload_obj)
-        async with self._lock:
+        async with self._write_lock:
             writer.write(command.value)
             writer.write(uint64_to_bytes(len(payload)))
             writer.write(payload)
             await writer.drain()
 
-            response = await reader.read(1)
-            if response != Command.COMPLETE.value:
-                raise RuntimeError(
-                    f"Unexpected response to process control command: {command.name}"
+        if not expect_complete:
+            return
+
+        try:
+            response = await asyncio.wait_for(self._ack_queue.get(), timeout=5.0)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"Timed out waiting for response to process control command: {command.name}"
+            ) from exc
+
+        if response != Command.COMPLETE.value:
+            raise RuntimeError(
+                f"Unexpected response to process control command: {command.name}"
+            )
+
+    async def _io_loop(self) -> None:
+        reader = self._reader
+        writer = self._writer
+        if reader is None or writer is None:
+            return
+
+        try:
+            while True:
+                req = await reader.read(1)
+                if not req:
+                    break
+
+                if req == Command.COMPLETE.value:
+                    self._ack_queue.put_nowait(req)
+                    continue
+
+                if req != Command.PROCESS_ROUTE_REQUEST.value:
+                    logger.warning(
+                        "Process control %s received unknown command: %s",
+                        self._client_id,
+                        req,
+                    )
+                    continue
+
+                payload_size = await read_int(reader)
+                payload = await reader.readexactly(payload_size)
+                request: ProcessControlRequest | None = None
+                try:
+                    request_obj = pickle.loads(payload)
+                    if isinstance(request_obj, ProcessControlRequest):
+                        request = request_obj
+                    else:
+                        raise RuntimeError(
+                            "process route request payload was not ProcessControlRequest"
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Process control %s failed to parse route request: %s",
+                        self._client_id,
+                        exc,
+                    )
+
+                if request is None:
+                    continue
+
+                response = await self._handle_route_request(request)
+                await self._write_payload(
+                    Command.PROCESS_ROUTE_RESPONSE,
+                    response,
+                    expect_complete=False,
                 )
+
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionResetError, BrokenPipeError) as exc:
+            logger.debug(f"Process control {self._client_id} disconnected: {exc}")
+
+    async def _handle_route_request(
+        self, request: ProcessControlRequest
+    ) -> ProcessControlResponse:
+        if self._request_handler is None:
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=False,
+                error="process request handler is not configured",
+                process_id=self._process_id,
+            )
+
+        try:
+            result = self._request_handler(request)
+            if asyncio.iscoroutine(result):
+                result = await result
+        except Exception as exc:
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=False,
+                error=f"process request handler failed: {exc}",
+                process_id=self._process_id,
+            )
+
+        if not isinstance(result, ProcessControlResponse):
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=False,
+                error=(
+                    "process request handler returned invalid response type: "
+                    f"{type(result).__name__}"
+                ),
+                process_id=self._process_id,
+            )
+
+        if result.request_id != request.request_id:
+            result = ProcessControlResponse(
+                request_id=request.request_id,
+                ok=False,
+                error=(
+                    "process request handler returned mismatched request_id: "
+                    f"{result.request_id}"
+                ),
+                process_id=self._process_id,
+            )
+
+        if result.process_id is None:
+            result.process_id = self._process_id
+
+        return result

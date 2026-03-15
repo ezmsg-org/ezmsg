@@ -25,6 +25,7 @@ from .subclient import Subscriber
 from .graphmeta import (
     GraphMetadata,
     GraphSnapshot,
+    ProcessControlResponse,
     SettingsChangedEvent,
     SettingsSnapshotValue,
 )
@@ -404,6 +405,26 @@ class GraphContext:
             return
         finally:
             await close_stream_writer(writer)
+
+    async def process_request(
+        self,
+        unit_address: str,
+        operation: str,
+        *,
+        payload: bytes | None = None,
+        timeout: float = 2.0,
+    ) -> ProcessControlResponse:
+        response = await self._session_command(
+            Command.SESSION_PROCESS_REQUEST,
+            unit_address,
+            operation,
+            str(timeout),
+            payload=payload if payload is not None else b"",
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(response, ProcessControlResponse):
+            raise RuntimeError("Session process request payload was not ProcessControlResponse")
+        return response
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
