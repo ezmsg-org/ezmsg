@@ -14,6 +14,7 @@ from .dag import DAG, CyclicException
 from .graph_util import get_compactified_graph, graph_string, prune_graph_connections
 from .graphmeta import (
     Edge,
+    ProcessControlErrorCode,
     GraphMetadata,
     GraphSnapshot,
     ProcessControlRequest,
@@ -632,6 +633,7 @@ class GraphServer(threading.Thread):
                                 request_id=request_id,
                                 ok=False,
                                 error="Owning process disconnected before response",
+                                error_code=ProcessControlErrorCode.PROCESS_DISCONNECTED,
                                 process_id=(
                                     process_info.process_id if process_info is not None else None
                                 ),
@@ -899,6 +901,7 @@ class GraphServer(threading.Thread):
                             "Received response from unexpected process "
                             f"{process_client_id}; expected {owner_process_id}"
                         ),
+                        error_code=ProcessControlErrorCode.INVALID_RESPONSE,
                         process_id=response.process_id,
                     )
                 )
@@ -938,6 +941,7 @@ class GraphServer(threading.Thread):
                     request_id=request_id,
                     ok=False,
                     error=f"No process owns unit '{unit_address}'",
+                    error_code=ProcessControlErrorCode.UNROUTABLE_UNIT,
                 )
 
             self._pending_process_requests[request_id] = (process_info.id, response_fut)
@@ -956,6 +960,7 @@ class GraphServer(threading.Thread):
                     request_id=request_id,
                     ok=False,
                     error=f"Failed to route request to owning process: {exc}",
+                    error_code=ProcessControlErrorCode.ROUTE_WRITE_FAILED,
                     process_id=process_info.process_id,
                 )
 
@@ -971,6 +976,7 @@ class GraphServer(threading.Thread):
                     f"Timed out waiting for process response "
                     f"(unit={unit_address}, operation={operation}, timeout={timeout}s)"
                 ),
+                error_code=ProcessControlErrorCode.TIMEOUT,
                 process_id=process_info.process_id,
             )
 

@@ -10,9 +10,13 @@ from contextlib import suppress
 from collections.abc import Awaitable, Callable
 
 from .graphmeta import (
+    ProcessControlErrorCode,
+    ProcessControlOperation,
     ProcessControlRequest,
     ProcessControlResponse,
+    ProcessPing,
     ProcessRegistration,
+    ProcessStats,
     ProcessOwnershipUpdate,
     ProcessSettingsUpdate,
     SettingsSnapshotValue,
@@ -42,6 +46,7 @@ class ProcessControlClient:
     _request_handler: Callable[
         [ProcessControlRequest], ProcessControlResponse | Awaitable[ProcessControlResponse]
     ] | None
+    _owned_units: set[str]
 
     def __init__(
         self, graph_address: AddressType | None = None, process_id: str | None = None
@@ -55,6 +60,7 @@ class ProcessControlClient:
         self._ack_queue = asyncio.Queue()
         self._io_task = None
         self._request_handler = None
+        self._owned_units = set()
 
     @property
     def process_id(self) -> str:
@@ -97,13 +103,15 @@ class ProcessControlClient:
 
     async def register(self, units: list[str]) -> None:
         await self.connect()
+        normalized_units = sorted(set(units))
         payload = ProcessRegistration(
             process_id=self._process_id,
             pid=os.getpid(),
             host=socket.gethostname(),
-            units=sorted(set(units)),
+            units=normalized_units,
         )
         await self._payload_command(Command.PROCESS_REGISTER, payload)
+        self._owned_units = set(normalized_units)
 
     async def update_ownership(
         self,
@@ -111,12 +119,16 @@ class ProcessControlClient:
         removed_units: list[str] | None = None,
     ) -> None:
         await self.connect()
+        added = sorted(set(added_units or []))
+        removed = sorted(set(removed_units or []))
         payload = ProcessOwnershipUpdate(
             process_id=self._process_id,
-            added_units=sorted(set(added_units or [])),
-            removed_units=sorted(set(removed_units or [])),
+            added_units=added,
+            removed_units=removed,
         )
         await self._payload_command(Command.PROCESS_UPDATE_OWNERSHIP, payload)
+        self._owned_units.update(added)
+        self._owned_units.difference_update(removed)
 
     async def report_settings_update(
         self,
@@ -247,11 +259,50 @@ class ProcessControlClient:
     async def _handle_route_request(
         self, request: ProcessControlRequest
     ) -> ProcessControlResponse:
+        operation: ProcessControlOperation | None = None
+        if isinstance(request.operation, ProcessControlOperation):
+            operation = request.operation
+        elif isinstance(request.operation, str):
+            with suppress(ValueError):
+                operation = ProcessControlOperation(request.operation)
+
+        if operation == ProcessControlOperation.PING:
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(
+                    ProcessPing(
+                        process_id=self._process_id,
+                        pid=os.getpid(),
+                        host=socket.gethostname(),
+                        timestamp=time.time(),
+                    )
+                ),
+                process_id=self._process_id,
+            )
+
+        if operation == ProcessControlOperation.GET_PROCESS_STATS:
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(
+                    ProcessStats(
+                        process_id=self._process_id,
+                        pid=os.getpid(),
+                        host=socket.gethostname(),
+                        owned_units=sorted(self._owned_units),
+                        timestamp=time.time(),
+                    )
+                ),
+                process_id=self._process_id,
+            )
+
         if self._request_handler is None:
             return ProcessControlResponse(
                 request_id=request.request_id,
                 ok=False,
-                error="process request handler is not configured",
+                error=f"Unsupported process control operation: {request.operation}",
+                error_code=ProcessControlErrorCode.HANDLER_NOT_CONFIGURED,
                 process_id=self._process_id,
             )
 
@@ -264,6 +315,7 @@ class ProcessControlClient:
                 request_id=request.request_id,
                 ok=False,
                 error=f"process request handler failed: {exc}",
+                error_code=ProcessControlErrorCode.HANDLER_ERROR,
                 process_id=self._process_id,
             )
 
@@ -275,6 +327,7 @@ class ProcessControlClient:
                     "process request handler returned invalid response type: "
                     f"{type(result).__name__}"
                 ),
+                error_code=ProcessControlErrorCode.INVALID_RESPONSE,
                 process_id=self._process_id,
             )
 
@@ -286,6 +339,7 @@ class ProcessControlClient:
                     "process request handler returned mismatched request_id: "
                     f"{result.request_id}"
                 ),
+                error_code=ProcessControlErrorCode.INVALID_RESPONSE,
                 process_id=self._process_id,
             )
 

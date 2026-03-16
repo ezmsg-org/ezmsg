@@ -174,8 +174,24 @@ class ProcessSettingsUpdate:
 class ProcessControlRequest:
     request_id: str
     unit_address: str
-    operation: str
+    operation: "ProcessControlOperation | str"
     payload: bytes | None = None
+
+
+class ProcessControlOperation(enum.Enum):
+    PING = "PING"
+    GET_PROCESS_STATS = "GET_PROCESS_STATS"
+
+
+class ProcessControlErrorCode(enum.Enum):
+    UNROUTABLE_UNIT = "UNROUTABLE_UNIT"
+    ROUTE_WRITE_FAILED = "ROUTE_WRITE_FAILED"
+    TIMEOUT = "TIMEOUT"
+    PROCESS_DISCONNECTED = "PROCESS_DISCONNECTED"
+    UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
+    HANDLER_NOT_CONFIGURED = "HANDLER_NOT_CONFIGURED"
+    HANDLER_ERROR = "HANDLER_ERROR"
+    INVALID_RESPONSE = "INVALID_RESPONSE"
 
 
 @dataclass
@@ -184,7 +200,25 @@ class ProcessControlResponse:
     ok: bool
     payload: bytes | None = None
     error: str | None = None
+    error_code: ProcessControlErrorCode | None = None
     process_id: str | None = None
+
+
+@dataclass
+class ProcessPing:
+    process_id: str
+    pid: int
+    host: str
+    timestamp: float
+
+
+@dataclass
+class ProcessStats:
+    process_id: str
+    pid: int
+    host: str
+    owned_units: list[str]
+    timestamp: float
 
 
 class Edge(NamedTuple):

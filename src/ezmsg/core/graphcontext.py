@@ -23,8 +23,11 @@ from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .graphmeta import (
+    ProcessControlOperation,
     GraphMetadata,
     GraphSnapshot,
+    ProcessPing,
+    ProcessStats,
     ProcessControlResponse,
     SettingsChangedEvent,
     SettingsSnapshotValue,
@@ -409,15 +412,25 @@ class GraphContext:
     async def process_request(
         self,
         unit_address: str,
-        operation: str,
+        operation: ProcessControlOperation | str,
         *,
         payload: bytes | None = None,
+        payload_obj: object | None = None,
         timeout: float = 2.0,
     ) -> ProcessControlResponse:
+        if payload is not None and payload_obj is not None:
+            raise ValueError("Specify only one of payload or payload_obj")
+
+        if payload_obj is not None:
+            payload = pickle.dumps(payload_obj)
+
+        operation_name = (
+            operation.value if isinstance(operation, ProcessControlOperation) else operation
+        )
         response = await self._session_command(
             Command.SESSION_PROCESS_REQUEST,
             unit_address,
-            operation,
+            operation_name,
             str(timeout),
             payload=payload if payload is not None else b"",
             response_kind=_SessionResponseKind.PICKLED,
@@ -425,6 +438,55 @@ class GraphContext:
         if not isinstance(response, ProcessControlResponse):
             raise RuntimeError("Session process request payload was not ProcessControlResponse")
         return response
+
+    async def process_ping(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessPing:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.PING,
+            timeout=timeout,
+        )
+        return typing.cast(ProcessPing, self.decode_process_payload(response, ProcessPing))
+
+    async def process_stats(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessStats:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROCESS_STATS,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessStats, self.decode_process_payload(response, ProcessStats)
+        )
+
+    def decode_process_payload(
+        self,
+        response: ProcessControlResponse,
+        expected_type: type[object] = object,
+    ) -> object:
+        if not response.ok:
+            raise RuntimeError(
+                f"Process request failed ({response.error_code}): {response.error}"
+            )
+        if response.payload is None:
+            raise RuntimeError("Process response did not include a payload")
+        decoded = pickle.loads(response.payload)
+        if expected_type is object:
+            return decoded
+        if not isinstance(decoded, expected_type):
+            raise RuntimeError(
+                "Unexpected process payload type: "
+                f"{type(decoded).__name__} (expected {expected_type.__name__})"
+            )
+        return decoded
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:
