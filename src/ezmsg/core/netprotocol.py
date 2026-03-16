@@ -334,6 +334,7 @@ class Command(enum.Enum):
     SESSION_SETTINGS_SNAPSHOT = enum.auto()
     SESSION_SETTINGS_EVENTS = enum.auto()
     SESSION_SETTINGS_SUBSCRIBE = enum.auto()
+    SESSION_PROFILING_SUBSCRIBE = enum.auto()
     SESSION_PROCESS_REQUEST = enum.auto()
 
     # Backend Process Control Commands

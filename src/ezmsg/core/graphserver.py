@@ -14,9 +14,12 @@ from .dag import DAG, CyclicException
 from .graph_util import get_compactified_graph, graph_string, prune_graph_connections
 from .graphmeta import (
     Edge,
+    ProcessControlOperation,
     ProcessControlErrorCode,
     GraphMetadata,
     GraphSnapshot,
+    ProcessProfilingTraceBatch,
+    ProfilingTraceStreamBatch,
     ProcessControlRequest,
     ProcessControlResponse,
     ProcessRegistration,
@@ -320,6 +323,27 @@ class GraphServer(threading.Thread):
                 self._client_tasks[subscriber_id] = asyncio.create_task(
                     self._handle_settings_subscriber(
                         subscriber_id, after_seq, reader, writer
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.SESSION_PROFILING_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                interval = float(await read_str(reader))
+                max_samples = int(await read_str(reader))
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_profiling_subscriber(
+                        subscriber_id,
+                        max(0.01, interval),
+                        max(1, max_samples),
+                        reader,
+                        writer,
                     )
                 )
 
@@ -725,6 +749,91 @@ class GraphServer(threading.Thread):
             sender_task.cancel()
             with suppress(asyncio.CancelledError):
                 await sender_task
+            await close_stream_writer(writer)
+
+    async def _profiling_route_targets(self) -> list[tuple[str, str]]:
+        targets: list[tuple[str, str]] = []
+        async with self._command_lock:
+            for client_id, info in self.clients.items():
+                if not isinstance(info, ProcessInfo):
+                    continue
+                if len(info.units) == 0:
+                    continue
+                process_id = info.process_id if info.process_id is not None else str(client_id)
+                route_unit = sorted(info.units)[0]
+                targets.append((process_id, route_unit))
+        return targets
+
+    async def _collect_profiling_trace_stream_batch(
+        self,
+        *,
+        max_samples: int,
+        timeout_per_process: float,
+    ) -> ProfilingTraceStreamBatch:
+        targets = await self._profiling_route_targets()
+        batches: dict[str, ProcessProfilingTraceBatch] = {}
+        request_payload = pickle.dumps(max_samples)
+
+        for process_id, route_unit in targets:
+            response = await self._route_process_request(
+                unit_address=route_unit,
+                operation=ProcessControlOperation.GET_PROFILING_TRACE_BATCH.value,
+                payload=request_payload,
+                timeout=timeout_per_process,
+            )
+            if not response.ok or response.payload is None:
+                continue
+            try:
+                payload_obj = pickle.loads(response.payload)
+            except Exception:
+                continue
+            if not isinstance(payload_obj, ProcessProfilingTraceBatch):
+                continue
+            if len(payload_obj.samples) == 0:
+                continue
+            batches[process_id] = payload_obj
+
+        return ProfilingTraceStreamBatch(
+            timestamp=time.time(),
+            batches=batches,
+        )
+
+    async def _handle_profiling_subscriber(
+        self,
+        subscriber_id: UUID,
+        interval: float,
+        max_samples: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            while True:
+                try:
+                    req = await asyncio.wait_for(reader.read(1), timeout=interval)
+                    if not req:
+                        break
+                    # No control commands currently supported on this stream.
+                    continue
+                except asyncio.TimeoutError:
+                    pass
+
+                batch = await self._collect_profiling_trace_stream_batch(
+                    max_samples=max_samples,
+                    timeout_per_process=max(0.05, interval),
+                )
+                if len(batch.batches) == 0:
+                    continue
+
+                payload = pickle.dumps(batch)
+                writer.write(uint64_to_bytes(len(payload)))
+                writer.write(payload)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Profiling subscriber {subscriber_id} disconnected: {e}")
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._client_tasks.pop(subscriber_id, None)
             await close_stream_writer(writer)
 
     async def _handle_process_register_request(

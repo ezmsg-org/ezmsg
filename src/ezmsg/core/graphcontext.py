@@ -29,6 +29,7 @@ from .graphmeta import (
     ProcessPing,
     ProcessProfilingSnapshot,
     ProcessProfilingTraceBatch,
+    ProfilingTraceStreamBatch,
     ProcessStats,
     ProcessControlResponse,
     ProfilingTraceControl,
@@ -417,6 +418,39 @@ class GraphContext:
                         "Settings subscription received invalid event payload"
                     )
                 yield event
+        except asyncio.IncompleteReadError:
+            return
+        finally:
+            await close_stream_writer(writer)
+
+    async def subscribe_profiling_trace(
+        self,
+        *,
+        interval: float = 0.05,
+        max_samples: int = 1000,
+    ) -> typing.AsyncIterator[ProfilingTraceStreamBatch]:
+        reader, writer = await GraphService(self.graph_address).open_connection()
+        writer.write(Command.SESSION_PROFILING_SUBSCRIBE.value)
+        writer.write(encode_str(str(interval)))
+        writer.write(encode_str(str(max_samples)))
+        await writer.drain()
+
+        _subscriber_id = UUID(await read_str(reader))
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            await close_stream_writer(writer)
+            raise RuntimeError("Failed to subscribe to profiling trace stream")
+
+        try:
+            while True:
+                payload_size = await read_int(reader)
+                payload = await reader.readexactly(payload_size)
+                batch = pickle.loads(payload)
+                if not isinstance(batch, ProfilingTraceStreamBatch):
+                    raise RuntimeError(
+                        "Profiling subscription received invalid batch payload"
+                    )
+                yield batch
         except asyncio.IncompleteReadError:
             return
         finally:

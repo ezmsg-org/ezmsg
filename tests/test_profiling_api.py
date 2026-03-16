@@ -135,3 +135,57 @@ async def test_profiling_snapshot_all_and_unroutable_error_code():
         await process.close()
         await ctx.__aexit__(None, None, None)
         graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_subscription_push():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process = ProcessControlClient(address, process_id="proc-stream")
+    await process.connect()
+    await process.register(["SYS/U4"])
+
+    pub = await ctx.publisher("TOPIC_STREAM")
+    sub = await ctx.subscriber("TOPIC_STREAM")
+    stream = None
+
+    try:
+        response = await ctx.process_set_profiling_trace(
+            "SYS/U4",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_topics=["TOPIC_STREAM"],
+                subscriber_topics=["TOPIC_STREAM"],
+            ),
+            timeout=1.0,
+        )
+        assert response.ok
+
+        stream = ctx.subscribe_profiling_trace(interval=0.02, max_samples=256)
+
+        for idx in range(8):
+            await pub.broadcast(idx)
+            async with sub.recv_zero_copy() as _msg:
+                span_start_ns = sub.begin_profile()
+                try:
+                    await asyncio.sleep(0)
+                finally:
+                    sub.end_profile(span_start_ns, "taskA")
+
+        batch = await asyncio.wait_for(anext(stream), timeout=1.0)
+        assert batch.timestamp > 0.0
+        assert "proc-stream" in batch.batches
+        process_batch = batch.batches["proc-stream"]
+        assert process_batch.process_id == "proc-stream"
+        assert len(process_batch.samples) > 0
+    finally:
+        if stream is not None:
+            await stream.aclose()
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()

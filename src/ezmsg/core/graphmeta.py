@@ -301,6 +301,12 @@ class ProcessProfilingTraceBatch:
     samples: list[ProfilingTraceSample]
 
 
+@dataclass
+class ProfilingTraceStreamBatch:
+    timestamp: float
+    batches: dict[str, ProcessProfilingTraceBatch]
+
+
 class Edge(NamedTuple):
     from_topic: str
     to_topic: str
