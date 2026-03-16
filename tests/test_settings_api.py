@@ -35,6 +35,7 @@ def _metadata_with_component(component_address: str) -> GraphMetadata:
                     input_topic=f"{component_address}/INPUT_SETTINGS",
                     settings_type="example.Settings",
                 ),
+                settings_schema=None,
             )
         },
     )
@@ -58,6 +59,8 @@ async def test_settings_snapshot_and_events_from_metadata_registration():
         settings = await observer.settings_snapshot()
         assert component_address in settings
         assert settings[component_address].repr_value == {"alpha": 1}
+        assert settings[component_address].structured_value == {"alpha": 1}
+        assert settings[component_address].settings_schema is None
 
         events = await observer.settings_events(after_seq=0)
         matching = [
@@ -125,6 +128,15 @@ def test_input_settings_hook_reports_to_graphserver():
                 sink_address = "SYS/SINK"
                 assert sink_address in settings
                 assert settings[sink_address].repr_value == {"gain": 7}
+                assert settings[sink_address].structured_value == {"gain": 7}
+                assert settings[sink_address].settings_schema is not None
+                schema = settings[sink_address].settings_schema
+                assert schema is not None
+                assert schema.provider == "dataclass"
+                assert any(
+                    field.name == "gain" and "int" in field.field_type.lower()
+                    for field in schema.fields
+                )
 
                 events = await observer.settings_events(after_seq=0)
                 matching = [

@@ -1419,9 +1419,12 @@ class GraphServer(threading.Thread):
     ) -> None:
         session_components: set[str] = set()
         for component in metadata.components.values():
+            initial_repr = component.initial_settings[1]
             value = SettingsSnapshotValue(
                 serialized=component.initial_settings[0],
-                repr_value=component.initial_settings[1],
+                repr_value=initial_repr,
+                structured_value=initial_repr if isinstance(initial_repr, dict) else None,
+                settings_schema=component.settings_schema,
             )
             self._settings_current[component.address] = value
             self._settings_source_session[component.address] = session_id

@@ -7,11 +7,12 @@ import pickle
 import traceback
 import threading
 import weakref
+from copy import deepcopy
 
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, fields as dataclass_fields, is_dataclass, replace
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass, replace
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Coroutine, Generator, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from functools import wraps, partial
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
@@ -39,6 +40,11 @@ from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
+from .settingsmeta import (
+    settings_repr_value,
+    settings_schema_from_value,
+    settings_structured_value,
+)
 
 logger = logging.getLogger("ezmsg")
 
@@ -236,15 +242,12 @@ class DefaultBackendProcess(BackendProcess):
         except Exception:
             serialized = None
 
-        if is_dataclass(value):
-            try:
-                repr_value = asdict(value)
-                if isinstance(repr_value, dict):
-                    return SettingsSnapshotValue(serialized=serialized, repr_value=repr_value)
-            except Exception:
-                pass
-
-        return SettingsSnapshotValue(serialized=serialized, repr_value=repr(value))
+        return SettingsSnapshotValue(
+            serialized=serialized,
+            repr_value=settings_repr_value(value),
+            structured_value=settings_structured_value(value),
+            settings_schema=settings_schema_from_value(value),
+        )
 
     def _replace_settings_field(
         self, settings_value: object, field_path: str, value: object
@@ -254,26 +257,63 @@ class DefaultBackendProcess(BackendProcess):
         path = field_path.split(".")
 
         def apply(current: object, idx: int) -> object:
-            if not is_dataclass(current):
-                raise TypeError(
-                    "Cannot patch non-dataclass settings value at "
-                    f"'{'.'.join(path[:idx])}'"
-                )
             field_name = path[idx]
-            valid_fields = {f.name for f in dataclass_fields(current)}
-            if field_name not in valid_fields:
+            if isinstance(current, Mapping):
+                if field_name not in current:
+                    raise AttributeError(
+                        f"Settings field '{field_name}' does not exist in mapping"
+                    )
+                if idx == len(path) - 1:
+                    updated = dict(current)
+                    updated[field_name] = value
+                    return updated
+                patched_child = apply(current[field_name], idx + 1)
+                updated = dict(current)
+                updated[field_name] = patched_child
+                return updated
+
+            if not hasattr(current, field_name):
                 raise AttributeError(
                     f"Settings field '{field_name}' does not exist on "
                     f"{type(current).__name__}"
                 )
+
             if idx == len(path) - 1:
-                return replace(current, **{field_name: value})
+                return self._patch_object_field(current, field_name, value)
 
             child_value = getattr(current, field_name)
             patched_child = apply(child_value, idx + 1)
-            return replace(current, **{field_name: patched_child})
+            return self._patch_object_field(current, field_name, patched_child)
 
         return apply(settings_value, 0)
+
+    def _patch_object_field(
+        self, obj: object, field_name: str, value: object
+    ) -> object:
+        if is_dataclass(obj):
+            valid_fields = {f.name for f in dataclass_fields(obj)}
+            if field_name not in valid_fields:
+                raise AttributeError(
+                    f"Settings field '{field_name}' does not exist on "
+                    f"{type(obj).__name__}"
+                )
+            return replace(obj, **{field_name: value})
+
+        if hasattr(obj, "model_copy") and callable(getattr(obj, "model_copy")):
+            return obj.model_copy(update={field_name: value})  # type: ignore[attr-defined]
+
+        if hasattr(obj, "copy") and callable(getattr(obj, "copy")):
+            try:
+                return obj.copy(update={field_name: value})  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        if hasattr(obj, field_name):
+            patched = deepcopy(obj)
+            setattr(patched, field_name, value)
+            return patched
+
+        raise TypeError(f"Cannot patch settings object of type {type(obj).__name__}")
 
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
@@ -698,8 +738,10 @@ class DefaultBackendProcess(BackendProcess):
             except Exception:
                 logger.error(f"Exception in Task: {task_address}")
                 logger.error(traceback.format_exc())
-                if self.term_ev.is_set():
-                    self._shutdown_errors = True
+                # Any task exception should mark shutdown as unclean so
+                # interrupt-driven teardown can return a non-zero exit code.
+                # Gating this on term_ev introduces timing-dependent behavior.
+                self._shutdown_errors = True
                 if strict_shutdown:
                     raise
 

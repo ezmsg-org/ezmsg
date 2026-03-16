@@ -83,6 +83,25 @@ class TaskMetadata:
     publishes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class SettingsFieldMetadata:
+    name: str
+    field_type: str
+    required: bool
+    default: Any
+    description: str | None
+    bounds: tuple[float | None, float | None] | None
+    choices: list[Any] | None
+    widget_hint: str | None
+
+
+@dataclass
+class SettingsSchemaMetadata:
+    provider: str
+    settings_type: str
+    fields: list[SettingsFieldMetadata]
+
+
 SettingsReprType: TypeAlias = dict[str, Any] | str
 SerializedSettingsType: TypeAlias = bytes | None
 InitialSettingsType: TypeAlias = tuple[SerializedSettingsType, SettingsReprType]
@@ -96,6 +115,7 @@ class ComponentMetadata:
     settings_type: str
     initial_settings: InitialSettingsType
     dynamic_settings: DynamicSettingsMetadata
+    settings_schema: SettingsSchemaMetadata | None
 
 
 @dataclass
@@ -144,6 +164,8 @@ class ProcessOwnershipUpdate:
 class SettingsSnapshotValue:
     serialized: bytes | None
     repr_value: dict[str, Any] | str
+    structured_value: dict[str, Any] | None = None
+    settings_schema: SettingsSchemaMetadata | None = None
 
 
 class SettingsEventType(enum.Enum):
