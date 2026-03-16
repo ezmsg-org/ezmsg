@@ -199,6 +199,7 @@ class ProcessControlOperation(enum.Enum):
     GET_PROFILING_SNAPSHOT = "GET_PROFILING_SNAPSHOT"
     SET_PROFILING_TRACE = "SET_PROFILING_TRACE"
     GET_PROFILING_TRACE_BATCH = "GET_PROFILING_TRACE_BATCH"
+    UPDATE_SETTING_FIELD = "UPDATE_SETTING_FIELD"
 
 
 class ProcessControlErrorCode(enum.Enum):
@@ -220,6 +221,12 @@ class ProcessControlResponse:
     error: str | None = None
     error_code: ProcessControlErrorCode | None = None
     process_id: str | None = None
+
+
+@dataclass
+class SettingsFieldUpdateRequest:
+    field_path: str
+    value: Any
 
 
 @dataclass
@@ -331,7 +338,6 @@ class ProfilingStreamControl:
     interval: float = 0.05
     max_samples: int = 1000
     process_ids: list[str] | None = None
-    timeout_per_process: float = 0.25
     include_empty_batches: bool = False
 
 

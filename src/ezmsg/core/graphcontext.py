@@ -34,6 +34,7 @@ from .graphmeta import (
     ProcessStats,
     ProcessControlResponse,
     ProfilingTraceControl,
+    SettingsFieldUpdateRequest,
     SettingsChangedEvent,
     SettingsSnapshotValue,
     TopologyChangedEvent,
@@ -393,6 +394,89 @@ class GraphContext:
         if not all(isinstance(event, SettingsChangedEvent) for event in events):
             raise RuntimeError("Settings event payload contained invalid entries")
         return events
+
+    async def settings_input_topic(self, component_address: str) -> str:
+        """
+        Resolve the dynamic settings input topic for a component.
+
+        The topic is discovered from currently registered session metadata.
+        Raises if the component is missing, does not opt in to dynamic settings,
+        or appears with conflicting dynamic settings topics.
+        """
+        snapshot = await self.snapshot()
+        topics: set[str] = set()
+        for session in snapshot.sessions.values():
+            metadata = session.metadata
+            if metadata is None:
+                continue
+            component = metadata.components.get(component_address)
+            if component is None:
+                continue
+            dynamic_settings = component.dynamic_settings
+            if dynamic_settings.enabled and dynamic_settings.input_topic is not None:
+                topics.add(dynamic_settings.input_topic)
+
+        if len(topics) == 1:
+            return next(iter(topics))
+        if len(topics) > 1:
+            raise RuntimeError(
+                "Conflicting dynamic settings topics for component "
+                f"'{component_address}': {sorted(topics)}"
+            )
+        raise RuntimeError(
+            f"Component '{component_address}' does not expose dynamic settings metadata"
+        )
+
+    async def update_settings(
+        self,
+        component_address: str,
+        value: object,
+        *,
+        input_topic: str | None = None,
+    ) -> None:
+        """
+        Publish a settings value to a component's `INPUT_SETTINGS` inlet.
+
+        By default the target topic is resolved from metadata via
+        :meth:`settings_input_topic`. Supplying `input_topic` bypasses
+        metadata lookup.
+        """
+        topic = input_topic if input_topic is not None else await self.settings_input_topic(
+            component_address
+        )
+        pub = await self.publisher(topic)
+        try:
+            await pub.broadcast(value)
+        finally:
+            pub.close()
+            await pub.wait_closed()
+            self._clients.discard(pub)
+
+    async def update_setting(
+        self,
+        component_address: str,
+        field_path: str,
+        value: object,
+        *,
+        timeout: float = 2.0,
+    ) -> SettingsSnapshotValue:
+        """
+        Patch one field of a unit's current dynamic settings value.
+
+        The patch is routed to the owning backend process, applied in-process
+        using dataclass replacement, and then published to `INPUT_SETTINGS`.
+        Returns a snapshot representation of the patched settings value.
+        """
+        response = await self.process_request(
+            component_address,
+            ProcessControlOperation.UPDATE_SETTING_FIELD,
+            payload_obj=SettingsFieldUpdateRequest(field_path=field_path, value=value),
+            timeout=timeout,
+        )
+        return typing.cast(
+            SettingsSnapshotValue,
+            self.decode_process_payload(response, SettingsSnapshotValue),
+        )
 
     async def subscribe_settings_events(
         self,

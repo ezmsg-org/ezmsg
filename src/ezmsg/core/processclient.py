@@ -51,6 +51,9 @@ class ProcessControlClient:
         [ProcessControlRequest], ProcessControlResponse | Awaitable[ProcessControlResponse]
     ] | None
     _owned_units: set[str]
+    _trace_push_task: asyncio.Task[None] | None
+    _trace_push_interval_s: float
+    _trace_push_max_samples: int
 
     def __init__(
         self, graph_address: AddressType | None = None, process_id: str | None = None
@@ -65,6 +68,13 @@ class ProcessControlClient:
         self._io_task = None
         self._request_handler = None
         self._owned_units = set()
+        self._trace_push_task = None
+        self._trace_push_interval_s = float(
+            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_INTERVAL_S", "0.05")
+        )
+        self._trace_push_max_samples = int(
+            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_MAX_SAMPLES", "1000")
+        )
         PROFILES.set_process_id(self._process_id, reset=True)
 
     @property
@@ -155,6 +165,13 @@ class ProcessControlClient:
         writer = self._writer
         if writer is None:
             return
+
+        trace_task = self._trace_push_task
+        self._trace_push_task = None
+        if trace_task is not None:
+            trace_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await trace_task
 
         io_task = self._io_task
         self._io_task = None
@@ -338,6 +355,11 @@ class ProcessControlClient:
                 )
 
             PROFILES.set_trace_control(control)
+            if control.enabled:
+                await self._ensure_trace_push_task()
+            else:
+                await self._cancel_trace_push_task()
+
             return ProcessControlResponse(
                 request_id=request.request_id,
                 ok=True,
@@ -414,3 +436,47 @@ class ProcessControlClient:
             result.process_id = self._process_id
 
         return result
+
+    async def _ensure_trace_push_task(self) -> None:
+        task = self._trace_push_task
+        if task is not None and not task.done():
+            return
+        self._trace_push_task = asyncio.create_task(
+            self._trace_push_loop(),
+            name=f"proc-trace-push-{self._process_id}",
+        )
+
+    async def _cancel_trace_push_task(self) -> None:
+        task = self._trace_push_task
+        self._trace_push_task = None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _trace_push_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(max(0.01, self._trace_push_interval_s))
+                batch: ProcessProfilingTraceBatch = PROFILES.trace_batch(
+                    max_samples=max(1, self._trace_push_max_samples)
+                )
+                if len(batch.samples) > 0:
+                    await self._write_payload(
+                        Command.PROCESS_PROFILING_TRACE_UPDATE,
+                        batch,
+                        expect_complete=False,
+                    )
+
+                if not PROFILES.trace_enabled():
+                    break
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug("Process trace push loop disconnected")
+        except Exception as exc:
+            logger.warning(f"Process trace push loop failed: {exc}")
+        finally:
+            if asyncio.current_task() is self._trace_push_task:
+                self._trace_push_task = None

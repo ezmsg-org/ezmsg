@@ -343,6 +343,7 @@ class Command(enum.Enum):
     PROCESS_REGISTER = enum.auto()
     PROCESS_UPDATE_OWNERSHIP = enum.auto()
     PROCESS_SETTINGS_UPDATE = enum.auto()
+    PROCESS_PROFILING_TRACE_UPDATE = enum.auto()
     PROCESS_ROUTE_REQUEST = enum.auto()
     PROCESS_ROUTE_RESPONSE = enum.auto()
 

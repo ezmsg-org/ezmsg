@@ -304,7 +304,6 @@ async def test_process_profiling_trace_subscription_stream_control():
                 max_samples=64,
                 process_ids=["proc-stream-a"],
                 include_empty_batches=True,
-                timeout_per_process=0.1,
             )
         )
         batch = await asyncio.wait_for(anext(stream), timeout=1.0)

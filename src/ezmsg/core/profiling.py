@@ -425,6 +425,10 @@ class ProfileRegistry:
             samples=samples,
         )
 
+    def trace_enabled(self) -> bool:
+        self._expire_trace_control_if_needed()
+        return self._default_trace_control.enabled
+
     def _expire_trace_control_if_needed(self, now_ns: int | None = None) -> None:
         expires_ns = self._trace_control_expires_ns
         if expires_ns is None:

@@ -9,7 +9,7 @@ import threading
 import weakref
 
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, fields as dataclass_fields, is_dataclass, replace
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Sequence
 from functools import wraps, partial
@@ -26,7 +26,14 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR
 
 from .graphcontext import GraphContext
-from .graphmeta import SettingsSnapshotValue
+from .graphmeta import (
+    ProcessControlErrorCode,
+    ProcessControlOperation,
+    ProcessControlRequest,
+    ProcessControlResponse,
+    SettingsFieldUpdateRequest,
+    SettingsSnapshotValue,
+)
 from .profiling import PROFILES, PROFILE_TIME
 from .processclient import ProcessControlClient
 from .pubclient import Publisher
@@ -239,6 +246,35 @@ class DefaultBackendProcess(BackendProcess):
 
         return SettingsSnapshotValue(serialized=serialized, repr_value=repr(value))
 
+    def _replace_settings_field(
+        self, settings_value: object, field_path: str, value: object
+    ) -> object:
+        if field_path == "":
+            raise ValueError("field_path must not be empty")
+        path = field_path.split(".")
+
+        def apply(current: object, idx: int) -> object:
+            if not is_dataclass(current):
+                raise TypeError(
+                    "Cannot patch non-dataclass settings value at "
+                    f"'{'.'.join(path[:idx])}'"
+                )
+            field_name = path[idx]
+            valid_fields = {f.name for f in dataclass_fields(current)}
+            if field_name not in valid_fields:
+                raise AttributeError(
+                    f"Settings field '{field_name}' does not exist on "
+                    f"{type(current).__name__}"
+                )
+            if idx == len(path) - 1:
+                return replace(current, **{field_name: value})
+
+            child_value = getattr(current, field_name)
+            patched_child = apply(child_value, idx + 1)
+            return replace(current, **{field_name: patched_child})
+
+        return apply(settings_value, 0)
+
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
         context = GraphContext(self.graph_address)
@@ -246,7 +282,113 @@ class DefaultBackendProcess(BackendProcess):
         PROFILES.set_process_id(process_client.process_id)
         process_register_future: concurrent.futures.Future[None] | None = None
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
+        settings_input_topics: dict[str, str] = {}
+        current_settings: dict[str, object] = {}
+        control_publishers: dict[str, Publisher] = {}
         self._shutdown_errors = False
+
+        async def process_request_handler(
+            request: ProcessControlRequest,
+        ) -> ProcessControlResponse:
+            if request.operation != ProcessControlOperation.UPDATE_SETTING_FIELD.value:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Unsupported process control operation: {request.operation}",
+                    error_code=ProcessControlErrorCode.UNSUPPORTED_OPERATION,
+                    process_id=process_client.process_id,
+                )
+
+            if request.payload is None:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error="Missing settings field update payload",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=process_client.process_id,
+                )
+
+            try:
+                update_obj = pickle.loads(request.payload)
+                if not isinstance(update_obj, SettingsFieldUpdateRequest):
+                    raise RuntimeError(
+                        "settings field update payload was not SettingsFieldUpdateRequest"
+                    )
+            except Exception as exc:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Invalid settings field update payload: {exc}",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=process_client.process_id,
+                )
+
+            unit_address = request.unit_address
+            input_topic = settings_input_topics.get(unit_address)
+            if input_topic is None:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=(
+                        f"Unit '{unit_address}' does not expose INPUT_SETTINGS; "
+                        "settings field update unsupported"
+                    ),
+                    error_code=ProcessControlErrorCode.UNSUPPORTED_OPERATION,
+                    process_id=process_client.process_id,
+                )
+
+            if unit_address not in current_settings:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=(
+                        f"No current settings value tracked for unit '{unit_address}'. "
+                        "Send a full settings object first via update_settings()."
+                    ),
+                    error_code=ProcessControlErrorCode.HANDLER_ERROR,
+                    process_id=process_client.process_id,
+                )
+
+            try:
+                patched = self._replace_settings_field(
+                    current_settings[unit_address],
+                    update_obj.field_path,
+                    update_obj.value,
+                )
+                current_settings[unit_address] = patched
+                control_pub = control_publishers.get(input_topic)
+                if control_pub is None:
+                    control_pub = await context.publisher(input_topic)
+                    control_publishers[input_topic] = control_pub
+            except Exception as exc:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Failed to patch settings field: {exc}",
+                    error_code=ProcessControlErrorCode.HANDLER_ERROR,
+                    process_id=process_client.process_id,
+                )
+
+            async def publish_patched_settings() -> None:
+                try:
+                    await control_pub.broadcast(patched)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to publish patched settings for %s: %s",
+                        unit_address,
+                        exc,
+                    )
+
+            asyncio.create_task(publish_patched_settings())
+            result_value = self._settings_snapshot_value(patched)
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(result_value),
+                process_id=process_client.process_id,
+            )
+
+        process_client.set_request_handler(process_request_handler)
 
         try:
             self.pubs = dict()
@@ -281,6 +423,8 @@ class DefaultBackendProcess(BackendProcess):
                 main_func = None
 
             for unit in self.units:
+                if unit.SETTINGS is not None:
+                    current_settings[unit.address] = unit.SETTINGS
                 sub_callables: defaultdict[
                     str, set[Callable[..., Coroutine[Any, Any, None]]]
                 ] = defaultdict(set)
@@ -311,12 +455,14 @@ class DefaultBackendProcess(BackendProcess):
                         ) = None
                         if stream.name == "INPUT_SETTINGS":
                             component_address = unit.address
+                            settings_input_topics[component_address] = stream.address
 
                             async def report_settings_update_cb(
                                 msg: object,
                                 *,
                                 _component_address: str = component_address,
                             ) -> None:
+                                current_settings[_component_address] = msg
                                 value = self._settings_snapshot_value(msg)
                                 await process_client.report_settings_update(
                                     component_address=_component_address,

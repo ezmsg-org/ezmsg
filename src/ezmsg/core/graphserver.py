@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 import time
+from collections import deque
 from contextlib import suppress
 from uuid import UUID, uuid1
 
@@ -19,6 +20,7 @@ from .graphmeta import (
     GraphMetadata,
     GraphSnapshot,
     ProcessProfilingTraceBatch,
+    ProfilingTraceSample,
     ProfilingTraceStreamBatch,
     ProfilingStreamControl,
     ProcessControlRequest,
@@ -103,6 +105,8 @@ class GraphServer(threading.Thread):
     _pending_process_requests: dict[
         str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
     ]
+    _profiling_trace_buffers: dict[str, deque[ProfilingTraceSample]]
+    _profiling_trace_process_meta: dict[str, tuple[int, str]]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -128,6 +132,8 @@ class GraphServer(threading.Thread):
         self._topology_event_seq = 0
         self._topology_subscribers = {}
         self._pending_process_requests = {}
+        self._profiling_trace_buffers = {}
+        self._profiling_trace_process_meta = {}
 
     @property
     def address(self) -> Address:
@@ -651,6 +657,11 @@ class GraphServer(threading.Thread):
                         process_client_id, writer, response
                     )
 
+                elif req == Command.PROCESS_PROFILING_TRACE_UPDATE.value:
+                    await self._handle_process_profiling_trace_update_request(
+                        process_client_id, reader
+                    )
+
                 elif req == Command.PROCESS_ROUTE_RESPONSE.value:
                     await self._handle_process_route_response_request(
                         process_client_id, reader
@@ -698,6 +709,8 @@ class GraphServer(threading.Thread):
                         if process_info.process_id is not None
                         else str(process_client_id)
                     )
+                    self._profiling_trace_buffers.pop(source_process_id, None)
+                    self._profiling_trace_process_meta.pop(source_process_id, None)
                     self._append_topology_event_locked(
                         event_type=TopologyEventType.PROCESS_CHANGED,
                         changed_topics=[],
@@ -857,19 +870,6 @@ class GraphServer(threading.Thread):
                 await sender_task
             await close_stream_writer(writer)
 
-    async def _profiling_route_targets(self) -> list[tuple[str, str]]:
-        targets: list[tuple[str, str]] = []
-        async with self._command_lock:
-            for client_id, info in self.clients.items():
-                if not isinstance(info, ProcessInfo):
-                    continue
-                if len(info.units) == 0:
-                    continue
-                process_id = info.process_id if info.process_id is not None else str(client_id)
-                route_unit = sorted(info.units)[0]
-                targets.append((process_id, route_unit))
-        return sorted(targets, key=lambda item: item[0])
-
     async def _read_profiling_stream_control(
         self, reader: asyncio.StreamReader
     ) -> ProfilingStreamControl:
@@ -900,44 +900,50 @@ class GraphServer(threading.Thread):
             if stream_control.process_ids is not None
             else None
         )
-        targets = await self._profiling_route_targets()
-        if process_ids_filter is not None:
-            targets = [
-                (process_id, route_unit)
-                for process_id, route_unit in targets
-                if process_id in process_ids_filter
-            ]
-        batches: dict[str, ProcessProfilingTraceBatch] = {}
         max_samples = max(1, int(stream_control.max_samples))
-        timeout_per_process = max(0.01, float(stream_control.timeout_per_process))
-        request_payload = pickle.dumps(max_samples)
+        now_ts = time.time()
+        batches: dict[str, ProcessProfilingTraceBatch] = {}
 
-        for process_id, route_unit in targets:
-            response = await self._route_process_request(
-                unit_address=route_unit,
-                operation=ProcessControlOperation.GET_PROFILING_TRACE_BATCH.value,
-                payload=request_payload,
-                timeout=timeout_per_process,
-            )
-            if not response.ok or response.payload is None:
-                continue
-            try:
-                payload_obj = pickle.loads(response.payload)
-            except Exception:
-                continue
-            if not isinstance(payload_obj, ProcessProfilingTraceBatch):
-                continue
-            if (
-                len(payload_obj.samples) == 0
-                and not stream_control.include_empty_batches
-            ):
-                continue
-            batches[process_id] = payload_obj
+        async with self._command_lock:
+            connected_processes: dict[str, tuple[int, str]] = {}
+            for client_id, info in self.clients.items():
+                if not isinstance(info, ProcessInfo):
+                    continue
+                process_id = (
+                    info.process_id if info.process_id is not None else str(client_id)
+                )
+                pid = info.pid if info.pid is not None else -1
+                host = info.host if info.host is not None else ""
+                connected_processes[process_id] = (pid, host)
 
-        return ProfilingTraceStreamBatch(
-            timestamp=time.time(),
-            batches=batches,
-        )
+            process_ids: list[str]
+            if process_ids_filter is not None:
+                process_ids = sorted(process_ids_filter)
+            else:
+                process_ids = sorted(connected_processes.keys())
+
+            for process_id in process_ids:
+                sample_buffer = self._profiling_trace_buffers.get(process_id)
+                samples: list[ProfilingTraceSample] = []
+                while sample_buffer and len(samples) < max_samples:
+                    samples.append(sample_buffer.popleft())
+
+                if len(samples) == 0 and not stream_control.include_empty_batches:
+                    continue
+
+                pid, host = connected_processes.get(
+                    process_id,
+                    self._profiling_trace_process_meta.get(process_id, (-1, "")),
+                )
+                batches[process_id] = ProcessProfilingTraceBatch(
+                    process_id=process_id,
+                    pid=pid,
+                    host=host,
+                    timestamp=now_ts,
+                    samples=samples,
+                )
+
+        return ProfilingTraceStreamBatch(timestamp=now_ts, batches=batches)
 
     async def _handle_profiling_subscriber(
         self,
@@ -972,9 +978,56 @@ class GraphServer(threading.Thread):
             logger.debug(f"Profiling subscriber {subscriber_id} disconnected: {e}")
         except asyncio.CancelledError:
             raise
+        except Exception as exc:
+            logger.error(
+                "Profiling subscriber %s failed: %s",
+                subscriber_id,
+                exc,
+            )
         finally:
             self._client_tasks.pop(subscriber_id, None)
             await close_stream_writer(writer)
+
+    async def _handle_process_profiling_trace_update_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> None:
+        payload_size = await read_int(reader)
+        payload = await reader.readexactly(payload_size)
+        batch: ProcessProfilingTraceBatch | None = None
+        try:
+            payload_obj = pickle.loads(payload)
+            if isinstance(payload_obj, ProcessProfilingTraceBatch):
+                batch = payload_obj
+            else:
+                raise RuntimeError(
+                    "process profiling trace payload was not ProcessProfilingTraceBatch"
+                )
+        except Exception as exc:
+            logger.warning(
+                "Process control %s trace update parse failed; ignoring payload: %s",
+                process_client_id,
+                exc,
+            )
+
+        if batch is None:
+            return
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            process_id = (
+                (
+                    process_info.process_id
+                    if process_info is not None and process_info.process_id is not None
+                    else str(process_client_id)
+                )
+                if batch.process_id == ""
+                else batch.process_id
+            )
+            trace_buffer = self._profiling_trace_buffers.setdefault(
+                process_id, deque(maxlen=200_000)
+            )
+            trace_buffer.extend(batch.samples)
+            self._profiling_trace_process_meta[process_id] = (batch.pid, batch.host)
 
     async def _handle_process_register_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
@@ -1006,10 +1059,14 @@ class GraphServer(threading.Thread):
                 return Command.COMPLETE.value
 
             prev_units = set(process_info.units)
+            prev_process_id = process_info.process_id
             process_info.process_id = registration.process_id
             process_info.pid = registration.pid
             process_info.host = registration.host
             process_info.units = set(registration.units)
+            if prev_process_id is not None and prev_process_id != registration.process_id:
+                self._profiling_trace_buffers.pop(prev_process_id, None)
+                self._profiling_trace_process_meta.pop(prev_process_id, None)
             if prev_units != process_info.units:
                 self._append_topology_event_locked(
                     event_type=TopologyEventType.PROCESS_CHANGED,
