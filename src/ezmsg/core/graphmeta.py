@@ -295,6 +295,10 @@ class ProfilingTraceControl:
     sample_mod: int = 1
     publisher_topics: list[str] | None = None
     subscriber_topics: list[str] | None = None
+    publisher_endpoint_ids: list[str] | None = None
+    subscriber_endpoint_ids: list[str] | None = None
+    metrics: list[str] | None = None
+    ttl_seconds: float | None = None
 
 
 @dataclass
@@ -320,6 +324,15 @@ class ProcessProfilingTraceBatch:
 class ProfilingTraceStreamBatch:
     timestamp: float
     batches: dict[str, ProcessProfilingTraceBatch]
+
+
+@dataclass
+class ProfilingStreamControl:
+    interval: float = 0.05
+    max_samples: int = 1000
+    process_ids: list[str] | None = None
+    timeout_per_process: float = 0.25
+    include_empty_batches: bool = False
 
 
 class Edge(NamedTuple):

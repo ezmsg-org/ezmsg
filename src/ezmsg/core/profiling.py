@@ -106,10 +106,14 @@ class _PublisherMetrics:
     _inflight: _Rolling = field(default_factory=_Rolling)
     trace_enabled: bool = False
     trace_sample_mod: int = 1
+    trace_metrics: set[str] | None = None
     _trace_counter: int = 0
     trace_samples: deque[ProfilingTraceSample] = field(
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
+
+    def _trace_metric_enabled(self, metric: str) -> bool:
+        return self.trace_metrics is None or metric in self.trace_metrics
 
     def record_publish(self, ts_ns: int, inflight: int) -> None:
         self.messages_published_total += 1
@@ -121,7 +125,11 @@ class _PublisherMetrics:
         self._last_publish_ts_ns = ts_ns
         self.sample_inflight(ts_ns, inflight)
         self._trace_counter += 1
-        if self.trace_enabled and (self._trace_counter % max(1, self.trace_sample_mod) == 0):
+        if (
+            self.trace_enabled
+            and self._trace_metric_enabled("publish_delta_ns")
+            and (self._trace_counter % max(1, self.trace_sample_mod) == 0)
+        ):
             self.trace_samples.append(
                 ProfilingTraceSample(
                     timestamp=float(PROFILE_TIME()),
@@ -135,7 +143,7 @@ class _PublisherMetrics:
     def record_backpressure_wait(self, ts_ns: int, wait_ns: int) -> None:
         self.backpressure_wait_ns_total += wait_ns
         self._backpressure_wait.add(ts_ns, wait_ns)
-        if self.trace_enabled:
+        if self.trace_enabled and self._trace_metric_enabled("backpressure_wait_ns"):
             self.trace_samples.append(
                 ProfilingTraceSample(
                     timestamp=float(PROFILE_TIME()),
@@ -183,10 +191,14 @@ class _SubscriberMetrics:
     _attrib_bp: _Rolling = field(default_factory=_Rolling)
     trace_enabled: bool = False
     trace_sample_mod: int = 1
+    trace_metrics: set[str] | None = None
     _trace_counter: int = 0
     trace_samples: deque[ProfilingTraceSample] = field(
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
+
+    def _trace_metric_enabled(self, metric: str) -> bool:
+        return self.trace_metrics is None or metric in self.trace_metrics
 
     def record_receive(self, ts_ns: int, lease_ns: int, channel_kind: ProfileChannelType) -> None:
         self.messages_received_total += 1
@@ -195,7 +207,11 @@ class _SubscriberMetrics:
         self._recv_count.add(ts_ns, 1)
         self._lease_time.add(ts_ns, lease_ns)
         self._trace_counter += 1
-        if self.trace_enabled and (self._trace_counter % max(1, self.trace_sample_mod) == 0):
+        if (
+            self.trace_enabled
+            and self._trace_metric_enabled("lease_time_ns")
+            and (self._trace_counter % max(1, self.trace_sample_mod) == 0)
+        ):
             self.trace_samples.append(
                 ProfilingTraceSample(
                     timestamp=float(PROFILE_TIME()),
@@ -210,7 +226,7 @@ class _SubscriberMetrics:
     def record_user_span(self, ts_ns: int, span_ns: int, label: str | None) -> None:
         self.user_span_ns_total += span_ns
         self._user_span.add(ts_ns, span_ns)
-        if self.trace_enabled:
+        if self.trace_enabled and self._trace_metric_enabled("user_span_ns"):
             self.trace_samples.append(
                 ProfilingTraceSample(
                     timestamp=float(PROFILE_TIME()),
@@ -229,6 +245,17 @@ class _SubscriberMetrics:
         self.attributable_backpressure_events_total += 1
         self.channel_kind_last = channel_kind
         self._attrib_bp.add(ts_ns, duration_ns)
+        if self.trace_enabled and self._trace_metric_enabled("attributable_backpressure_ns"):
+            self.trace_samples.append(
+                ProfilingTraceSample(
+                    timestamp=float(PROFILE_TIME()),
+                    endpoint_id=self.endpoint_id,
+                    topic=self.topic,
+                    metric="attributable_backpressure_ns",
+                    value=float(duration_ns),
+                    channel_kind=channel_kind,
+                )
+            )
 
     def snapshot(self) -> SubscriberProfileSnapshot:
         recv_count = self._recv_count.count_total()
@@ -262,38 +289,46 @@ class ProfileRegistry:
         self._publishers: dict[UUID, _PublisherMetrics] = {}
         self._subscribers: dict[UUID, _SubscriberMetrics] = {}
         self._default_trace_control = ProfilingTraceControl(enabled=False)
+        self._trace_control_expires_ns: int | None = None
 
     def set_process_id(self, process_id: str, *, reset: bool = False) -> None:
         if reset or (self._process_id and self._process_id != process_id):
             self._publishers.clear()
             self._subscribers.clear()
             self._default_trace_control = ProfilingTraceControl(enabled=False)
+            self._trace_control_expires_ns = None
         self._process_id = process_id
 
     def register_publisher(self, pub_id: UUID, topic: str) -> None:
-        self._publishers[pub_id] = _PublisherMetrics(
+        metric = _PublisherMetrics(
             topic=topic,
             endpoint_id=_endpoint_id(topic, pub_id),
         )
+        self._publishers[pub_id] = metric
+        self._apply_trace_control_to_publisher(metric)
 
     def unregister_publisher(self, pub_id: UUID) -> None:
         self._publishers.pop(pub_id, None)
 
     def register_subscriber(self, sub_id: UUID, topic: str) -> None:
-        self._subscribers[sub_id] = _SubscriberMetrics(
+        metric = _SubscriberMetrics(
             topic=topic,
             endpoint_id=_endpoint_id(topic, sub_id),
         )
+        self._subscribers[sub_id] = metric
+        self._apply_trace_control_to_subscriber(metric)
 
     def unregister_subscriber(self, sub_id: UUID) -> None:
         self._subscribers.pop(sub_id, None)
 
     def publisher_publish(self, pub_id: UUID, ts_ns: int, inflight: int) -> None:
+        self._expire_trace_control_if_needed(ts_ns)
         metric = self._publishers.get(pub_id)
         if metric is not None:
             metric.record_publish(ts_ns, inflight)
 
     def publisher_backpressure_wait(self, pub_id: UUID, ts_ns: int, wait_ns: int) -> None:
+        self._expire_trace_control_if_needed(ts_ns)
         metric = self._publishers.get(pub_id)
         if metric is not None:
             metric.record_backpressure_wait(ts_ns, wait_ns)
@@ -310,6 +345,7 @@ class ProfileRegistry:
         lease_ns: int,
         channel_kind: ProfileChannelType,
     ) -> None:
+        self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
             metric.record_receive(ts_ns, lease_ns, channel_kind)
@@ -317,6 +353,7 @@ class ProfileRegistry:
     def subscriber_user_span(
         self, sub_id: UUID, ts_ns: int, span_ns: int, label: str | None
     ) -> None:
+        self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
             metric.record_user_span(ts_ns, span_ns, label)
@@ -328,6 +365,7 @@ class ProfileRegistry:
         duration_ns: int,
         channel_kind: ProfileChannelType,
     ) -> None:
+        self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
             metric.record_attributed_backpressure(ts_ns, duration_ns, channel_kind)
@@ -351,25 +389,21 @@ class ProfileRegistry:
 
     def set_trace_control(self, control: ProfilingTraceControl) -> None:
         self._default_trace_control = control
-        sample_mod = max(1, control.sample_mod)
-        pub_topics = set(control.publisher_topics or [])
-        sub_topics = set(control.subscriber_topics or [])
+        if control.enabled and control.ttl_seconds is not None:
+            self._trace_control_expires_ns = PROFILE_TIME() + max(
+                0, int(control.ttl_seconds * 1e9)
+            )
+        else:
+            self._trace_control_expires_ns = None
 
         for metric in self._publishers.values():
-            enabled = control.enabled and (
-                not pub_topics or metric.topic in pub_topics
-            )
-            metric.trace_enabled = enabled
-            metric.trace_sample_mod = sample_mod
+            self._apply_trace_control_to_publisher(metric)
 
         for metric in self._subscribers.values():
-            enabled = control.enabled and (
-                not sub_topics or metric.topic in sub_topics
-            )
-            metric.trace_enabled = enabled
-            metric.trace_sample_mod = sample_mod
+            self._apply_trace_control_to_subscriber(metric)
 
     def trace_batch(self, max_samples: int = 1000) -> ProcessProfilingTraceBatch:
+        self._expire_trace_control_if_needed()
         samples: list[ProfilingTraceSample] = []
         for metric in self._publishers.values():
             while metric.trace_samples and len(samples) < max_samples:
@@ -390,6 +424,49 @@ class ProfileRegistry:
             timestamp=float(PROFILE_TIME()),
             samples=samples,
         )
+
+    def _expire_trace_control_if_needed(self, now_ns: int | None = None) -> None:
+        expires_ns = self._trace_control_expires_ns
+        if expires_ns is None:
+            return
+        ts_ns = now_ns if now_ns is not None else PROFILE_TIME()
+        if ts_ns < expires_ns:
+            return
+        self.set_trace_control(ProfilingTraceControl(enabled=False))
+
+    def _apply_trace_control_to_publisher(self, metric: _PublisherMetrics) -> None:
+        control = self._default_trace_control
+        sample_mod = max(1, control.sample_mod)
+        pub_topics = set(control.publisher_topics or [])
+        pub_endpoint_ids = set(control.publisher_endpoint_ids or [])
+        trace_metrics = (
+            set(control.metrics) if control.metrics is not None else None
+        )
+        enabled = control.enabled
+        if enabled and pub_topics and metric.topic not in pub_topics:
+            enabled = False
+        if enabled and pub_endpoint_ids and metric.endpoint_id not in pub_endpoint_ids:
+            enabled = False
+        metric.trace_enabled = enabled
+        metric.trace_sample_mod = sample_mod
+        metric.trace_metrics = trace_metrics
+
+    def _apply_trace_control_to_subscriber(self, metric: _SubscriberMetrics) -> None:
+        control = self._default_trace_control
+        sample_mod = max(1, control.sample_mod)
+        sub_topics = set(control.subscriber_topics or [])
+        sub_endpoint_ids = set(control.subscriber_endpoint_ids or [])
+        trace_metrics = (
+            set(control.metrics) if control.metrics is not None else None
+        )
+        enabled = control.enabled
+        if enabled and sub_topics and metric.topic not in sub_topics:
+            enabled = False
+        if enabled and sub_endpoint_ids and metric.endpoint_id not in sub_endpoint_ids:
+            enabled = False
+        metric.trace_enabled = enabled
+        metric.trace_sample_mod = sample_mod
+        metric.trace_metrics = trace_metrics
 
 
 PROFILES = ProfileRegistry()

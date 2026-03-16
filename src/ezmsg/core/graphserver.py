@@ -20,6 +20,7 @@ from .graphmeta import (
     GraphSnapshot,
     ProcessProfilingTraceBatch,
     ProfilingTraceStreamBatch,
+    ProfilingStreamControl,
     ProcessControlRequest,
     ProcessControlResponse,
     ProcessRegistration,
@@ -356,16 +357,14 @@ class GraphServer(threading.Thread):
 
             elif req == Command.SESSION_PROFILING_SUBSCRIBE.value:
                 subscriber_id = uuid1()
-                interval = float(await read_str(reader))
-                max_samples = int(await read_str(reader))
+                stream_control = await self._read_profiling_stream_control(reader)
                 writer.write(encode_str(str(subscriber_id)))
                 writer.write(Command.COMPLETE.value)
                 await writer.drain()
                 self._client_tasks[subscriber_id] = asyncio.create_task(
                     self._handle_profiling_subscriber(
                         subscriber_id,
-                        max(0.01, interval),
-                        max(1, max_samples),
+                        stream_control,
                         reader,
                         writer,
                     )
@@ -869,16 +868,48 @@ class GraphServer(threading.Thread):
                 process_id = info.process_id if info.process_id is not None else str(client_id)
                 route_unit = sorted(info.units)[0]
                 targets.append((process_id, route_unit))
-        return targets
+        return sorted(targets, key=lambda item: item[0])
+
+    async def _read_profiling_stream_control(
+        self, reader: asyncio.StreamReader
+    ) -> ProfilingStreamControl:
+        payload_size = await read_int(reader)
+        payload = await reader.readexactly(payload_size)
+
+        try:
+            payload_obj = pickle.loads(payload)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Invalid profiling stream control payload: {exc}"
+            ) from exc
+
+        if not isinstance(payload_obj, ProfilingStreamControl):
+            raise RuntimeError(
+                "Invalid profiling stream control payload type: "
+                f"{type(payload_obj).__name__}"
+            )
+        return payload_obj
 
     async def _collect_profiling_trace_stream_batch(
         self,
         *,
-        max_samples: int,
-        timeout_per_process: float,
+        stream_control: ProfilingStreamControl,
     ) -> ProfilingTraceStreamBatch:
+        process_ids_filter = (
+            set(stream_control.process_ids)
+            if stream_control.process_ids is not None
+            else None
+        )
         targets = await self._profiling_route_targets()
+        if process_ids_filter is not None:
+            targets = [
+                (process_id, route_unit)
+                for process_id, route_unit in targets
+                if process_id in process_ids_filter
+            ]
         batches: dict[str, ProcessProfilingTraceBatch] = {}
+        max_samples = max(1, int(stream_control.max_samples))
+        timeout_per_process = max(0.01, float(stream_control.timeout_per_process))
         request_payload = pickle.dumps(max_samples)
 
         for process_id, route_unit in targets:
@@ -896,7 +927,10 @@ class GraphServer(threading.Thread):
                 continue
             if not isinstance(payload_obj, ProcessProfilingTraceBatch):
                 continue
-            if len(payload_obj.samples) == 0:
+            if (
+                len(payload_obj.samples) == 0
+                and not stream_control.include_empty_batches
+            ):
                 continue
             batches[process_id] = payload_obj
 
@@ -908,11 +942,11 @@ class GraphServer(threading.Thread):
     async def _handle_profiling_subscriber(
         self,
         subscriber_id: UUID,
-        interval: float,
-        max_samples: int,
+        stream_control: ProfilingStreamControl,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
+        interval = max(0.01, float(stream_control.interval))
         try:
             while True:
                 try:
@@ -925,8 +959,7 @@ class GraphServer(threading.Thread):
                     pass
 
                 batch = await self._collect_profiling_trace_stream_batch(
-                    max_samples=max_samples,
-                    timeout_per_process=max(0.05, interval),
+                    stream_control=stream_control,
                 )
                 if len(batch.batches) == 0:
                     continue

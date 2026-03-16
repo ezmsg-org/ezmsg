@@ -30,6 +30,7 @@ from .graphmeta import (
     ProcessProfilingSnapshot,
     ProcessProfilingTraceBatch,
     ProfilingTraceStreamBatch,
+    ProfilingStreamControl,
     ProcessStats,
     ProcessControlResponse,
     ProfilingTraceControl,
@@ -457,14 +458,16 @@ class GraphContext:
 
     async def subscribe_profiling_trace(
         self,
-        *,
-        interval: float = 0.05,
-        max_samples: int = 1000,
+        control: ProfilingStreamControl,
     ) -> typing.AsyncIterator[ProfilingTraceStreamBatch]:
+        """
+        Subscribe to streamed profiling trace batches from GraphServer.
+        """
         reader, writer = await GraphService(self.graph_address).open_connection()
+        payload = pickle.dumps(control)
         writer.write(Command.SESSION_PROFILING_SUBSCRIBE.value)
-        writer.write(encode_str(str(interval)))
-        writer.write(encode_str(str(max_samples)))
+        writer.write(uint64_to_bytes(len(payload)))
+        writer.write(payload)
         await writer.drain()
 
         _subscriber_id = UUID(await read_str(reader))

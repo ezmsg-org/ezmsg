@@ -20,7 +20,11 @@ import time
 from dataclasses import dataclass
 
 from ezmsg.core.graphcontext import GraphContext
-from ezmsg.core.graphmeta import ProcessProfilingSnapshot, ProfilingTraceControl
+from ezmsg.core.graphmeta import (
+    ProcessProfilingSnapshot,
+    ProfilingStreamControl,
+    ProfilingTraceControl,
+)
 from ezmsg.core.netprotocol import DEFAULT_HOST, GRAPHSERVER_PORT_DEFAULT
 
 
@@ -167,8 +171,10 @@ class ProfilingTUI:
 
     async def _trace_loop(self) -> None:
         async for batch in self.ctx.subscribe_profiling_trace(
-            interval=self.trace_interval,
-            max_samples=self.trace_max_samples,
+            ProfilingStreamControl(
+                interval=self.trace_interval,
+                max_samples=self.trace_max_samples,
+            )
         ):
             for process_batch in batch.batches.values():
                 for sample in process_batch.samples:

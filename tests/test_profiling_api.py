@@ -5,6 +5,7 @@ import pytest
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import (
     ProcessControlErrorCode,
+    ProfilingStreamControl,
     ProfilingTraceControl,
 )
 from ezmsg.core.graphserver import GraphService
@@ -166,7 +167,9 @@ async def test_process_profiling_trace_subscription_push():
         )
         assert response.ok
 
-        stream = ctx.subscribe_profiling_trace(interval=0.02, max_samples=256)
+        stream = ctx.subscribe_profiling_trace(
+            ProfilingStreamControl(interval=0.02, max_samples=256)
+        )
 
         for idx in range(8):
             await pub.broadcast(idx)
@@ -187,5 +190,129 @@ async def test_process_profiling_trace_subscription_push():
         if stream is not None:
             await stream.aclose()
         await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_control_endpoint_metric_and_ttl():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process = ProcessControlClient(address, process_id="proc-trace-filter")
+    await process.connect()
+    await process.register(["SYS/U5"])
+
+    pub_a = await ctx.publisher("TOPIC_A")
+    sub_a = await ctx.subscriber("TOPIC_A")
+    pub_b = await ctx.publisher("TOPIC_B")
+    sub_b = await ctx.subscriber("TOPIC_B")
+
+    try:
+        # Warm up and discover endpoint IDs for precise filter targeting.
+        for idx in range(3):
+            await pub_a.broadcast(idx)
+            async with sub_a.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+            await pub_b.broadcast(idx)
+            async with sub_b.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        snapshot = await ctx.process_profiling_snapshot("SYS/U5", timeout=1.0)
+        pub_a_endpoint = next(
+            pub.endpoint_id
+            for pub in snapshot.publishers.values()
+            if pub.topic == "TOPIC_A"
+        )
+
+        response = await ctx.process_set_profiling_trace(
+            "SYS/U5",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_endpoint_ids=[pub_a_endpoint],
+                metrics=["publish_delta_ns"],
+            ),
+            timeout=1.0,
+        )
+        assert response.ok
+
+        for idx in range(8):
+            await pub_a.broadcast(idx)
+            async with sub_a.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+            await pub_b.broadcast(idx)
+            async with sub_b.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        batch = await ctx.process_profiling_trace_batch(
+            "SYS/U5", max_samples=512, timeout=1.0
+        )
+        assert len(batch.samples) > 0
+        assert all(sample.metric == "publish_delta_ns" for sample in batch.samples)
+        assert all(sample.endpoint_id == pub_a_endpoint for sample in batch.samples)
+
+        ttl_response = await ctx.process_set_profiling_trace(
+            "SYS/U5",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_endpoint_ids=[pub_a_endpoint],
+                metrics=["publish_delta_ns"],
+                ttl_seconds=0.01,
+            ),
+            timeout=1.0,
+        )
+        assert ttl_response.ok
+        await asyncio.sleep(0.03)
+
+        for idx in range(3):
+            await pub_a.broadcast(idx)
+            async with sub_a.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        expired_batch = await ctx.process_profiling_trace_batch(
+            "SYS/U5", max_samples=512, timeout=1.0
+        )
+        assert len(expired_batch.samples) == 0
+    finally:
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_subscription_stream_control():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process_a = ProcessControlClient(address, process_id="proc-stream-a")
+    await process_a.connect()
+    await process_a.register(["SYS/U6"])
+
+    stream = None
+    try:
+        stream = ctx.subscribe_profiling_trace(
+            ProfilingStreamControl(
+                interval=0.02,
+                max_samples=64,
+                process_ids=["proc-stream-a"],
+                include_empty_batches=True,
+                timeout_per_process=0.1,
+            )
+        )
+        batch = await asyncio.wait_for(anext(stream), timeout=1.0)
+        assert "proc-stream-a" in batch.batches
+        assert len(batch.batches) == 1
+    finally:
+        if stream is not None:
+            await stream.aclose()
+        await process_a.close()
         await ctx.__aexit__(None, None, None)
         graph_server.stop()
