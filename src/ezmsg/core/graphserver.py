@@ -28,6 +28,8 @@ from .graphmeta import (
     SettingsChangedEvent,
     SettingsEventType,
     SettingsSnapshotValue,
+    TopologyChangedEvent,
+    TopologyEventType,
     SnapshotProcess,
     SnapshotSession,
 )
@@ -94,6 +96,9 @@ class GraphServer(threading.Thread):
     _settings_event_seq: int
     _settings_owned_by_session: dict[UUID, set[str]]
     _settings_subscribers: dict[UUID, asyncio.Queue[SettingsChangedEvent]]
+    _topology_events: list[TopologyChangedEvent]
+    _topology_event_seq: int
+    _topology_subscribers: dict[UUID, asyncio.Queue[TopologyChangedEvent]]
     _pending_process_requests: dict[
         str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
     ]
@@ -118,6 +123,9 @@ class GraphServer(threading.Thread):
         self._settings_event_seq = 0
         self._settings_owned_by_session = {}
         self._settings_subscribers = {}
+        self._topology_events = []
+        self._topology_event_seq = 0
+        self._topology_subscribers = {}
         self._pending_process_requests = {}
 
     @property
@@ -330,6 +338,22 @@ class GraphServer(threading.Thread):
                 # to avoid closing writer
                 return
 
+            elif req == Command.SESSION_TOPOLOGY_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                after_seq = int(await read_str(reader))
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_topology_subscriber(
+                        subscriber_id, after_seq, reader, writer
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
+                # to avoid closing writer
+                return
+
             elif req == Command.SESSION_PROFILING_SUBSCRIBE.value:
                 subscriber_id = uuid1()
                 interval = float(await read_str(reader))
@@ -422,6 +446,12 @@ class GraphServer(threading.Thread):
                             writer.write(Command.CYCLIC.value)
 
                         if topology_changed:
+                            self._append_topology_event_locked(
+                                event_type=TopologyEventType.GRAPH_CHANGED,
+                                changed_topics=[to_topic],
+                                source_session_id=None,
+                                source_process_id=None,
+                            )
                             await self._notify_downstream_for_topic(to_topic)
 
                         await writer.drain()
@@ -663,8 +693,19 @@ class GraphServer(threading.Thread):
                                 ),
                             )
                         )
-
-            self.clients.pop(process_client_id, None)
+                if process_info is not None:
+                    source_process_id = (
+                        process_info.process_id
+                        if process_info.process_id is not None
+                        else str(process_client_id)
+                    )
+                    self._append_topology_event_locked(
+                        event_type=TopologyEventType.PROCESS_CHANGED,
+                        changed_topics=[],
+                        source_session_id=None,
+                        source_process_id=source_process_id,
+                    )
+                self.clients.pop(process_client_id, None)
             self._client_tasks.pop(process_client_id, None)
             await close_stream_writer(writer)
 
@@ -687,6 +728,18 @@ class GraphServer(threading.Thread):
 
     def _queue_settings_event(
         self, queue: asyncio.Queue[SettingsChangedEvent], event: SettingsChangedEvent
+    ) -> None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Keep most recent samples under backpressure.
+            with suppress(asyncio.QueueEmpty):
+                queue.get_nowait()
+            with suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
+
+    def _queue_topology_event(
+        self, queue: asyncio.Queue[TopologyChangedEvent], event: TopologyChangedEvent
     ) -> None:
         try:
             queue.put_nowait(event)
@@ -745,6 +798,60 @@ class GraphServer(threading.Thread):
         finally:
             async with self._command_lock:
                 self._settings_subscribers.pop(subscriber_id, None)
+            self._client_tasks.pop(subscriber_id, None)
+            sender_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sender_task
+            await close_stream_writer(writer)
+
+    async def _topology_sender(
+        self,
+        subscriber_id: UUID,
+        queue: asyncio.Queue[TopologyChangedEvent],
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            while True:
+                event = await queue.get()
+                payload = pickle.dumps(event)
+                writer.write(uint64_to_bytes(len(payload)))
+                writer.write(payload)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(f"Topology subscriber {subscriber_id} disconnected on send")
+        except asyncio.CancelledError:
+            raise
+
+    async def _handle_topology_subscriber(
+        self,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        queue: asyncio.Queue[TopologyChangedEvent] = asyncio.Queue(maxsize=1024)
+
+        async with self._command_lock:
+            self._topology_subscribers[subscriber_id] = queue
+            for event in self._topology_events:
+                if event.seq > after_seq:
+                    self._queue_topology_event(queue, event)
+
+        sender_task = asyncio.create_task(
+            self._topology_sender(subscriber_id, queue, writer),
+            name=f"topology-sender-{subscriber_id}",
+        )
+
+        try:
+            while True:
+                req = await reader.read(1)
+                if not req:
+                    break
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Topology subscriber {subscriber_id} disconnected: {e}")
+        finally:
+            async with self._command_lock:
+                self._topology_subscribers.pop(subscriber_id, None)
             self._client_tasks.pop(subscriber_id, None)
             sender_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -865,10 +972,18 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.COMPLETE.value
 
+            prev_units = set(process_info.units)
             process_info.process_id = registration.process_id
             process_info.pid = registration.pid
             process_info.host = registration.host
             process_info.units = set(registration.units)
+            if prev_units != process_info.units:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.PROCESS_CHANGED,
+                    changed_topics=[],
+                    source_session_id=None,
+                    source_process_id=registration.process_id,
+                )
 
         return Command.COMPLETE.value
 
@@ -914,8 +1029,16 @@ class GraphServer(threading.Thread):
             elif process_info.process_id is None:
                 process_info.process_id = update.process_id
 
+            prev_units = set(process_info.units)
             process_info.units.update(update.added_units)
             process_info.units.difference_update(update.removed_units)
+            if prev_units != process_info.units:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.PROCESS_CHANGED,
+                    changed_topics=[],
+                    source_session_id=None,
+                    source_process_id=update.process_id,
+                )
 
         return Command.COMPLETE.value
 
@@ -1168,6 +1291,32 @@ class GraphServer(threading.Thread):
         if len(self._settings_events) > max_events:
             del self._settings_events[0 : len(self._settings_events) - max_events]
 
+    def _append_topology_event_locked(
+        self,
+        event_type: TopologyEventType,
+        changed_topics: list[str],
+        source_session_id: str | None,
+        source_process_id: str | None,
+        timestamp: float | None = None,
+    ) -> None:
+        self._topology_event_seq += 1
+        event = TopologyChangedEvent(
+            seq=self._topology_event_seq,
+            event_type=event_type,
+            timestamp=timestamp if timestamp is not None else time.time(),
+            changed_topics=sorted(set(changed_topics)),
+            source_session_id=source_session_id,
+            source_process_id=source_process_id,
+        )
+        self._topology_events.append(event)
+
+        for queue in self._topology_subscribers.values():
+            self._queue_topology_event(queue, event)
+
+        max_events = 10_000
+        if len(self._topology_events) > max_events:
+            del self._topology_events[0 : len(self._topology_events) - max_events]
+
     def _remove_settings_for_session_locked(self, session_id: UUID) -> None:
         component_addresses = self._settings_owned_by_session.pop(session_id, set())
         for component_address in component_addresses:
@@ -1220,6 +1369,12 @@ class GraphServer(threading.Thread):
                 return Command.CYCLIC.value
 
             if topology_changed:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.GRAPH_CHANGED,
+                    changed_topics=[to_topic],
+                    source_session_id=str(session_id),
+                    source_process_id=None,
+                )
                 await self._notify_downstream_for_topic(to_topic)
 
         return Command.COMPLETE.value
@@ -1302,6 +1457,13 @@ class GraphServer(threading.Thread):
 
         self._remove_settings_for_session_locked(session_id)
         session.metadata = None
+        if notify_topics:
+            self._append_topology_event_locked(
+                event_type=TopologyEventType.GRAPH_CHANGED,
+                changed_topics=list(notify_topics),
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
         return notify_topics
 
     def _drop_session(self, session_id: UUID) -> set[str]:
@@ -1317,6 +1479,13 @@ class GraphServer(threading.Thread):
         self._remove_settings_for_session_locked(session_id)
         session.metadata = None
         self.clients.pop(session_id, None)
+        if notify_topics:
+            self._append_topology_event_locked(
+                event_type=TopologyEventType.GRAPH_CHANGED,
+                changed_topics=list(notify_topics),
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
         return notify_topics
 
     def _snapshot(self) -> GraphSnapshot:

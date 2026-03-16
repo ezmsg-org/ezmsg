@@ -162,6 +162,21 @@ class SettingsChangedEvent:
     value: SettingsSnapshotValue
 
 
+class TopologyEventType(enum.Enum):
+    GRAPH_CHANGED = "GRAPH_CHANGED"
+    PROCESS_CHANGED = "PROCESS_CHANGED"
+
+
+@dataclass
+class TopologyChangedEvent:
+    seq: int
+    event_type: TopologyEventType
+    timestamp: float
+    changed_topics: list[str]
+    source_session_id: str | None
+    source_process_id: str | None
+
+
 @dataclass
 class ProcessSettingsUpdate:
     process_id: str

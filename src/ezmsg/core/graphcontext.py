@@ -35,6 +35,7 @@ from .graphmeta import (
     ProfilingTraceControl,
     SettingsChangedEvent,
     SettingsSnapshotValue,
+    TopologyChangedEvent,
 )
 
 logger = logging.getLogger("ezmsg")
@@ -416,6 +417,37 @@ class GraphContext:
                 if not isinstance(event, SettingsChangedEvent):
                     raise RuntimeError(
                         "Settings subscription received invalid event payload"
+                    )
+                yield event
+        except asyncio.IncompleteReadError:
+            return
+        finally:
+            await close_stream_writer(writer)
+
+    async def subscribe_topology_events(
+        self,
+        *,
+        after_seq: int = 0,
+    ) -> typing.AsyncIterator[TopologyChangedEvent]:
+        reader, writer = await GraphService(self.graph_address).open_connection()
+        writer.write(Command.SESSION_TOPOLOGY_SUBSCRIBE.value)
+        writer.write(encode_str(str(after_seq)))
+        await writer.drain()
+
+        _subscriber_id = UUID(await read_str(reader))
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            await close_stream_writer(writer)
+            raise RuntimeError("Failed to subscribe to topology events")
+
+        try:
+            while True:
+                payload_size = await read_int(reader)
+                payload = await reader.readexactly(payload_size)
+                event = pickle.loads(payload)
+                if not isinstance(event, TopologyChangedEvent):
+                    raise RuntimeError(
+                        "Topology subscription received invalid event payload"
                     )
                 yield event
         except asyncio.IncompleteReadError:
