@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
 from contextlib import suppress
 from uuid import UUID, uuid1
 
@@ -98,15 +99,16 @@ class GraphServer(threading.Thread):
     _settings_events: list[SettingsChangedEvent]
     _settings_event_seq: int
     _settings_owned_by_session: dict[UUID, set[str]]
-    _settings_subscribers: dict[UUID, asyncio.Queue[SettingsChangedEvent]]
+    _settings_subscribers: dict[UUID, asyncio.Queue[object]]
     _topology_events: list[TopologyChangedEvent]
     _topology_event_seq: int
-    _topology_subscribers: dict[UUID, asyncio.Queue[TopologyChangedEvent]]
+    _topology_subscribers: dict[UUID, asyncio.Queue[object]]
     _pending_process_requests: dict[
         str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
     ]
-    _profiling_trace_buffers: dict[str, deque[ProfilingTraceSample]]
+    _profiling_trace_buffers: dict[str, deque[tuple[int, ProfilingTraceSample]]]
     _profiling_trace_process_meta: dict[str, tuple[int, str]]
+    _profiling_trace_seq: dict[str, int]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -134,6 +136,7 @@ class GraphServer(threading.Thread):
         self._pending_process_requests = {}
         self._profiling_trace_buffers = {}
         self._profiling_trace_process_meta = {}
+        self._profiling_trace_seq = {}
 
     @property
     def address(self) -> Address:
@@ -711,6 +714,7 @@ class GraphServer(threading.Thread):
                     )
                     self._profiling_trace_buffers.pop(source_process_id, None)
                     self._profiling_trace_process_meta.pop(source_process_id, None)
+                    self._profiling_trace_seq.pop(source_process_id, None)
                     self._append_topology_event_locked(
                         event_type=TopologyEventType.PROCESS_CHANGED,
                         changed_topics=[],
@@ -738,8 +742,33 @@ class GraphServer(threading.Thread):
             writer.write(response)
             await writer.drain()
 
-    def _queue_settings_event(
-        self, queue: asyncio.Queue[SettingsChangedEvent], event: SettingsChangedEvent
+    async def _read_pickled_payload(self, reader: asyncio.StreamReader) -> object:
+        payload_size = await read_int(reader)
+        payload = await reader.readexactly(payload_size)
+        return pickle.loads(payload)
+
+    async def _read_typed_payload(
+        self,
+        reader: asyncio.StreamReader,
+        expected_type: type[object],
+        *,
+        log_prefix: str,
+    ) -> object | None:
+        try:
+            payload_obj = await self._read_pickled_payload(reader)
+            if not isinstance(payload_obj, expected_type):
+                raise RuntimeError(
+                    f"payload was not {expected_type.__name__}: {type(payload_obj).__name__}"
+                )
+            return payload_obj
+        except Exception as exc:
+            logger.warning("%s parse failed; ignoring payload: %s", log_prefix, exc)
+            return None
+
+    def _queue_stream_event(
+        self,
+        queue: asyncio.Queue[object],
+        event: object,
     ) -> None:
         try:
             queue.put_nowait(event)
@@ -750,23 +779,12 @@ class GraphServer(threading.Thread):
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(event)
 
-    def _queue_topology_event(
-        self, queue: asyncio.Queue[TopologyChangedEvent], event: TopologyChangedEvent
-    ) -> None:
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull:
-            # Keep most recent samples under backpressure.
-            with suppress(asyncio.QueueEmpty):
-                queue.get_nowait()
-            with suppress(asyncio.QueueFull):
-                queue.put_nowait(event)
-
-    async def _settings_sender(
+    async def _stream_sender(
         self,
         subscriber_id: UUID,
-        queue: asyncio.Queue[SettingsChangedEvent],
+        queue: asyncio.Queue[object],
         writer: asyncio.StreamWriter,
+        label: str,
     ) -> None:
         try:
             while True:
@@ -776,9 +794,48 @@ class GraphServer(threading.Thread):
                 writer.write(payload)
                 await writer.drain()
         except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Settings subscriber {subscriber_id} disconnected on send")
+            logger.debug(f"{label} subscriber {subscriber_id} disconnected on send")
         except asyncio.CancelledError:
             raise
+
+    async def _handle_event_subscriber(
+        self,
+        *,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        queue: asyncio.Queue[object],
+        subscribers: dict[UUID, asyncio.Queue[object]],
+        events: Sequence[object],
+        label: str,
+    ) -> None:
+        async with self._command_lock:
+            subscribers[subscriber_id] = queue
+            for event in events:
+                if getattr(event, "seq", 0) > after_seq:
+                    self._queue_stream_event(queue, event)
+
+        sender_task = asyncio.create_task(
+            self._stream_sender(subscriber_id, queue, writer, label),
+            name=f"{label}-sender-{subscriber_id}",
+        )
+
+        try:
+            while True:
+                req = await reader.read(1)
+                if not req:
+                    break
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"{label} subscriber {subscriber_id} disconnected: {e}")
+        finally:
+            async with self._command_lock:
+                subscribers.pop(subscriber_id, None)
+            self._client_tasks.pop(subscriber_id, None)
+            sender_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sender_task
+            await close_stream_writer(writer)
 
     async def _handle_settings_subscriber(
         self,
@@ -787,52 +844,17 @@ class GraphServer(threading.Thread):
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        queue: asyncio.Queue[SettingsChangedEvent] = asyncio.Queue(maxsize=1024)
-
-        async with self._command_lock:
-            self._settings_subscribers[subscriber_id] = queue
-            for event in self._settings_events:
-                if event.seq > after_seq:
-                    self._queue_settings_event(queue, event)
-
-        sender_task = asyncio.create_task(
-            self._settings_sender(subscriber_id, queue, writer),
-            name=f"settings-sender-{subscriber_id}",
+        queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1024)
+        await self._handle_event_subscriber(
+            subscriber_id=subscriber_id,
+            after_seq=after_seq,
+            reader=reader,
+            writer=writer,
+            queue=queue,
+            subscribers=self._settings_subscribers,
+            events=self._settings_events,
+            label="settings",
         )
-
-        try:
-            while True:
-                req = await reader.read(1)
-                if not req:
-                    break
-        except (ConnectionResetError, BrokenPipeError) as e:
-            logger.debug(f"Settings subscriber {subscriber_id} disconnected: {e}")
-        finally:
-            async with self._command_lock:
-                self._settings_subscribers.pop(subscriber_id, None)
-            self._client_tasks.pop(subscriber_id, None)
-            sender_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await sender_task
-            await close_stream_writer(writer)
-
-    async def _topology_sender(
-        self,
-        subscriber_id: UUID,
-        queue: asyncio.Queue[TopologyChangedEvent],
-        writer: asyncio.StreamWriter,
-    ) -> None:
-        try:
-            while True:
-                event = await queue.get()
-                payload = pickle.dumps(event)
-                writer.write(uint64_to_bytes(len(payload)))
-                writer.write(payload)
-                await writer.drain()
-        except (ConnectionResetError, BrokenPipeError):
-            logger.debug(f"Topology subscriber {subscriber_id} disconnected on send")
-        except asyncio.CancelledError:
-            raise
 
     async def _handle_topology_subscriber(
         self,
@@ -841,48 +863,22 @@ class GraphServer(threading.Thread):
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        queue: asyncio.Queue[TopologyChangedEvent] = asyncio.Queue(maxsize=1024)
-
-        async with self._command_lock:
-            self._topology_subscribers[subscriber_id] = queue
-            for event in self._topology_events:
-                if event.seq > after_seq:
-                    self._queue_topology_event(queue, event)
-
-        sender_task = asyncio.create_task(
-            self._topology_sender(subscriber_id, queue, writer),
-            name=f"topology-sender-{subscriber_id}",
+        queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1024)
+        await self._handle_event_subscriber(
+            subscriber_id=subscriber_id,
+            after_seq=after_seq,
+            reader=reader,
+            writer=writer,
+            queue=queue,
+            subscribers=self._topology_subscribers,
+            events=self._topology_events,
+            label="topology",
         )
-
-        try:
-            while True:
-                req = await reader.read(1)
-                if not req:
-                    break
-        except (ConnectionResetError, BrokenPipeError) as e:
-            logger.debug(f"Topology subscriber {subscriber_id} disconnected: {e}")
-        finally:
-            async with self._command_lock:
-                self._topology_subscribers.pop(subscriber_id, None)
-            self._client_tasks.pop(subscriber_id, None)
-            sender_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await sender_task
-            await close_stream_writer(writer)
 
     async def _read_profiling_stream_control(
         self, reader: asyncio.StreamReader
     ) -> ProfilingStreamControl:
-        payload_size = await read_int(reader)
-        payload = await reader.readexactly(payload_size)
-
-        try:
-            payload_obj = pickle.loads(payload)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Invalid profiling stream control payload: {exc}"
-            ) from exc
-
+        payload_obj = await self._read_pickled_payload(reader)
         if not isinstance(payload_obj, ProfilingStreamControl):
             raise RuntimeError(
                 "Invalid profiling stream control payload type: "
@@ -894,6 +890,7 @@ class GraphServer(threading.Thread):
         self,
         *,
         stream_control: ProfilingStreamControl,
+        last_seq_by_process: dict[str, int],
     ) -> ProfilingTraceStreamBatch:
         process_ids_filter = (
             set(stream_control.process_ids)
@@ -925,8 +922,19 @@ class GraphServer(threading.Thread):
             for process_id in process_ids:
                 sample_buffer = self._profiling_trace_buffers.get(process_id)
                 samples: list[ProfilingTraceSample] = []
-                while sample_buffer and len(samples) < max_samples:
-                    samples.append(sample_buffer.popleft())
+                if sample_buffer:
+                    last_seq = last_seq_by_process.get(process_id, 0)
+                    oldest_seq = sample_buffer[0][0]
+                    if last_seq < oldest_seq - 1:
+                        last_seq = oldest_seq - 1
+                    for seq, sample in sample_buffer:
+                        if seq <= last_seq:
+                            continue
+                        samples.append(sample)
+                        last_seq = seq
+                        if len(samples) >= max_samples:
+                            break
+                    last_seq_by_process[process_id] = last_seq
 
                 if len(samples) == 0 and not stream_control.include_empty_batches:
                     continue
@@ -953,6 +961,7 @@ class GraphServer(threading.Thread):
         writer: asyncio.StreamWriter,
     ) -> None:
         interval = max(0.01, float(stream_control.interval))
+        last_seq_by_process: dict[str, int] = {}
         try:
             while True:
                 try:
@@ -966,6 +975,7 @@ class GraphServer(threading.Thread):
 
                 batch = await self._collect_profiling_trace_stream_batch(
                     stream_control=stream_control,
+                    last_seq_by_process=last_seq_by_process,
                 )
                 if len(batch.batches) == 0:
                     continue
@@ -991,24 +1001,11 @@ class GraphServer(threading.Thread):
     async def _handle_process_profiling_trace_update_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> None:
-        payload_size = await read_int(reader)
-        payload = await reader.readexactly(payload_size)
-        batch: ProcessProfilingTraceBatch | None = None
-        try:
-            payload_obj = pickle.loads(payload)
-            if isinstance(payload_obj, ProcessProfilingTraceBatch):
-                batch = payload_obj
-            else:
-                raise RuntimeError(
-                    "process profiling trace payload was not ProcessProfilingTraceBatch"
-                )
-        except Exception as exc:
-            logger.warning(
-                "Process control %s trace update parse failed; ignoring payload: %s",
-                process_client_id,
-                exc,
-            )
-
+        batch = await self._read_typed_payload(
+            reader,
+            ProcessProfilingTraceBatch,
+            log_prefix=f"Process control {process_client_id} trace update",
+        )
         if batch is None:
             return
 
@@ -1026,37 +1023,28 @@ class GraphServer(threading.Thread):
             trace_buffer = self._profiling_trace_buffers.setdefault(
                 process_id, deque(maxlen=200_000)
             )
-            trace_buffer.extend(batch.samples)
+            next_seq = self._profiling_trace_seq.get(process_id, 0)
+            for sample in batch.samples:
+                next_seq += 1
+                trace_buffer.append((next_seq, sample))
+            self._profiling_trace_seq[process_id] = next_seq
             self._profiling_trace_process_meta[process_id] = (batch.pid, batch.host)
 
     async def _handle_process_register_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> bytes:
-        num_bytes = await read_int(reader)
-        payload = await reader.readexactly(num_bytes)
-        registration: ProcessRegistration | None = None
-        try:
-            payload_obj = pickle.loads(payload)
-            if isinstance(payload_obj, ProcessRegistration):
-                registration = payload_obj
-            else:
-                raise RuntimeError(
-                    "process registration payload was not ProcessRegistration"
-                )
-        except Exception as exc:
-            logger.warning(
-                "Process control %s registration parse failed; ignoring payload: %s",
-                process_client_id,
-                exc,
-            )
-
+        registration = await self._read_typed_payload(
+            reader,
+            ProcessRegistration,
+            log_prefix=f"Process control {process_client_id} registration",
+        )
         if registration is None:
-            return Command.COMPLETE.value
+            return Command.ERROR.value
 
         async with self._command_lock:
             process_info = self._process_info(process_client_id)
             if process_info is None:
-                return Command.COMPLETE.value
+                return Command.ERROR.value
 
             prev_units = set(process_info.units)
             prev_process_id = process_info.process_id
@@ -1067,6 +1055,7 @@ class GraphServer(threading.Thread):
             if prev_process_id is not None and prev_process_id != registration.process_id:
                 self._profiling_trace_buffers.pop(prev_process_id, None)
                 self._profiling_trace_process_meta.pop(prev_process_id, None)
+                self._profiling_trace_seq.pop(prev_process_id, None)
             if prev_units != process_info.units:
                 self._append_topology_event_locked(
                     event_type=TopologyEventType.PROCESS_CHANGED,
@@ -1080,31 +1069,18 @@ class GraphServer(threading.Thread):
     async def _handle_process_update_ownership_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> bytes:
-        num_bytes = await read_int(reader)
-        payload = await reader.readexactly(num_bytes)
-        update: ProcessOwnershipUpdate | None = None
-        try:
-            update_obj = pickle.loads(payload)
-            if isinstance(update_obj, ProcessOwnershipUpdate):
-                update = update_obj
-            else:
-                raise RuntimeError(
-                    "process ownership payload was not ProcessOwnershipUpdate"
-                )
-        except Exception as exc:
-            logger.warning(
-                "Process control %s ownership update parse failed; ignoring payload: %s",
-                process_client_id,
-                exc,
-            )
-
+        update = await self._read_typed_payload(
+            reader,
+            ProcessOwnershipUpdate,
+            log_prefix=f"Process control {process_client_id} ownership update",
+        )
         if update is None:
-            return Command.COMPLETE.value
+            return Command.ERROR.value
 
         async with self._command_lock:
             process_info = self._process_info(process_client_id)
             if process_info is None:
-                return Command.COMPLETE.value
+                return Command.ERROR.value
 
             if (
                 process_info.process_id is not None
@@ -1135,35 +1111,27 @@ class GraphServer(threading.Thread):
     async def _handle_process_settings_update_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> bytes:
-        num_bytes = await read_int(reader)
-        payload = await reader.readexactly(num_bytes)
-        update: ProcessSettingsUpdate | None = None
-        try:
-            update_obj = pickle.loads(payload)
-            if isinstance(update_obj, ProcessSettingsUpdate):
-                update = update_obj
-            else:
-                raise RuntimeError(
-                    "process settings payload was not ProcessSettingsUpdate"
-                )
-        except Exception as exc:
-            logger.warning(
-                "Process control %s settings update parse failed; ignoring payload: %s",
-                process_client_id,
-                exc,
-            )
-
+        update = await self._read_typed_payload(
+            reader,
+            ProcessSettingsUpdate,
+            log_prefix=f"Process control {process_client_id} settings update",
+        )
         if update is None:
-            return Command.COMPLETE.value
+            return Command.ERROR.value
 
         async with self._command_lock:
             process_info = self._process_info(process_client_id)
             if process_info is None:
-                return Command.COMPLETE.value
+                return Command.ERROR.value
 
             if process_info.process_id is None:
                 process_info.process_id = update.process_id
 
+            source_process_id = (
+                process_info.process_id
+                if process_info.process_id is not None
+                else update.process_id
+            )
             self._settings_current[update.component_address] = update.value
             self._settings_source_session[update.component_address] = None
             self._append_settings_event_locked(
@@ -1171,7 +1139,7 @@ class GraphServer(threading.Thread):
                 component_address=update.component_address,
                 value=update.value,
                 source_session_id=None,
-                source_process_id=update.process_id,
+                source_process_id=source_process_id,
                 timestamp=update.timestamp,
             )
 
@@ -1180,24 +1148,11 @@ class GraphServer(threading.Thread):
     async def _handle_process_route_response_request(
         self, process_client_id: UUID, reader: asyncio.StreamReader
     ) -> None:
-        num_bytes = await read_int(reader)
-        payload = await reader.readexactly(num_bytes)
-        response: ProcessControlResponse | None = None
-        try:
-            response_obj = pickle.loads(payload)
-            if isinstance(response_obj, ProcessControlResponse):
-                response = response_obj
-            else:
-                raise RuntimeError(
-                    "process route response payload was not ProcessControlResponse"
-                )
-        except Exception as exc:
-            logger.warning(
-                "Process control %s route response parse failed; ignoring payload: %s",
-                process_client_id,
-                exc,
-            )
-
+        response = await self._read_typed_payload(
+            reader,
+            ProcessControlResponse,
+            log_prefix=f"Process control {process_client_id} route response",
+        )
         if response is None:
             return
 
@@ -1374,7 +1329,7 @@ class GraphServer(threading.Thread):
         self._settings_events.append(event)
 
         for queue in self._settings_subscribers.values():
-            self._queue_settings_event(queue, event)
+            self._queue_stream_event(queue, event)
 
         # Bound memory growth for long-lived servers.
         max_events = 10_000
@@ -1401,7 +1356,7 @@ class GraphServer(threading.Thread):
         self._topology_events.append(event)
 
         for queue in self._topology_subscribers.values():
-            self._queue_topology_event(queue, event)
+            self._queue_stream_event(queue, event)
 
         max_events = 10_000
         if len(self._topology_events) > max_events:
@@ -1482,19 +1437,11 @@ class GraphServer(threading.Thread):
     async def _handle_session_register_request(
         self, session_id: UUID, reader: asyncio.StreamReader
     ) -> bytes:
-        num_bytes = await read_int(reader)
-        payload = await reader.readexactly(num_bytes)
-        metadata: GraphMetadata | None = None
-        try:
-            metadata_obj = pickle.loads(payload)
-            if isinstance(metadata_obj, GraphMetadata):
-                metadata = metadata_obj
-            else:
-                raise RuntimeError("metadata payload was not GraphMetadata")
-        except Exception as exc:
-            logger.warning(
-                f"Session {session_id} metadata parse failed; ignoring payload: {exc}"
-            )
+        metadata = await self._read_typed_payload(
+            reader,
+            GraphMetadata,
+            log_prefix=f"Session {session_id} metadata",
+        )
 
         async with self._command_lock:
             session = self._session_info(session_id)

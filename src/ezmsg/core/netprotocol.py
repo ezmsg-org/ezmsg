@@ -346,6 +346,7 @@ class Command(enum.Enum):
     PROCESS_PROFILING_TRACE_UPDATE = enum.auto()
     PROCESS_ROUTE_REQUEST = enum.auto()
     PROCESS_ROUTE_RESPONSE = enum.auto()
+    ERROR = enum.auto()
 
 
 def create_socket(

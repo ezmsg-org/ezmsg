@@ -1,5 +1,6 @@
 import asyncio
 import pickle
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -10,6 +11,7 @@ from ezmsg.core.graphmeta import (
     ComponentMetadata,
     DynamicSettingsMetadata,
     GraphMetadata,
+    ProcessControlErrorCode,
     ProcessControlResponse,
     SettingsFieldUpdateRequest,
     SettingsEventType,
@@ -225,6 +227,41 @@ async def test_graphcontext_update_setting_field_routes_to_process():
 
         patched = await observer.update_setting("SYS/SINK", "gain", 11)
         assert patched.repr_value == {"gain": 11}
+    finally:
+        await process.close()
+        await observer.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_graphcontext_update_setting_waits_and_propagates_process_failure():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    observer = GraphContext(address, auto_start=False)
+    await observer.__aenter__()
+    process = ProcessControlClient(address, process_id="proc-setting-fail")
+    await process.connect()
+    await process.register(["SYS/SINK"])
+
+    try:
+        async def handler(request) -> ProcessControlResponse:
+            assert request.operation == "UPDATE_SETTING_FIELD"
+            await asyncio.sleep(0.05)
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=False,
+                error="Simulated publish failure",
+                error_code=ProcessControlErrorCode.HANDLER_ERROR,
+            )
+
+        process.set_request_handler(handler)
+
+        start = time.perf_counter()
+        with pytest.raises(RuntimeError, match="Simulated publish failure"):
+            await observer.update_setting("SYS/SINK", "gain", 99, timeout=1.0)
+        elapsed = time.perf_counter() - start
+        assert elapsed >= 0.04
     finally:
         await process.close()
         await observer.__aexit__(None, None, None)

@@ -483,62 +483,28 @@ class GraphContext:
         *,
         after_seq: int = 0,
     ) -> typing.AsyncIterator[SettingsChangedEvent]:
-        reader, writer = await GraphService(self.graph_address).open_connection()
-        writer.write(Command.SESSION_SETTINGS_SUBSCRIBE.value)
-        writer.write(encode_str(str(after_seq)))
-        await writer.drain()
-
-        _subscriber_id = UUID(await read_str(reader))
-        response = await reader.read(1)
-        if response != Command.COMPLETE.value:
-            await close_stream_writer(writer)
-            raise RuntimeError("Failed to subscribe to settings events")
-
-        try:
-            while True:
-                payload_size = await read_int(reader)
-                payload = await reader.readexactly(payload_size)
-                event = pickle.loads(payload)
-                if not isinstance(event, SettingsChangedEvent):
-                    raise RuntimeError(
-                        "Settings subscription received invalid event payload"
-                    )
-                yield event
-        except asyncio.IncompleteReadError:
-            return
-        finally:
-            await close_stream_writer(writer)
+        async for event in self._subscribe_pickled_stream(
+            command=Command.SESSION_SETTINGS_SUBSCRIBE,
+            setup_payload=encode_str(str(after_seq)),
+            expected_type=SettingsChangedEvent,
+            subscribe_error="Failed to subscribe to settings events",
+            payload_error="Settings subscription received invalid event payload",
+        ):
+            yield typing.cast(SettingsChangedEvent, event)
 
     async def subscribe_topology_events(
         self,
         *,
         after_seq: int = 0,
     ) -> typing.AsyncIterator[TopologyChangedEvent]:
-        reader, writer = await GraphService(self.graph_address).open_connection()
-        writer.write(Command.SESSION_TOPOLOGY_SUBSCRIBE.value)
-        writer.write(encode_str(str(after_seq)))
-        await writer.drain()
-
-        _subscriber_id = UUID(await read_str(reader))
-        response = await reader.read(1)
-        if response != Command.COMPLETE.value:
-            await close_stream_writer(writer)
-            raise RuntimeError("Failed to subscribe to topology events")
-
-        try:
-            while True:
-                payload_size = await read_int(reader)
-                payload = await reader.readexactly(payload_size)
-                event = pickle.loads(payload)
-                if not isinstance(event, TopologyChangedEvent):
-                    raise RuntimeError(
-                        "Topology subscription received invalid event payload"
-                    )
-                yield event
-        except asyncio.IncompleteReadError:
-            return
-        finally:
-            await close_stream_writer(writer)
+        async for event in self._subscribe_pickled_stream(
+            command=Command.SESSION_TOPOLOGY_SUBSCRIBE,
+            setup_payload=encode_str(str(after_seq)),
+            expected_type=TopologyChangedEvent,
+            subscribe_error="Failed to subscribe to topology events",
+            payload_error="Topology subscription received invalid event payload",
+        ):
+            yield typing.cast(TopologyChangedEvent, event)
 
     async def subscribe_profiling_trace(
         self,
@@ -547,29 +513,45 @@ class GraphContext:
         """
         Subscribe to streamed profiling trace batches from GraphServer.
         """
-        reader, writer = await GraphService(self.graph_address).open_connection()
         payload = pickle.dumps(control)
-        writer.write(Command.SESSION_PROFILING_SUBSCRIBE.value)
-        writer.write(uint64_to_bytes(len(payload)))
-        writer.write(payload)
+        setup_payload = uint64_to_bytes(len(payload)) + payload
+        async for batch in self._subscribe_pickled_stream(
+            command=Command.SESSION_PROFILING_SUBSCRIBE,
+            setup_payload=setup_payload,
+            expected_type=ProfilingTraceStreamBatch,
+            subscribe_error="Failed to subscribe to profiling trace stream",
+            payload_error="Profiling subscription received invalid batch payload",
+        ):
+            yield typing.cast(ProfilingTraceStreamBatch, batch)
+
+    async def _subscribe_pickled_stream(
+        self,
+        *,
+        command: Command,
+        setup_payload: bytes,
+        expected_type: type[object],
+        subscribe_error: str,
+        payload_error: str,
+    ) -> typing.AsyncIterator[object]:
+        reader, writer = await GraphService(self.graph_address).open_connection()
+        writer.write(command.value)
+        writer.write(setup_payload)
         await writer.drain()
 
         _subscriber_id = UUID(await read_str(reader))
         response = await reader.read(1)
         if response != Command.COMPLETE.value:
             await close_stream_writer(writer)
-            raise RuntimeError("Failed to subscribe to profiling trace stream")
+            raise RuntimeError(subscribe_error)
 
         try:
             while True:
                 payload_size = await read_int(reader)
                 payload = await reader.readexactly(payload_size)
-                batch = pickle.loads(payload)
-                if not isinstance(batch, ProfilingTraceStreamBatch):
-                    raise RuntimeError(
-                        "Profiling subscription received invalid batch payload"
-                    )
-                yield batch
+                value = pickle.loads(payload)
+                if not isinstance(value, expected_type):
+                    raise RuntimeError(payload_error)
+                yield value
         except asyncio.IncompleteReadError:
             return
         finally:

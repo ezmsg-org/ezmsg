@@ -395,11 +395,12 @@ class DefaultBackendProcess(BackendProcess):
                     update_obj.field_path,
                     update_obj.value,
                 )
-                current_settings[unit_address] = patched
                 control_pub = control_publishers.get(input_topic)
                 if control_pub is None:
                     control_pub = await context.publisher(input_topic)
                     control_publishers[input_topic] = control_pub
+                await control_pub.broadcast(patched)
+                current_settings[unit_address] = patched
             except Exception as exc:
                 return ProcessControlResponse(
                     request_id=request.request_id,
@@ -409,17 +410,6 @@ class DefaultBackendProcess(BackendProcess):
                     process_id=process_client.process_id,
                 )
 
-            async def publish_patched_settings() -> None:
-                try:
-                    await control_pub.broadcast(patched)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to publish patched settings for %s: %s",
-                        unit_address,
-                        exc,
-                    )
-
-            asyncio.create_task(publish_patched_settings())
             result_value = self._settings_snapshot_value(patched)
             return ProcessControlResponse(
                 request_id=request.request_id,

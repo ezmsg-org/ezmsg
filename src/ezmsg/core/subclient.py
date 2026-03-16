@@ -3,7 +3,7 @@ import logging
 import typing
 
 from uuid import UUID
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
@@ -315,11 +315,3 @@ class Subscriber:
     def end_profile(self, start_ns: int, label: str | None = None) -> None:
         end_ns = PROFILE_TIME()
         PROFILES.subscriber_user_span(self.id, end_ns, end_ns - start_ns, label)
-
-    @contextmanager
-    def profile_span(self, label: str | None = None) -> typing.Generator[None, None, None]:
-        start_ns = self.begin_profile()
-        try:
-            yield
-        finally:
-            self.end_profile(start_ns, label=label)

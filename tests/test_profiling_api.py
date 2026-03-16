@@ -315,3 +315,63 @@ async def test_process_profiling_trace_subscription_stream_control():
         await process_a.close()
         await ctx.__aexit__(None, None, None)
         graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_subscription_does_not_starve_peer_subscribers():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process = ProcessControlClient(address, process_id="proc-stream-multi")
+    await process.connect()
+    await process.register(["SYS/U7"])
+
+    pub = await ctx.publisher("TOPIC_STREAM_MULTI")
+    sub = await ctx.subscriber("TOPIC_STREAM_MULTI")
+    stream_a = None
+    stream_b = None
+
+    try:
+        response = await ctx.process_set_profiling_trace(
+            "SYS/U7",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_topics=["TOPIC_STREAM_MULTI"],
+                subscriber_topics=["TOPIC_STREAM_MULTI"],
+            ),
+            timeout=1.0,
+        )
+        assert response.ok
+
+        control = ProfilingStreamControl(interval=0.02, max_samples=256)
+        stream_a = ctx.subscribe_profiling_trace(control)
+        stream_b = ctx.subscribe_profiling_trace(control)
+
+        for idx in range(12):
+            await pub.broadcast(idx)
+            async with sub.recv_zero_copy() as _msg:
+                span_start_ns = sub.begin_profile()
+                try:
+                    await asyncio.sleep(0)
+                finally:
+                    sub.end_profile(span_start_ns, "taskA")
+
+        batch_a = await asyncio.wait_for(anext(stream_a), timeout=1.0)
+        batch_b = await asyncio.wait_for(anext(stream_b), timeout=1.0)
+
+        assert "proc-stream-multi" in batch_a.batches
+        assert "proc-stream-multi" in batch_b.batches
+        assert len(batch_a.batches["proc-stream-multi"].samples) > 0
+        assert len(batch_b.batches["proc-stream-multi"].samples) > 0
+    finally:
+        if stream_a is not None:
+            await stream_a.aclose()
+        if stream_b is not None:
+            await stream_b.aclose()
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()

@@ -218,6 +218,10 @@ class ProcessControlClient:
             ) from exc
 
         if response != Command.COMPLETE.value:
+            if response == Command.ERROR.value:
+                raise RuntimeError(
+                    f"Process control command failed: {command.name}"
+                )
             raise RuntimeError(
                 f"Unexpected response to process control command: {command.name}"
             )
@@ -234,7 +238,7 @@ class ProcessControlClient:
                 if not req:
                     break
 
-                if req == Command.COMPLETE.value:
+                if req in (Command.COMPLETE.value, Command.ERROR.value):
                     self._ack_queue.put_nowait(req)
                     continue
 
