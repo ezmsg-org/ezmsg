@@ -10,10 +10,13 @@ from contextlib import suppress
 from collections.abc import Awaitable, Callable
 
 from .graphmeta import (
+    ProcessProfilingSnapshot,
+    ProcessProfilingTraceBatch,
     ProcessControlErrorCode,
     ProcessControlOperation,
     ProcessControlRequest,
     ProcessControlResponse,
+    ProfilingTraceControl,
     ProcessPing,
     ProcessRegistration,
     ProcessStats,
@@ -21,6 +24,7 @@ from .graphmeta import (
     ProcessSettingsUpdate,
     SettingsSnapshotValue,
 )
+from .profiling import PROFILES
 from .graphserver import GraphService
 from .netprotocol import (
     AddressType,
@@ -61,6 +65,7 @@ class ProcessControlClient:
         self._io_task = None
         self._request_handler = None
         self._owned_units = set()
+        PROFILES.set_process_id(self._process_id, reset=True)
 
     @property
     def process_id(self) -> str:
@@ -103,6 +108,7 @@ class ProcessControlClient:
 
     async def register(self, units: list[str]) -> None:
         await self.connect()
+        PROFILES.set_process_id(self._process_id)
         normalized_units = sorted(set(units))
         payload = ProcessRegistration(
             process_id=self._process_id,
@@ -294,6 +300,67 @@ class ProcessControlClient:
                         timestamp=time.time(),
                     )
                 ),
+                process_id=self._process_id,
+            )
+
+        if operation == ProcessControlOperation.GET_PROFILING_SNAPSHOT:
+            snapshot: ProcessProfilingSnapshot = PROFILES.snapshot()
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(snapshot),
+                process_id=self._process_id,
+            )
+
+        if operation == ProcessControlOperation.SET_PROFILING_TRACE:
+            control: ProfilingTraceControl | None = None
+            try:
+                if request.payload is not None:
+                    control_obj = pickle.loads(request.payload)
+                    if isinstance(control_obj, ProfilingTraceControl):
+                        control = control_obj
+            except Exception as exc:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Invalid profiling trace control payload: {exc}",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=self._process_id,
+                )
+
+            if control is None:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error="Missing profiling trace control payload",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=self._process_id,
+                )
+
+            PROFILES.set_trace_control(control)
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                process_id=self._process_id,
+            )
+
+        if operation == ProcessControlOperation.GET_PROFILING_TRACE_BATCH:
+            max_samples = 1000
+            if request.payload is not None:
+                try:
+                    max_samples_obj = pickle.loads(request.payload)
+                    if isinstance(max_samples_obj, int):
+                        max_samples = max(1, max_samples_obj)
+                except Exception:
+                    pass
+
+            batch: ProcessProfilingTraceBatch = PROFILES.trace_batch(
+                max_samples=max_samples
+            )
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(batch),
                 process_id=self._process_id,
             )
 

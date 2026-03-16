@@ -4,7 +4,6 @@ import logging
 import inspect
 import os
 import pickle
-import time
 import traceback
 import threading
 import weakref
@@ -28,6 +27,7 @@ from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR
 
 from .graphcontext import GraphContext
 from .graphmeta import SettingsSnapshotValue
+from .profiling import PROFILES, PROFILE_TIME
 from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
@@ -243,6 +243,7 @@ class DefaultBackendProcess(BackendProcess):
         main_func = None
         context = GraphContext(self.graph_address)
         process_client = ProcessControlClient(self.graph_address)
+        PROFILES.set_process_id(process_client.process_id)
         process_register_future: concurrent.futures.Future[None] | None = None
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
         self._shutdown_errors = False
@@ -502,11 +503,12 @@ class DefaultBackendProcess(BackendProcess):
             await asyncio.sleep(0)
 
         async def perf_publish(stream: Stream, obj: Any) -> None:
-            start = time.perf_counter()
+            start = PROFILE_TIME()
             await publish(stream, obj)
-            stop = time.perf_counter()
+            stop = PROFILE_TIME()
             logger.info(
-                f"{task_address} send duration = " + f"{(stop - start) * 1e3:0.4f}ms"
+                f"{task_address} send duration = "
+                f"{((stop - start) / 1_000_000.0):0.4f}ms"
             )
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
@@ -598,7 +600,13 @@ async def handle_subscriber(
                         )
                 for callable in list(callables):
                     try:
-                        await callable(msg)
+                        span_start_ns = sub.begin_profile()
+                        try:
+                            await callable(msg)
+                        finally:
+                            sub.end_profile(
+                                span_start_ns, getattr(callable, "__name__", None)
+                            )
                     except (Complete, NormalTermination):
                         callables.remove(callable)
             finally:
@@ -615,7 +623,13 @@ async def handle_subscriber(
                             )
                     for callable in list(callables):
                         try:
-                            await callable(msg)
+                            span_start_ns = sub.begin_profile()
+                            try:
+                                await callable(msg)
+                            finally:
+                                sub.end_profile(
+                                    span_start_ns, getattr(callable, "__name__", None)
+                                )
                         except (Complete, NormalTermination):
                             callables.remove(callable)
                 finally:

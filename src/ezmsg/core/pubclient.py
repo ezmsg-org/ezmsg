@@ -13,6 +13,7 @@ from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import Channel
 from .messagemarshal import MessageMarshal, UninitializedMemory
+from .profiling import PROFILES, PROFILE_TIME
 
 from .netprotocol import (
     Address,
@@ -230,6 +231,7 @@ class Publisher:
         self._force_tcp = force_tcp
         self._last_backpressure_event = -1
         self._graph_address = graph_address
+        PROFILES.register_publisher(self.id, self.topic)
 
     @property
     def log_name(self) -> str:
@@ -243,6 +245,7 @@ class Publisher:
         and all subscriber handling tasks.
         """
         self._graph_task.cancel()
+        PROFILES.unregister_publisher(self.id)
         self._shm.close()
         self._connection_task.cancel()
         for task in self._channel_tasks.values():
@@ -369,12 +372,18 @@ class Publisher:
                 elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
+                    PROFILES.publisher_sample_inflight(
+                        self.id, PROFILE_TIME(), self._backpressure.pressure
+                    )
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
 
         finally:
             self._backpressure.free(info.id)
+            PROFILES.publisher_sample_inflight(
+                self.id, PROFILE_TIME(), self._backpressure.pressure
+            )
             await close_stream_writer(self._channels[info.id].writer)
             del self._channels[info.id]
 
@@ -434,7 +443,12 @@ class Publisher:
             if BACKPRESSURE_WARNING and (delta > BACKPRESSURE_REFRACTORY):
                 logger.warning(f"{self.topic} under subscriber backpressure!")
             self._last_backpressure_event = time.time()
+            wait_start_ns = PROFILE_TIME()
             await self._backpressure.wait(buf_idx)
+            wait_end_ns = PROFILE_TIME()
+            PROFILES.publisher_backpressure_wait(
+                self.id, wait_end_ns, wait_end_ns - wait_start_ns
+            )
 
         # Get local channel and put variable there for local tx
         self._local_channel.put_local(self._msg_id, obj)
@@ -502,10 +516,15 @@ class Publisher:
                         channel.writer.write(msg)
                         await channel.writer.drain()
                         self._backpressure.lease(channel.id, buf_idx)
+                        PROFILES.publisher_sample_inflight(
+                            self.id, PROFILE_TIME(), self._backpressure.pressure
+                        )
 
                     except (ConnectionResetError, BrokenPipeError):
                         logger.debug(
                             f"Publisher {self.id}: Channel {channel.id} connection fail"
                         )
 
+        now_ns = PROFILE_TIME()
+        PROFILES.publisher_publish(self.id, now_ns, self._backpressure.pressure)
         self._msg_id += 1

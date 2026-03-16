@@ -27,8 +27,11 @@ from .graphmeta import (
     GraphMetadata,
     GraphSnapshot,
     ProcessPing,
+    ProcessProfilingSnapshot,
+    ProcessProfilingTraceBatch,
     ProcessStats,
     ProcessControlResponse,
+    ProfilingTraceControl,
     SettingsChangedEvent,
     SettingsSnapshotValue,
 )
@@ -52,25 +55,35 @@ class _SessionCommand:
 
 class GraphContext:
     """
-    GraphContext maintains a list of created publishers, subscribers, and connections in the graph.
+    Session-scoped client for graph mutation, metadata, settings, and process control.
 
-    The GraphContext provides a managed environment for creating and tracking publishers,
-    subscribers, and graph connections. When the context is no longer needed, it can
-    revert changes in the graph which disconnects publishers and removes modifications
-    that this context made.
+    `GraphContext` opens a session connection to `GraphServer` and acts as a control
+    plane for both low-level graph operations and high-level API introspection.
 
-    It also maintains a context manager that ensures the GraphServer is running.
+    Core capabilities:
+    - Create/track `Publisher` and `Subscriber` clients.
+    - Connect/disconnect topic edges owned by this session.
+    - Register high-level `GraphMetadata`.
+    - Read graph snapshots (topology, edge ownership, sessions, process ownership).
+    - Query settings snapshots/events and subscribe to push-based settings updates.
+    - Route process-control requests (ping/stats/profiling and custom operations).
+    - Revert all session-owned mutations on context exit (`SESSION_CLEAR`).
 
-    :param graph_service: Optional graph service instance to use
-    :type graph_service: GraphService | None
+    Session semantics:
+    - Mutations and metadata are tied to the session lifecycle.
+    - If the session disconnects, session-owned graph state is dropped by server cleanup.
+    - Low-level pub/sub API usage remains supported independently of metadata.
+
+    :param graph_address: Graph server address. If `None`, defaults are used.
+    :type graph_address: AddressType | None
     :param auto_start: Whether to auto-start a GraphServer if connection fails.
         If None, defaults to auto-start only when graph_address is not provided
         and no environment override is set.
     :type auto_start: bool | None
 
     .. note::
-    The GraphContext is typically managed automatically by the ezmsg runtime
-    and doesn't need to be instantiated directly by user code.
+    `GraphContext` is used by the runtime, and can also be used directly by tools
+    (inspectors, profilers, dashboards, and operational scripts).
     """
 
     _clients: set[Publisher | Subscriber]
@@ -466,6 +479,73 @@ class GraphContext:
         return typing.cast(
             ProcessStats, self.decode_process_payload(response, ProcessStats)
         )
+
+    async def process_profiling_snapshot(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessProfilingSnapshot:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROFILING_SNAPSHOT,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessProfilingSnapshot,
+            self.decode_process_payload(response, ProcessProfilingSnapshot),
+        )
+
+    async def process_set_profiling_trace(
+        self,
+        unit_address: str,
+        control: ProfilingTraceControl,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessControlResponse:
+        return await self.process_request(
+            unit_address,
+            ProcessControlOperation.SET_PROFILING_TRACE,
+            payload_obj=control,
+            timeout=timeout,
+        )
+
+    async def process_profiling_trace_batch(
+        self,
+        unit_address: str,
+        *,
+        max_samples: int = 1000,
+        timeout: float = 2.0,
+    ) -> ProcessProfilingTraceBatch:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROFILING_TRACE_BATCH,
+            payload_obj=max_samples,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessProfilingTraceBatch,
+            self.decode_process_payload(response, ProcessProfilingTraceBatch),
+        )
+
+    async def profiling_snapshot_all(
+        self,
+        *,
+        timeout_per_process: float = 0.5,
+    ) -> dict[str, ProcessProfilingSnapshot]:
+        graph_snapshot = await self.snapshot()
+        out: dict[str, ProcessProfilingSnapshot] = {}
+        for process in graph_snapshot.processes.values():
+            if len(process.units) == 0:
+                continue
+            route_unit = process.units[0]
+            try:
+                out[process.process_id] = await self.process_profiling_snapshot(
+                    route_unit, timeout=timeout_per_process
+                )
+            except Exception:
+                continue
+        return out
 
     def decode_process_payload(
         self,

@@ -181,6 +181,9 @@ class ProcessControlRequest:
 class ProcessControlOperation(enum.Enum):
     PING = "PING"
     GET_PROCESS_STATS = "GET_PROCESS_STATS"
+    GET_PROFILING_SNAPSHOT = "GET_PROFILING_SNAPSHOT"
+    SET_PROFILING_TRACE = "SET_PROFILING_TRACE"
+    GET_PROFILING_TRACE_BATCH = "GET_PROFILING_TRACE_BATCH"
 
 
 class ProcessControlErrorCode(enum.Enum):
@@ -219,6 +222,83 @@ class ProcessStats:
     host: str
     owned_units: list[str]
     timestamp: float
+
+
+class ProfileChannelType(enum.Enum):
+    LOCAL = "LOCAL"
+    SHM = "SHM"
+    TCP = "TCP"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class PublisherProfileSnapshot:
+    endpoint_id: str
+    topic: str
+    messages_published_total: int
+    messages_published_window: int
+    publish_delta_ns_avg_window: float
+    publish_rate_hz_window: float
+    inflight_messages_current: int
+    inflight_messages_peak_window: int
+    backpressure_wait_ns_total: int
+    backpressure_wait_ns_window: int
+    timestamp: float
+
+
+@dataclass
+class SubscriberProfileSnapshot:
+    endpoint_id: str
+    topic: str
+    messages_received_total: int
+    messages_received_window: int
+    lease_time_ns_total: int
+    lease_time_ns_avg_window: float
+    user_span_ns_total: int
+    user_span_ns_avg_window: float
+    attributable_backpressure_ns_total: int
+    attributable_backpressure_ns_window: int
+    attributable_backpressure_events_total: int
+    channel_kind_last: ProfileChannelType
+    timestamp: float
+
+
+@dataclass
+class ProcessProfilingSnapshot:
+    process_id: str
+    pid: int
+    host: str
+    window_seconds: float
+    timestamp: float
+    publishers: dict[str, PublisherProfileSnapshot]
+    subscribers: dict[str, SubscriberProfileSnapshot]
+
+
+@dataclass
+class ProfilingTraceControl:
+    enabled: bool
+    sample_mod: int = 1
+    publisher_topics: list[str] | None = None
+    subscriber_topics: list[str] | None = None
+
+
+@dataclass
+class ProfilingTraceSample:
+    timestamp: float
+    endpoint_id: str
+    topic: str
+    metric: str
+    value: float
+    channel_kind: ProfileChannelType | None = None
+
+
+@dataclass
+class ProcessProfilingTraceBatch:
+    process_id: str
+    pid: int
+    host: str
+    timestamp: float
+    samples: list[ProfilingTraceSample]
 
 
 class Edge(NamedTuple):

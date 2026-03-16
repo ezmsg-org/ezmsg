@@ -3,12 +3,14 @@ import logging
 import typing
 
 from uuid import UUID
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from copy import deepcopy
 
 from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import NotificationQueue, LeakyQueue, Channel
+from .profiling import PROFILES, PROFILE_TIME
+from .graphmeta import ProfileChannelType
 
 from .netprotocol import (
     AddressType,
@@ -135,6 +137,7 @@ class Subscriber:
         else:
             self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
+        PROFILES.register_subscriber(self.id, self.topic)
 
     def _handle_dropped_notification(
         self, notification: typing.Tuple[UUID, int]
@@ -160,6 +163,7 @@ class Subscriber:
         and closes all shared memory contexts.
         """
         self._graph_task.cancel()
+        PROFILES.unregister_subscriber(self.id)
 
     async def wait_closed(self) -> None:
         """
@@ -295,5 +299,27 @@ class Subscriber:
                 break
             # Stale notification from an unregistered publisher — skip.
 
-        with self._channels[pub_id].get(msg_id, self.id) as msg:
+        channel = self._channels[pub_id]
+        channel_kind = getattr(channel, "channel_kind", ProfileChannelType.UNKNOWN)
+        start_ns = PROFILE_TIME()
+        with channel.get(msg_id, self.id) as msg:
             yield msg
+        end_ns = PROFILE_TIME()
+        PROFILES.subscriber_receive(
+            self.id, end_ns, end_ns - start_ns, channel_kind
+        )
+
+    def begin_profile(self) -> int:
+        return PROFILE_TIME()
+
+    def end_profile(self, start_ns: int, label: str | None = None) -> None:
+        end_ns = PROFILE_TIME()
+        PROFILES.subscriber_user_span(self.id, end_ns, end_ns - start_ns, label)
+
+    @contextmanager
+    def profile_span(self, label: str | None = None) -> typing.Generator[None, None, None]:
+        start_ns = self.begin_profile()
+        try:
+            yield
+        finally:
+            self.end_profile(start_ns, label=label)
