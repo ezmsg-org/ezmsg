@@ -292,7 +292,7 @@ class ProfileRegistry:
         self._trace_control_expires_ns: int | None = None
 
     def set_process_id(self, process_id: UUID, *, reset: bool = False) -> None:
-        if reset or (self._process_id and self._process_id != process_id):
+        if reset:
             self._publishers.clear()
             self._subscribers.clear()
             self._default_trace_control = ProfilingTraceControl(enabled=False)

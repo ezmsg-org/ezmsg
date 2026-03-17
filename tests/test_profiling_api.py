@@ -56,6 +56,39 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
 
 
 @pytest.mark.asyncio
+async def test_process_connect_does_not_clear_preexisting_profile_metrics():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    pub = await ctx.publisher("TOPIC_PRECONNECT")
+    sub = await ctx.subscriber("TOPIC_PRECONNECT")
+    for idx in range(6):
+        await pub.broadcast(idx)
+        async with sub.recv_zero_copy() as _msg:
+            await asyncio.sleep(0)
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/U_PRE"])
+
+    try:
+        snap = await ctx.process_profiling_snapshot("SYS/U_PRE", timeout=1.0)
+        assert len(snap.publishers) >= 1
+        assert len(snap.subscribers) >= 1
+        pub_metrics = next(iter(snap.publishers.values()))
+        sub_metrics = next(iter(snap.subscribers.values()))
+        assert pub_metrics.messages_published_total >= 6
+        assert sub_metrics.messages_received_total >= 6
+    finally:
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
 async def test_process_profiling_trace_control_and_batch():
     graph_server = GraphService().create_server()
     address = graph_server.address

@@ -71,7 +71,6 @@ class ProcessControlClient:
         self._trace_push_max_samples = int(
             os.environ.get("EZMSG_PROFILE_TRACE_PUSH_MAX_SAMPLES", "1000")
         )
-        PROFILES.set_process_id(UUID(int=0), reset=True)
 
     def _require_client_id(self) -> UUID:
         if self._client_id is None:
@@ -101,7 +100,7 @@ class ProcessControlClient:
             raise RuntimeError("Failed to create process control connection")
 
         self._client_id = client_id
-        PROFILES.set_process_id(client_id, reset=True)
+        PROFILES.set_process_id(client_id)
         self._reader = reader
         self._writer = writer
         self._io_task = asyncio.create_task(
