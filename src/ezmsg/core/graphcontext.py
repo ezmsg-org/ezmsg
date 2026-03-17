@@ -360,8 +360,38 @@ class GraphContext:
             payload=payload,
             response_kind=_SessionResponseKind.BYTE,
         )
-        if response != Command.COMPLETE.value:
-            raise RuntimeError("Unexpected response to session metadata registration")
+        if response == Command.COMPLETE.value:
+            return
+        if response == Command.ERROR.value:
+            requested = set(metadata.components.keys())
+            collisions: set[str] = set()
+            if len(requested) > 0:
+                own_session_id = str(self._session_id) if self._session_id is not None else None
+                try:
+                    snapshot = await self.snapshot()
+                    for session_id, session in snapshot.sessions.items():
+                        if own_session_id is not None and session_id == own_session_id:
+                            continue
+                        if session.metadata is None:
+                            continue
+                        collisions.update(
+                            requested.intersection(session.metadata.components.keys())
+                        )
+                except Exception:
+                    # Fall back to a generic error if snapshot lookup fails.
+                    pass
+
+            if len(collisions) > 0:
+                collision_str = ", ".join(sorted(collisions))
+                raise RuntimeError(
+                    "Session metadata registration rejected by GraphServer due to "
+                    f"component address collision(s): {collision_str}"
+                )
+            raise RuntimeError("Session metadata registration rejected by GraphServer")
+        raise RuntimeError(
+            "Unexpected response to session metadata registration: "
+            f"{response!r}"
+        )
 
     async def snapshot(self) -> GraphSnapshot:
         snapshot = await self._session_command(

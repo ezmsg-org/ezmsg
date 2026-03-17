@@ -41,11 +41,15 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
         assert len(snap.publishers) >= 1
         assert len(snap.subscribers) >= 1
 
-        pub_metrics = next(iter(snap.publishers.values()))
+        pub_metrics = next(
+            pub for pub in snap.publishers.values() if pub.topic == "TOPIC_PROF"
+        )
         assert pub_metrics.messages_published_total >= 8
         assert pub_metrics.publish_rate_hz_window >= 0.0
 
-        sub_metrics = next(iter(snap.subscribers.values()))
+        sub_metrics = next(
+            sub for sub in snap.subscribers.values() if sub.topic == "TOPIC_PROF"
+        )
         assert sub_metrics.messages_received_total >= 8
         assert sub_metrics.lease_time_ns_total > 0
         assert sub_metrics.lease_time_ns_avg_window >= 0.0
@@ -78,8 +82,12 @@ async def test_process_connect_does_not_clear_preexisting_profile_metrics():
         snap = await ctx.process_profiling_snapshot("SYS/U_PRE", timeout=1.0)
         assert len(snap.publishers) >= 1
         assert len(snap.subscribers) >= 1
-        pub_metrics = next(iter(snap.publishers.values()))
-        sub_metrics = next(iter(snap.subscribers.values()))
+        pub_metrics = next(
+            pub for pub in snap.publishers.values() if pub.topic == "TOPIC_PRECONNECT"
+        )
+        sub_metrics = next(
+            sub for sub in snap.subscribers.values() if sub.topic == "TOPIC_PRECONNECT"
+        )
         assert pub_metrics.messages_published_total >= 6
         assert sub_metrics.messages_received_total >= 6
     finally:

@@ -358,7 +358,7 @@ async def test_metadata_registration_rejects_component_address_collision():
         await owner_a.register_metadata(metadata)
         with pytest.raises(
             RuntimeError,
-            match="Unexpected response to session metadata registration",
+            match="component address collision\\(s\\): SYS/UNIT_COLLIDE",
         ):
             await owner_b.register_metadata(metadata)
     finally:
