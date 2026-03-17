@@ -123,8 +123,8 @@ class ModifierCollection(ez.Collection):
     """This collection will subscribe to messages
     and append the most recent LFO output"""
 
-    INPUT = ez.InputStream(str)
-    OUTPUT = ez.OutputStream(str)
+    INPUT = ez.InputTopic(str)
+    OUTPUT = ez.OutputTopic(str)
 
     SIN = LFO()
     # SIN2 = LFO()
