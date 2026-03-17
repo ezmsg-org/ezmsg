@@ -69,18 +69,20 @@ async def test_topology_subscription_reports_process_changes():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-topology")
+    process = ProcessControlClient(address)
     stream = observer.subscribe_topology_events(after_seq=0)
 
     try:
         await process.connect()
+        assert process.client_id is not None
+        process_key = process.client_id
         await process.register(["SYS/U1"])
 
         registered = await _next_matching_event(
             stream,
             lambda e: (
                 e.event_type == TopologyEventType.PROCESS_CHANGED
-                and e.source_process_id == "proc-topology"
+                and e.source_process_id == process_key
             ),
             timeout=1.0,
         )
@@ -91,7 +93,7 @@ async def test_topology_subscription_reports_process_changes():
             stream,
             lambda e: (
                 e.event_type == TopologyEventType.PROCESS_CHANGED
-                and e.source_process_id == "proc-topology"
+                and e.source_process_id == process_key
             ),
             timeout=1.0,
         )

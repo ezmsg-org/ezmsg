@@ -319,7 +319,6 @@ class DefaultBackendProcess(BackendProcess):
         main_func = None
         context = GraphContext(self.graph_address)
         process_client = ProcessControlClient(self.graph_address)
-        PROFILES.set_process_id(process_client.process_id)
         process_register_future: concurrent.futures.Future[None] | None = None
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
         settings_input_topics: dict[str, str] = {}

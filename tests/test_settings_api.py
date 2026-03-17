@@ -203,8 +203,10 @@ async def test_graphcontext_update_setting_field_routes_to_process():
 
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
-    process = ProcessControlClient(address, process_id="proc-setting-patch")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/SINK"])
 
     try:
@@ -240,7 +242,7 @@ async def test_graphcontext_update_setting_waits_and_propagates_process_failure(
 
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
-    process = ProcessControlClient(address, process_id="proc-setting-fail")
+    process = ProcessControlClient(address)
     await process.connect()
     await process.register(["SYS/SINK"])
 
@@ -276,8 +278,10 @@ async def test_process_reported_settings_update_visible_in_snapshot_and_events()
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-settings")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
 
     try:
         await process.register(["SYS/UNIT_B"])
@@ -297,7 +301,7 @@ async def test_process_reported_settings_update_visible_in_snapshot_and_events()
             and event.event_type == SettingsEventType.SETTINGS_UPDATED
         ]
         assert matching
-        assert matching[-1].source_process_id == "proc-settings"
+        assert matching[-1].source_process_id == process_key
 
         stream = observer.subscribe_settings_events(after_seq=0)
         streamed = await asyncio.wait_for(anext(stream), timeout=1.0)
@@ -334,4 +338,30 @@ async def test_session_owned_settings_removed_when_session_drops():
     finally:
         await owner.__aexit__(None, None, None)
         await observer.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_metadata_registration_rejects_component_address_collision():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    owner_a = GraphContext(address, auto_start=False)
+    owner_b = GraphContext(address, auto_start=False)
+
+    await owner_a.__aenter__()
+    await owner_b.__aenter__()
+
+    try:
+        component_address = "SYS/UNIT_COLLIDE"
+        metadata = _metadata_with_component(component_address)
+        await owner_a.register_metadata(metadata)
+        with pytest.raises(
+            RuntimeError,
+            match="Unexpected response to session metadata registration",
+        ):
+            await owner_b.register_metadata(metadata)
+    finally:
+        await owner_a.__aexit__(None, None, None)
+        await owner_b.__aexit__(None, None, None)
         graph_server.stop()

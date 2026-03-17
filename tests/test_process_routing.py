@@ -20,8 +20,10 @@ async def test_process_routing_roundtrip():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-route")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U1"])
 
     async def handler(request: ProcessControlRequest) -> ProcessControlResponse:
@@ -44,7 +46,7 @@ async def test_process_routing_roundtrip():
         )
         assert response.ok
         assert response.payload == b"hello"
-        assert response.process_id == "proc-route"
+        assert response.process_id == process_key
     finally:
         await process.close()
         await observer.__aexit__(None, None, None)
@@ -59,20 +61,22 @@ async def test_process_routing_builtin_ping_and_stats():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-builtins")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U1", "SYS/U2"])
     await process.update_ownership(removed_units=["SYS/U2"], added_units=["SYS/U3"])
 
     try:
         ping = await observer.process_ping("SYS/U1", timeout=1.0)
-        assert ping.process_id == "proc-builtins"
+        assert ping.process_id == process_key
         assert ping.pid > 0
         assert ping.host
         assert ping.timestamp > 0.0
 
         stats = await observer.process_stats("SYS/U1", timeout=1.0)
-        assert stats.process_id == "proc-builtins"
+        assert stats.process_id == process_key
         assert stats.pid > 0
         assert stats.host
         assert stats.owned_units == ["SYS/U1", "SYS/U3"]
@@ -115,8 +119,10 @@ async def test_process_routing_timeout_returns_error():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-timeout")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U2"])
 
     block = asyncio.Event()
@@ -137,7 +143,7 @@ async def test_process_routing_timeout_returns_error():
         assert response.error is not None
         assert "Timed out waiting for process response" in response.error
         assert response.error_code == ProcessControlErrorCode.TIMEOUT
-        assert response.process_id == "proc-timeout"
+        assert response.process_id == process_key
     finally:
         await process.close()
         await observer.__aexit__(None, None, None)

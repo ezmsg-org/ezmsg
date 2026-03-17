@@ -182,7 +182,6 @@ class ProcessInfo(ClientInfo):
     Process-scoped control-plane client information.
     """
 
-    process_id: str | None = None
     pid: int | None = None
     host: str | None = None
     units: set[str] = field(default_factory=set)

@@ -26,7 +26,8 @@ from ezmsg.core.graphmeta import GraphSnapshot, TopologyChangedEvent
 from ezmsg.core.netprotocol import DEFAULT_HOST, GRAPHSERVER_PORT_DEFAULT
 
 
-def _truncate(text: str, width: int) -> str:
+def _truncate(text: object, width: int) -> str:
+    text = str(text)
     if width <= 3:
         return text[:width]
     if len(text) <= width:

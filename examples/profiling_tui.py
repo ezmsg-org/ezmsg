@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import time
 from dataclasses import dataclass
+from uuid import UUID
 
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import (
@@ -28,7 +29,8 @@ from ezmsg.core.graphmeta import (
 from ezmsg.core.netprotocol import DEFAULT_HOST, GRAPHSERVER_PORT_DEFAULT
 
 
-def _truncate(text: str, width: int) -> str:
+def _truncate(text: object, width: int) -> str:
+    text = str(text)
     if width <= 3:
         return text[:width]
     if len(text) <= width:
@@ -42,7 +44,7 @@ def _fmt_float(value: float, digits: int = 2) -> str:
 
 @dataclass
 class PublisherView:
-    process_id: str
+    process_id: UUID
     topic: str
     endpoint_id: str
     published_total: int
@@ -58,7 +60,7 @@ class PublisherView:
 
 @dataclass
 class SubscriberView:
-    process_id: str
+    process_id: UUID
     topic: str
     endpoint_id: str
     channel_kind: str
@@ -92,10 +94,10 @@ class ProfilingTUI:
         self.trace_sample_mod = max(1, trace_sample_mod)
         self.max_rows = max(5, max_rows)
 
-        self.snapshots: dict[str, ProcessProfilingSnapshot] = {}
-        self.route_units: dict[str, str] = {}
-        self.trace_enabled_processes: set[str] = set()
-        self.trace_errors: dict[str, str] = {}
+        self.snapshots: dict[UUID, ProcessProfilingSnapshot] = {}
+        self.route_units: dict[UUID, str] = {}
+        self.trace_enabled_processes: set[UUID] = set()
+        self.trace_errors: dict[UUID, str] = {}
         self.trace_samples_seen_by_endpoint: dict[str, int] = {}
         self.trace_last_timestamp_by_endpoint: dict[str, float] = {}
         self.last_snapshot_time: float | None = None
@@ -135,7 +137,7 @@ class ProfilingTUI:
 
     async def _refresh_snapshot(self) -> None:
         graph_snapshot = await self.ctx.snapshot()
-        route_units: dict[str, str] = {}
+        route_units: dict[UUID, str] = {}
         for process in graph_snapshot.processes.values():
             if process.units:
                 route_units[process.process_id] = process.units[0]
@@ -349,8 +351,8 @@ class ProfilingTUI:
 
         if self.trace_errors:
             print("\ntrace errors:")
-            for process_id, err in sorted(self.trace_errors.items()):
-                print(f"  {_truncate(process_id, 30)}: {_truncate(err, 120)}")
+            for process_id, err in sorted(self.trace_errors.items(), key=lambda item: str(item[0])):
+                print(f"  {_truncate(str(process_id), 30)}: {_truncate(err, 120)}")
 
 
 def _parse_address(host: str, port: int) -> tuple[str, int]:

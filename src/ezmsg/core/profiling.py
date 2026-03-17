@@ -283,7 +283,7 @@ class _SubscriberMetrics:
 
 class ProfileRegistry:
     def __init__(self) -> None:
-        self._process_id = ""
+        self._process_id = UUID(int=0)
         self._pid = os.getpid()
         self._host = socket.gethostname()
         self._publishers: dict[UUID, _PublisherMetrics] = {}
@@ -291,7 +291,7 @@ class ProfileRegistry:
         self._default_trace_control = ProfilingTraceControl(enabled=False)
         self._trace_control_expires_ns: int | None = None
 
-    def set_process_id(self, process_id: str, *, reset: bool = False) -> None:
+    def set_process_id(self, process_id: UUID, *, reset: bool = False) -> None:
         if reset or (self._process_id and self._process_id != process_id):
             self._publishers.clear()
             self._subscribers.clear()

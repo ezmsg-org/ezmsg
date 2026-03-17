@@ -20,8 +20,10 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-prof")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U1"])
 
     pub = await ctx.publisher("TOPIC_PROF")
@@ -34,7 +36,7 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
                 await asyncio.sleep(0)
 
         snap = await ctx.process_profiling_snapshot("SYS/U1", timeout=1.0)
-        assert snap.process_id == "proc-prof"
+        assert snap.process_id == process_key
         assert snap.window_seconds > 0
         assert len(snap.publishers) >= 1
         assert len(snap.subscribers) >= 1
@@ -61,8 +63,10 @@ async def test_process_profiling_trace_control_and_batch():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-trace")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U2"])
 
     pub = await ctx.publisher("TOPIC_TRACE")
@@ -93,7 +97,7 @@ async def test_process_profiling_trace_control_and_batch():
         batch = await ctx.process_profiling_trace_batch(
             "SYS/U2", max_samples=200, timeout=1.0
         )
-        assert batch.process_id == "proc-trace"
+        assert batch.process_id == process_key
         assert len(batch.samples) > 0
 
         disable_response = await ctx.process_set_profiling_trace(
@@ -116,14 +120,16 @@ async def test_profiling_snapshot_all_and_unroutable_error_code():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-all")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U3"])
 
     try:
         snapshots = await ctx.profiling_snapshot_all(timeout_per_process=0.5)
-        assert "proc-all" in snapshots
-        assert snapshots["proc-all"].process_id == "proc-all"
+        assert process_key in snapshots
+        assert snapshots[process_key].process_id == process_key
 
         response = await ctx.process_request(
             "SYS/MISSING",
@@ -146,8 +152,10 @@ async def test_process_profiling_trace_subscription_push():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-stream")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U4"])
 
     pub = await ctx.publisher("TOPIC_STREAM")
@@ -182,9 +190,9 @@ async def test_process_profiling_trace_subscription_push():
 
         batch = await asyncio.wait_for(anext(stream), timeout=1.0)
         assert batch.timestamp > 0.0
-        assert "proc-stream" in batch.batches
-        process_batch = batch.batches["proc-stream"]
-        assert process_batch.process_id == "proc-stream"
+        assert process_key in batch.batches
+        process_batch = batch.batches[process_key]
+        assert process_batch.process_id == process_key
         assert len(process_batch.samples) > 0
     finally:
         if stream is not None:
@@ -202,7 +210,7 @@ async def test_process_profiling_trace_control_endpoint_metric_and_ttl():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-trace-filter")
+    process = ProcessControlClient(address)
     await process.connect()
     await process.register(["SYS/U5"])
 
@@ -292,8 +300,10 @@ async def test_process_profiling_trace_subscription_stream_control():
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process_a = ProcessControlClient(address, process_id="proc-stream-a")
+    process_a = ProcessControlClient(address)
     await process_a.connect()
+    assert process_a.client_id is not None
+    process_a_key = process_a.client_id
     await process_a.register(["SYS/U6"])
 
     stream = None
@@ -302,12 +312,12 @@ async def test_process_profiling_trace_subscription_stream_control():
             ProfilingStreamControl(
                 interval=0.02,
                 max_samples=64,
-                process_ids=["proc-stream-a"],
+                process_ids=[process_a_key],
                 include_empty_batches=True,
             )
         )
         batch = await asyncio.wait_for(anext(stream), timeout=1.0)
-        assert "proc-stream-a" in batch.batches
+        assert process_a_key in batch.batches
         assert len(batch.batches) == 1
     finally:
         if stream is not None:
@@ -325,8 +335,10 @@ async def test_process_profiling_trace_subscription_does_not_starve_peer_subscri
     ctx = GraphContext(address, auto_start=False)
     await ctx.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-stream-multi")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
     await process.register(["SYS/U7"])
 
     pub = await ctx.publisher("TOPIC_STREAM_MULTI")
@@ -363,10 +375,10 @@ async def test_process_profiling_trace_subscription_does_not_starve_peer_subscri
         batch_a = await asyncio.wait_for(anext(stream_a), timeout=1.0)
         batch_b = await asyncio.wait_for(anext(stream_b), timeout=1.0)
 
-        assert "proc-stream-multi" in batch_a.batches
-        assert "proc-stream-multi" in batch_b.batches
-        assert len(batch_a.batches["proc-stream-multi"].samples) > 0
-        assert len(batch_b.batches["proc-stream-multi"].samples) > 0
+        assert process_key in batch_a.batches
+        assert process_key in batch_b.batches
+        assert len(batch_a.batches[process_key].samples) > 0
+        assert len(batch_b.batches[process_key].samples) > 0
     finally:
         if stream_a is not None:
             await stream_a.aclose()

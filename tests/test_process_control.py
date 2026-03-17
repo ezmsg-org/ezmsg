@@ -18,8 +18,10 @@ async def test_process_registration_visible_in_snapshot():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-A")
+    process = ProcessControlClient(address)
     await process.connect()
+    assert process.client_id is not None
+    process_key = process.client_id
 
     try:
         await process.register(["SYS/U1", "SYS/U2"])
@@ -29,7 +31,7 @@ async def test_process_registration_visible_in_snapshot():
         assert len(snapshot.processes) == 1
 
         process_entry = next(iter(snapshot.processes.values()))
-        assert process_entry.process_id == "proc-A"
+        assert process_entry.process_id == process_key
         assert process_entry.pid is not None
         assert process_entry.host is not None
         assert process_entry.units == ["SYS/U2", "SYS/U3"]
@@ -49,7 +51,7 @@ async def test_process_snapshot_entry_drops_on_disconnect():
     observer = GraphContext(address, auto_start=False)
     await observer.__aenter__()
 
-    process = ProcessControlClient(address, process_id="proc-B")
+    process = ProcessControlClient(address)
     await process.connect()
 
     try:
@@ -127,7 +129,6 @@ async def test_process_register_succeeds_after_error_ack():
 
         good_payload = pickle.dumps(
             ProcessRegistration(
-                process_id="proc-after-error",
                 pid=123,
                 host="test-host",
                 units=["SYS/U1"],
@@ -141,4 +142,45 @@ async def test_process_register_succeeds_after_error_ack():
         assert response == Command.COMPLETE.value
     finally:
         await close_stream_writer(writer)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_register_rejects_unit_ownership_collision():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    process_a = ProcessControlClient(address)
+    process_b = ProcessControlClient(address)
+    await process_a.connect()
+    await process_b.connect()
+
+    try:
+        await process_a.register(["SYS/U1"])
+        with pytest.raises(RuntimeError, match="PROCESS_REGISTER"):
+            await process_b.register(["SYS/U1"])
+    finally:
+        await process_a.close()
+        await process_b.close()
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_update_ownership_rejects_unit_ownership_collision():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    process_a = ProcessControlClient(address)
+    process_b = ProcessControlClient(address)
+    await process_a.connect()
+    await process_b.connect()
+
+    try:
+        await process_a.register(["SYS/U1"])
+        await process_b.register(["SYS/U2"])
+        with pytest.raises(RuntimeError, match="PROCESS_UPDATE_OWNERSHIP"):
+            await process_b.update_ownership(added_units=["SYS/U1"])
+    finally:
+        await process_a.close()
+        await process_b.close()
         graph_server.stop()

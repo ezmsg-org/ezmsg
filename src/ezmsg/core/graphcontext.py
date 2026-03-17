@@ -667,9 +667,9 @@ class GraphContext:
         self,
         *,
         timeout_per_process: float = 0.5,
-    ) -> dict[str, ProcessProfilingSnapshot]:
+    ) -> dict[UUID, ProcessProfilingSnapshot]:
         graph_snapshot = await self.snapshot()
-        out: dict[str, ProcessProfilingSnapshot] = {}
+        out: dict[UUID, ProcessProfilingSnapshot] = {}
         for process in graph_snapshot.processes.values():
             if len(process.units) == 0:
                 continue

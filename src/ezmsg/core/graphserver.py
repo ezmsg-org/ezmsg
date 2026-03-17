@@ -106,9 +106,9 @@ class GraphServer(threading.Thread):
     _pending_process_requests: dict[
         str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
     ]
-    _profiling_trace_buffers: dict[str, deque[tuple[int, ProfilingTraceSample]]]
-    _profiling_trace_process_meta: dict[str, tuple[int, str]]
-    _profiling_trace_seq: dict[str, int]
+    _profiling_trace_buffers: dict[UUID, deque[tuple[int, ProfilingTraceSample]]]
+    _profiling_trace_process_meta: dict[UUID, tuple[int, str]]
+    _profiling_trace_seq: dict[UUID, int]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -621,6 +621,9 @@ class GraphServer(threading.Thread):
             return info
         return None
 
+    def _process_key(self, process_client_id: UUID) -> UUID:
+        return process_client_id
+
     async def _handle_process(
         self,
         process_client_id: UUID,
@@ -701,17 +704,11 @@ class GraphServer(threading.Thread):
                                 ok=False,
                                 error="Owning process disconnected before response",
                                 error_code=ProcessControlErrorCode.PROCESS_DISCONNECTED,
-                                process_id=(
-                                    process_info.process_id if process_info is not None else None
-                                ),
+                                process_id=self._process_key(process_client_id),
                             )
                         )
                 if process_info is not None:
-                    source_process_id = (
-                        process_info.process_id
-                        if process_info.process_id is not None
-                        else str(process_client_id)
-                    )
+                    source_process_id = self._process_key(process_client_id)
                     self._profiling_trace_buffers.pop(source_process_id, None)
                     self._profiling_trace_process_meta.pop(source_process_id, None)
                     self._profiling_trace_seq.pop(source_process_id, None)
@@ -890,7 +887,7 @@ class GraphServer(threading.Thread):
         self,
         *,
         stream_control: ProfilingStreamControl,
-        last_seq_by_process: dict[str, int],
+        last_seq_by_process: dict[UUID, int],
     ) -> ProfilingTraceStreamBatch:
         process_ids_filter = (
             set(stream_control.process_ids)
@@ -899,25 +896,23 @@ class GraphServer(threading.Thread):
         )
         max_samples = max(1, int(stream_control.max_samples))
         now_ts = time.time()
-        batches: dict[str, ProcessProfilingTraceBatch] = {}
+        batches: dict[UUID, ProcessProfilingTraceBatch] = {}
 
         async with self._command_lock:
-            connected_processes: dict[str, tuple[int, str]] = {}
+            connected_processes: dict[UUID, tuple[int, str]] = {}
             for client_id, info in self.clients.items():
                 if not isinstance(info, ProcessInfo):
                     continue
-                process_id = (
-                    info.process_id if info.process_id is not None else str(client_id)
-                )
+                process_id = self._process_key(client_id)
                 pid = info.pid if info.pid is not None else -1
                 host = info.host if info.host is not None else ""
                 connected_processes[process_id] = (pid, host)
 
-            process_ids: list[str]
+            process_ids: list[UUID]
             if process_ids_filter is not None:
-                process_ids = sorted(process_ids_filter)
+                process_ids = sorted(process_ids_filter, key=str)
             else:
-                process_ids = sorted(connected_processes.keys())
+                process_ids = sorted(connected_processes.keys(), key=str)
 
             for process_id in process_ids:
                 sample_buffer = self._profiling_trace_buffers.get(process_id)
@@ -961,7 +956,7 @@ class GraphServer(threading.Thread):
         writer: asyncio.StreamWriter,
     ) -> None:
         interval = max(0.01, float(stream_control.interval))
-        last_seq_by_process: dict[str, int] = {}
+        last_seq_by_process: dict[UUID, int] = {}
         try:
             while True:
                 try:
@@ -1010,16 +1005,7 @@ class GraphServer(threading.Thread):
             return
 
         async with self._command_lock:
-            process_info = self._process_info(process_client_id)
-            process_id = (
-                (
-                    process_info.process_id
-                    if process_info is not None and process_info.process_id is not None
-                    else str(process_client_id)
-                )
-                if batch.process_id == ""
-                else batch.process_id
-            )
+            process_id = self._process_key(process_client_id)
             trace_buffer = self._profiling_trace_buffers.setdefault(
                 process_id, deque(maxlen=200_000)
             )
@@ -1046,22 +1032,34 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.ERROR.value
 
+            conflicts = sorted(
+                {
+                    unit
+                    for unit in set(registration.units)
+                    if (
+                        (owner := self._process_owner_for_unit(unit)) is not None
+                        and owner != process_client_id
+                    )
+                }
+            )
+            if conflicts:
+                logger.warning(
+                    "Process control %s register rejected due to unit ownership conflict(s): %s",
+                    process_client_id,
+                    ", ".join(conflicts),
+                )
+                return Command.ERROR.value
+
             prev_units = set(process_info.units)
-            prev_process_id = process_info.process_id
-            process_info.process_id = registration.process_id
             process_info.pid = registration.pid
             process_info.host = registration.host
             process_info.units = set(registration.units)
-            if prev_process_id is not None and prev_process_id != registration.process_id:
-                self._profiling_trace_buffers.pop(prev_process_id, None)
-                self._profiling_trace_process_meta.pop(prev_process_id, None)
-                self._profiling_trace_seq.pop(prev_process_id, None)
             if prev_units != process_info.units:
                 self._append_topology_event_locked(
                     event_type=TopologyEventType.PROCESS_CHANGED,
                     changed_topics=[],
                     source_session_id=None,
-                    source_process_id=registration.process_id,
+                    source_process_id=self._process_key(process_client_id),
                 )
 
         return Command.COMPLETE.value
@@ -1082,18 +1080,23 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.ERROR.value
 
-            if (
-                process_info.process_id is not None
-                and process_info.process_id != update.process_id
-            ):
+            conflicts = sorted(
+                {
+                    unit
+                    for unit in set(update.added_units)
+                    if (
+                        (owner := self._process_owner_for_unit(unit)) is not None
+                        and owner != process_client_id
+                    )
+                }
+            )
+            if conflicts:
                 logger.warning(
-                    "Process control %s process_id mismatch: %s != %s",
+                    "Process control %s ownership update rejected due to unit ownership conflict(s): %s",
                     process_client_id,
-                    process_info.process_id,
-                    update.process_id,
+                    ", ".join(conflicts),
                 )
-            elif process_info.process_id is None:
-                process_info.process_id = update.process_id
+                return Command.ERROR.value
 
             prev_units = set(process_info.units)
             process_info.units.update(update.added_units)
@@ -1103,7 +1106,7 @@ class GraphServer(threading.Thread):
                     event_type=TopologyEventType.PROCESS_CHANGED,
                     changed_topics=[],
                     source_session_id=None,
-                    source_process_id=update.process_id,
+                    source_process_id=self._process_key(process_client_id),
                 )
 
         return Command.COMPLETE.value
@@ -1124,14 +1127,7 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.ERROR.value
 
-            if process_info.process_id is None:
-                process_info.process_id = update.process_id
-
-            source_process_id = (
-                process_info.process_id
-                if process_info.process_id is not None
-                else update.process_id
-            )
+            source_process_id = self._process_key(process_client_id)
             self._settings_current[update.component_address] = update.value
             self._settings_source_session[update.component_address] = None
             self._append_settings_event_locked(
@@ -1193,6 +1189,28 @@ class GraphServer(threading.Thread):
                 return info
         return None
 
+    def _process_owner_for_unit(self, unit_address: str) -> UUID | None:
+        for client_id, info in self.clients.items():
+            if isinstance(info, ProcessInfo) and unit_address in info.units:
+                return client_id
+        return None
+
+    def _metadata_collisions(
+        self, session_id: UUID, metadata: GraphMetadata
+    ) -> list[str]:
+        collisions: list[str] = []
+        requested = set(metadata.components.keys())
+        if not requested:
+            return collisions
+        for other_session_id, info in self.clients.items():
+            if other_session_id == session_id or not isinstance(info, SessionInfo):
+                continue
+            if info.metadata is None:
+                continue
+            overlap = requested.intersection(info.metadata.components.keys())
+            collisions.extend(overlap)
+        return sorted(set(collisions))
+
     async def _route_process_request(
         self,
         unit_address: str,
@@ -1238,7 +1256,7 @@ class GraphServer(threading.Thread):
                     ok=False,
                     error=f"Failed to route request to owning process: {exc}",
                     error_code=ProcessControlErrorCode.ROUTE_WRITE_FAILED,
-                    process_id=process_info.process_id,
+                    process_id=self._process_key(process_info.id),
                 )
 
         try:
@@ -1254,7 +1272,7 @@ class GraphServer(threading.Thread):
                     f"(unit={unit_address}, operation={operation}, timeout={timeout}s)"
                 ),
                 error_code=ProcessControlErrorCode.TIMEOUT,
-                process_id=process_info.process_id,
+                process_id=self._process_key(process_info.id),
             )
 
     async def _handle_session_process_request(
@@ -1313,7 +1331,7 @@ class GraphServer(threading.Thread):
         component_address: str,
         value: SettingsSnapshotValue,
         source_session_id: str | None,
-        source_process_id: str | None,
+        source_process_id: UUID | None,
         timestamp: float | None = None,
     ) -> None:
         self._settings_event_seq += 1
@@ -1341,7 +1359,7 @@ class GraphServer(threading.Thread):
         event_type: TopologyEventType,
         changed_topics: list[str],
         source_session_id: str | None,
-        source_process_id: str | None,
+        source_process_id: UUID | None,
         timestamp: float | None = None,
     ) -> None:
         self._topology_event_seq += 1
@@ -1446,6 +1464,14 @@ class GraphServer(threading.Thread):
         async with self._command_lock:
             session = self._session_info(session_id)
             if session is not None and metadata is not None:
+                collisions = self._metadata_collisions(session_id, metadata)
+                if collisions:
+                    logger.warning(
+                        "Session %s metadata registration rejected due to component address collision(s): %s",
+                        session_id,
+                        ", ".join(collisions),
+                    )
+                    return Command.ERROR.value
                 self._remove_settings_for_session_locked(session_id)
                 session.metadata = metadata
                 self._apply_session_metadata_settings_locked(session_id, metadata)
@@ -1560,12 +1586,8 @@ class GraphServer(threading.Thread):
             )
         }
         processes = {
-            str(client_id): SnapshotProcess(
-                process_id=(
-                    process.process_id
-                    if process.process_id is not None
-                    else str(client_id)
-                ),
+            client_id: SnapshotProcess(
+                process_id=self._process_key(client_id),
                 pid=process.pid,
                 host=process.host,
                 units=sorted(process.units),

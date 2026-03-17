@@ -2,6 +2,7 @@ import enum
 
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, NamedTuple
+from uuid import UUID
 
 
 @dataclass
@@ -147,7 +148,6 @@ class GraphMetadata:
 
 @dataclass
 class ProcessRegistration:
-    process_id: str
     pid: int
     host: str
     units: list[str]
@@ -155,7 +155,6 @@ class ProcessRegistration:
 
 @dataclass
 class ProcessOwnershipUpdate:
-    process_id: str
     added_units: list[str] = field(default_factory=list)
     removed_units: list[str] = field(default_factory=list)
 
@@ -180,7 +179,7 @@ class SettingsChangedEvent:
     component_address: str
     timestamp: float
     source_session_id: str | None
-    source_process_id: str | None
+    source_process_id: UUID | None
     value: SettingsSnapshotValue
 
 
@@ -196,12 +195,11 @@ class TopologyChangedEvent:
     timestamp: float
     changed_topics: list[str]
     source_session_id: str | None
-    source_process_id: str | None
+    source_process_id: UUID | None
 
 
 @dataclass
 class ProcessSettingsUpdate:
-    process_id: str
     component_address: str
     value: SettingsSnapshotValue
     timestamp: float
@@ -242,7 +240,7 @@ class ProcessControlResponse:
     payload: bytes | None = None
     error: str | None = None
     error_code: ProcessControlErrorCode | None = None
-    process_id: str | None = None
+    process_id: UUID | None = None
 
 
 @dataclass
@@ -253,7 +251,7 @@ class SettingsFieldUpdateRequest:
 
 @dataclass
 class ProcessPing:
-    process_id: str
+    process_id: UUID
     pid: int
     host: str
     timestamp: float
@@ -261,7 +259,7 @@ class ProcessPing:
 
 @dataclass
 class ProcessStats:
-    process_id: str
+    process_id: UUID
     pid: int
     host: str
     owned_units: list[str]
@@ -309,7 +307,7 @@ class SubscriberProfileSnapshot:
 
 @dataclass
 class ProcessProfilingSnapshot:
-    process_id: str
+    process_id: UUID
     pid: int
     host: str
     window_seconds: float
@@ -342,7 +340,7 @@ class ProfilingTraceSample:
 
 @dataclass
 class ProcessProfilingTraceBatch:
-    process_id: str
+    process_id: UUID
     pid: int
     host: str
     timestamp: float
@@ -352,14 +350,14 @@ class ProcessProfilingTraceBatch:
 @dataclass
 class ProfilingTraceStreamBatch:
     timestamp: float
-    batches: dict[str, ProcessProfilingTraceBatch]
+    batches: dict[UUID, ProcessProfilingTraceBatch]
 
 
 @dataclass
 class ProfilingStreamControl:
     interval: float = 0.05
     max_samples: int = 1000
-    process_ids: list[str] | None = None
+    process_ids: list[UUID] | None = None
     include_empty_batches: bool = False
 
 
@@ -376,7 +374,7 @@ class SnapshotSession:
 
 @dataclass
 class SnapshotProcess:
-    process_id: str
+    process_id: UUID
     pid: int | None
     host: str | None
     units: list[str]
@@ -387,4 +385,4 @@ class GraphSnapshot:
     graph: dict[str, list[str]]
     edge_owners: dict[Edge, list[str]]
     sessions: dict[str, SnapshotSession]
-    processes: dict[str, SnapshotProcess] = field(default_factory=dict)
+    processes: dict[UUID, SnapshotProcess] = field(default_factory=dict)

@@ -5,7 +5,7 @@ import pickle
 import socket
 import time
 
-from uuid import UUID, uuid1
+from uuid import UUID
 from contextlib import suppress
 from collections.abc import Awaitable, Callable
 
@@ -40,7 +40,6 @@ logger = logging.getLogger("ezmsg")
 
 class ProcessControlClient:
     _graph_address: AddressType | None
-    _process_id: str
     _client_id: UUID | None
     _reader: asyncio.StreamReader | None
     _writer: asyncio.StreamWriter | None
@@ -55,11 +54,8 @@ class ProcessControlClient:
     _trace_push_interval_s: float
     _trace_push_max_samples: int
 
-    def __init__(
-        self, graph_address: AddressType | None = None, process_id: str | None = None
-    ) -> None:
+    def __init__(self, graph_address: AddressType | None = None) -> None:
         self._graph_address = graph_address
-        self._process_id = process_id if process_id is not None else str(uuid1())
         self._client_id = None
         self._reader = None
         self._writer = None
@@ -75,11 +71,16 @@ class ProcessControlClient:
         self._trace_push_max_samples = int(
             os.environ.get("EZMSG_PROFILE_TRACE_PUSH_MAX_SAMPLES", "1000")
         )
-        PROFILES.set_process_id(self._process_id, reset=True)
+        PROFILES.set_process_id(UUID(int=0), reset=True)
+
+    def _require_client_id(self) -> UUID:
+        if self._client_id is None:
+            raise RuntimeError("Process control connection is not active")
+        return self._client_id
 
     @property
-    def process_id(self) -> str:
-        return self._process_id
+    def process_id(self) -> UUID:
+        return self._require_client_id()
 
     @property
     def client_id(self) -> UUID | None:
@@ -100,6 +101,7 @@ class ProcessControlClient:
             raise RuntimeError("Failed to create process control connection")
 
         self._client_id = client_id
+        PROFILES.set_process_id(client_id, reset=True)
         self._reader = reader
         self._writer = writer
         self._io_task = asyncio.create_task(
@@ -118,10 +120,8 @@ class ProcessControlClient:
 
     async def register(self, units: list[str]) -> None:
         await self.connect()
-        PROFILES.set_process_id(self._process_id)
         normalized_units = sorted(set(units))
         payload = ProcessRegistration(
-            process_id=self._process_id,
             pid=os.getpid(),
             host=socket.gethostname(),
             units=normalized_units,
@@ -138,7 +138,6 @@ class ProcessControlClient:
         added = sorted(set(added_units or []))
         removed = sorted(set(removed_units or []))
         payload = ProcessOwnershipUpdate(
-            process_id=self._process_id,
             added_units=added,
             removed_units=removed,
         )
@@ -154,7 +153,6 @@ class ProcessControlClient:
     ) -> None:
         await self.connect()
         payload = ProcessSettingsUpdate(
-            process_id=self._process_id,
             component_address=component_address,
             value=value,
             timestamp=timestamp if timestamp is not None else time.time(),
@@ -299,13 +297,13 @@ class ProcessControlClient:
                 ok=True,
                 payload=pickle.dumps(
                     ProcessPing(
-                        process_id=self._process_id,
+                        process_id=self.process_id,
                         pid=os.getpid(),
                         host=socket.gethostname(),
                         timestamp=time.time(),
                     )
                 ),
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if operation == ProcessControlOperation.GET_PROCESS_STATS:
@@ -314,14 +312,14 @@ class ProcessControlClient:
                 ok=True,
                 payload=pickle.dumps(
                     ProcessStats(
-                        process_id=self._process_id,
+                        process_id=self.process_id,
                         pid=os.getpid(),
                         host=socket.gethostname(),
                         owned_units=sorted(self._owned_units),
                         timestamp=time.time(),
                     )
                 ),
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if operation == ProcessControlOperation.GET_PROFILING_SNAPSHOT:
@@ -330,7 +328,7 @@ class ProcessControlClient:
                 request_id=request.request_id,
                 ok=True,
                 payload=pickle.dumps(snapshot),
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if operation == ProcessControlOperation.SET_PROFILING_TRACE:
@@ -346,7 +344,7 @@ class ProcessControlClient:
                     ok=False,
                     error=f"Invalid profiling trace control payload: {exc}",
                     error_code=ProcessControlErrorCode.INVALID_RESPONSE,
-                    process_id=self._process_id,
+                    process_id=self.process_id,
                 )
 
             if control is None:
@@ -355,7 +353,7 @@ class ProcessControlClient:
                     ok=False,
                     error="Missing profiling trace control payload",
                     error_code=ProcessControlErrorCode.INVALID_RESPONSE,
-                    process_id=self._process_id,
+                    process_id=self.process_id,
                 )
 
             PROFILES.set_trace_control(control)
@@ -367,7 +365,7 @@ class ProcessControlClient:
             return ProcessControlResponse(
                 request_id=request.request_id,
                 ok=True,
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if operation == ProcessControlOperation.GET_PROFILING_TRACE_BATCH:
@@ -387,7 +385,7 @@ class ProcessControlClient:
                 request_id=request.request_id,
                 ok=True,
                 payload=pickle.dumps(batch),
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if self._request_handler is None:
@@ -396,7 +394,7 @@ class ProcessControlClient:
                 ok=False,
                 error=f"Unsupported process control operation: {request.operation}",
                 error_code=ProcessControlErrorCode.HANDLER_NOT_CONFIGURED,
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         try:
@@ -409,7 +407,7 @@ class ProcessControlClient:
                 ok=False,
                 error=f"process request handler failed: {exc}",
                 error_code=ProcessControlErrorCode.HANDLER_ERROR,
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if not isinstance(result, ProcessControlResponse):
@@ -421,7 +419,7 @@ class ProcessControlClient:
                     f"{type(result).__name__}"
                 ),
                 error_code=ProcessControlErrorCode.INVALID_RESPONSE,
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if result.request_id != request.request_id:
@@ -433,11 +431,11 @@ class ProcessControlClient:
                     f"{result.request_id}"
                 ),
                 error_code=ProcessControlErrorCode.INVALID_RESPONSE,
-                process_id=self._process_id,
+                process_id=self.process_id,
             )
 
         if result.process_id is None:
-            result.process_id = self._process_id
+            result.process_id = self.process_id
 
         return result
 
@@ -447,7 +445,7 @@ class ProcessControlClient:
             return
         self._trace_push_task = asyncio.create_task(
             self._trace_push_loop(),
-            name=f"proc-trace-push-{self._process_id}",
+            name=f"proc-trace-push-{self.process_id}",
         )
 
     async def _cancel_trace_push_task(self) -> None:
