@@ -231,7 +231,7 @@ class Publisher:
         self._force_tcp = force_tcp
         self._last_backpressure_event = -1
         self._graph_address = graph_address
-        PROFILES.register_publisher(self.id, self.topic)
+        PROFILES.register_publisher(self.id, self.topic, self._num_buffers)
 
     @property
     def log_name(self) -> str:

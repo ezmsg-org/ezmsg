@@ -96,6 +96,7 @@ class _Rolling:
 class _PublisherMetrics:
     topic: str
     endpoint_id: str
+    num_buffers: int
     messages_published_total: int = 0
     backpressure_wait_ns_total: int = 0
     inflight_messages_current: int = 0
@@ -168,6 +169,7 @@ class _PublisherMetrics:
             publish_delta_ns_avg_window=self._publish_delta.avg(),
             publish_rate_hz_window=float(window_msgs) / max(WINDOW_SECONDS, 1e-9),
             inflight_messages_current=self.inflight_messages_current,
+            num_buffers=self.num_buffers,
             inflight_messages_peak_window=self._inflight.max_total(),
             backpressure_wait_ns_total=self.backpressure_wait_ns_total,
             backpressure_wait_ns_window=self._backpressure_wait.sum_total(),
@@ -299,10 +301,11 @@ class ProfileRegistry:
             self._trace_control_expires_ns = None
         self._process_id = process_id
 
-    def register_publisher(self, pub_id: UUID, topic: str) -> None:
+    def register_publisher(self, pub_id: UUID, topic: str, num_buffers: int) -> None:
         metric = _PublisherMetrics(
             topic=topic,
             endpoint_id=_endpoint_id(topic, pub_id),
+            num_buffers=max(1, int(num_buffers)),
         )
         self._publishers[pub_id] = metric
         self._apply_trace_control_to_publisher(metric)

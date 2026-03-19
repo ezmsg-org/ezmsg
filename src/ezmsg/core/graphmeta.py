@@ -282,6 +282,7 @@ class PublisherProfileSnapshot:
     publish_delta_ns_avg_window: float
     publish_rate_hz_window: float
     inflight_messages_current: int
+    num_buffers: int
     inflight_messages_peak_window: int
     backpressure_wait_ns_total: int
     backpressure_wait_ns_window: int
