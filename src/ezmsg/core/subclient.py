@@ -130,6 +130,7 @@ class Subscriber:
         self._graph_address = graph_address
 
         self._channels = dict()
+        self._active_msg_seq: int | None = None
         if self.leaky:
             self._incoming = LeakyQueue(
                 1 if max_queue is None else max_queue, self._handle_dropped_notification
@@ -301,17 +302,27 @@ class Subscriber:
 
         channel = self._channels[pub_id]
         channel_kind = getattr(channel, "channel_kind", ProfileChannelType.UNKNOWN)
-        start_ns = PROFILE_TIME()
-        with channel.get(msg_id, self.id) as msg:
-            yield msg
-        end_ns = PROFILE_TIME()
-        PROFILES.subscriber_receive(
-            self.id, end_ns, end_ns - start_ns, channel_kind
-        )
+        self._active_msg_seq = msg_id
+        try:
+            start_ns = PROFILE_TIME()
+            with channel.get(msg_id, self.id) as msg:
+                yield msg
+            end_ns = PROFILE_TIME()
+            PROFILES.subscriber_receive(
+                self.id, end_ns, end_ns - start_ns, channel_kind, msg_seq=msg_id
+            )
+        finally:
+            self._active_msg_seq = None
 
     def begin_profile(self) -> int:
         return PROFILE_TIME()
 
     def end_profile(self, start_ns: int, label: str | None = None) -> None:
         end_ns = PROFILE_TIME()
-        PROFILES.subscriber_user_span(self.id, end_ns, end_ns - start_ns, label)
+        PROFILES.subscriber_user_span(
+            self.id,
+            end_ns,
+            end_ns - start_ns,
+            label,
+            msg_seq=self._active_msg_seq,
+        )

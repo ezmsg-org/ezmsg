@@ -447,7 +447,10 @@ class Publisher:
             await self._backpressure.wait(buf_idx)
             wait_end_ns = PROFILE_TIME()
             PROFILES.publisher_backpressure_wait(
-                self.id, wait_end_ns, wait_end_ns - wait_start_ns
+                self.id,
+                wait_end_ns,
+                wait_end_ns - wait_start_ns,
+                msg_seq=self._msg_id,
             )
 
         # Get local channel and put variable there for local tx
@@ -526,5 +529,10 @@ class Publisher:
                         )
 
         now_ns = PROFILE_TIME()
-        PROFILES.publisher_publish(self.id, now_ns, self._backpressure.pressure)
+        PROFILES.publisher_publish(
+            self.id,
+            now_ns,
+            self._backpressure.pressure,
+            msg_seq=self._msg_id,
+        )
         self._msg_id += 1

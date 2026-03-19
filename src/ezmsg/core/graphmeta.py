@@ -337,6 +337,7 @@ class ProfilingTraceSample:
     metric: str
     value: float
     channel_kind: ProfileChannelType | None = None
+    sample_seq: int | None = None
 
 
 @dataclass

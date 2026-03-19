@@ -116,7 +116,9 @@ class _PublisherMetrics:
     def _trace_metric_enabled(self, metric: str) -> bool:
         return self.trace_metrics is None or metric in self.trace_metrics
 
-    def record_publish(self, ts_ns: int, inflight: int) -> None:
+    def record_publish(
+        self, ts_ns: int, inflight: int, msg_seq: int | None = None
+    ) -> None:
         self.messages_published_total += 1
         self._publish_count.add(ts_ns, 1)
         publish_delta_ns = 0
@@ -138,10 +140,13 @@ class _PublisherMetrics:
                     topic=self.topic,
                     metric="publish_delta_ns",
                     value=float(publish_delta_ns),
+                    sample_seq=msg_seq,
                 )
             )
 
-    def record_backpressure_wait(self, ts_ns: int, wait_ns: int) -> None:
+    def record_backpressure_wait(
+        self, ts_ns: int, wait_ns: int, msg_seq: int | None = None
+    ) -> None:
         self.backpressure_wait_ns_total += wait_ns
         self._backpressure_wait.add(ts_ns, wait_ns)
         if self.trace_enabled and self._trace_metric_enabled("backpressure_wait_ns"):
@@ -152,6 +157,7 @@ class _PublisherMetrics:
                     topic=self.topic,
                     metric="backpressure_wait_ns",
                     value=float(wait_ns),
+                    sample_seq=msg_seq,
                 )
             )
 
@@ -202,7 +208,13 @@ class _SubscriberMetrics:
     def _trace_metric_enabled(self, metric: str) -> bool:
         return self.trace_metrics is None or metric in self.trace_metrics
 
-    def record_receive(self, ts_ns: int, lease_ns: int, channel_kind: ProfileChannelType) -> None:
+    def record_receive(
+        self,
+        ts_ns: int,
+        lease_ns: int,
+        channel_kind: ProfileChannelType,
+        msg_seq: int | None = None,
+    ) -> None:
         self.messages_received_total += 1
         self.lease_time_ns_total += lease_ns
         self.channel_kind_last = channel_kind
@@ -222,10 +234,13 @@ class _SubscriberMetrics:
                     metric="lease_time_ns",
                     value=float(lease_ns),
                     channel_kind=channel_kind,
+                    sample_seq=msg_seq,
                 )
             )
 
-    def record_user_span(self, ts_ns: int, span_ns: int, label: str | None) -> None:
+    def record_user_span(
+        self, ts_ns: int, span_ns: int, label: str | None, msg_seq: int | None = None
+    ) -> None:
         self.user_span_ns_total += span_ns
         self._user_span.add(ts_ns, span_ns)
         if self.trace_enabled and self._trace_metric_enabled("user_span_ns"):
@@ -237,11 +252,16 @@ class _SubscriberMetrics:
                     metric="user_span_ns",
                     value=float(span_ns),
                     channel_kind=self.channel_kind_last,
+                    sample_seq=msg_seq,
                 )
             )
 
     def record_attributed_backpressure(
-        self, ts_ns: int, duration_ns: int, channel_kind: ProfileChannelType
+        self,
+        ts_ns: int,
+        duration_ns: int,
+        channel_kind: ProfileChannelType,
+        msg_seq: int | None = None,
     ) -> None:
         self.attributable_backpressure_ns_total += duration_ns
         self.attributable_backpressure_events_total += 1
@@ -256,6 +276,7 @@ class _SubscriberMetrics:
                     metric="attributable_backpressure_ns",
                     value=float(duration_ns),
                     channel_kind=channel_kind,
+                    sample_seq=msg_seq,
                 )
             )
 
@@ -324,17 +345,21 @@ class ProfileRegistry:
     def unregister_subscriber(self, sub_id: UUID) -> None:
         self._subscribers.pop(sub_id, None)
 
-    def publisher_publish(self, pub_id: UUID, ts_ns: int, inflight: int) -> None:
+    def publisher_publish(
+        self, pub_id: UUID, ts_ns: int, inflight: int, msg_seq: int | None = None
+    ) -> None:
         self._expire_trace_control_if_needed(ts_ns)
         metric = self._publishers.get(pub_id)
         if metric is not None:
-            metric.record_publish(ts_ns, inflight)
+            metric.record_publish(ts_ns, inflight, msg_seq)
 
-    def publisher_backpressure_wait(self, pub_id: UUID, ts_ns: int, wait_ns: int) -> None:
+    def publisher_backpressure_wait(
+        self, pub_id: UUID, ts_ns: int, wait_ns: int, msg_seq: int | None = None
+    ) -> None:
         self._expire_trace_control_if_needed(ts_ns)
         metric = self._publishers.get(pub_id)
         if metric is not None:
-            metric.record_backpressure_wait(ts_ns, wait_ns)
+            metric.record_backpressure_wait(ts_ns, wait_ns, msg_seq)
 
     def publisher_sample_inflight(self, pub_id: UUID, ts_ns: int, inflight: int) -> None:
         metric = self._publishers.get(pub_id)
@@ -347,19 +372,25 @@ class ProfileRegistry:
         ts_ns: int,
         lease_ns: int,
         channel_kind: ProfileChannelType,
+        msg_seq: int | None = None,
     ) -> None:
         self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
-            metric.record_receive(ts_ns, lease_ns, channel_kind)
+            metric.record_receive(ts_ns, lease_ns, channel_kind, msg_seq)
 
     def subscriber_user_span(
-        self, sub_id: UUID, ts_ns: int, span_ns: int, label: str | None
+        self,
+        sub_id: UUID,
+        ts_ns: int,
+        span_ns: int,
+        label: str | None,
+        msg_seq: int | None = None,
     ) -> None:
         self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
-            metric.record_user_span(ts_ns, span_ns, label)
+            metric.record_user_span(ts_ns, span_ns, label, msg_seq)
 
     def subscriber_attributed_backpressure(
         self,
@@ -367,11 +398,14 @@ class ProfileRegistry:
         ts_ns: int,
         duration_ns: int,
         channel_kind: ProfileChannelType,
+        msg_seq: int | None = None,
     ) -> None:
         self._expire_trace_control_if_needed(ts_ns)
         metric = self._subscribers.get(sub_id)
         if metric is not None:
-            metric.record_attributed_backpressure(ts_ns, duration_ns, channel_kind)
+            metric.record_attributed_backpressure(
+                ts_ns, duration_ns, channel_kind, msg_seq
+            )
 
     def snapshot(self) -> ProcessProfilingSnapshot:
         return ProcessProfilingSnapshot(

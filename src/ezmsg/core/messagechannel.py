@@ -414,7 +414,11 @@ class Channel:
         if lease is not None:
             start_ns = lease
             PROFILES.subscriber_attributed_backpressure(
-                client_id, now_ns, now_ns - start_ns, self._channel_kind
+                client_id,
+                now_ns,
+                now_ns - start_ns,
+                self._channel_kind,
+                msg_seq=msg_id,
             )
 
         buf_idx = msg_id % self.num_buffers
