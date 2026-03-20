@@ -404,13 +404,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trace-interval",
         type=float,
-        default=0.05,
+        default=0.02,
         help="Seconds between GraphServer trace stream batches",
     )
     parser.add_argument(
         "--max-samples",
         type=int,
-        default=512,
+        default=5000,
         help="Max samples per process per streamed batch",
     )
     parser.add_argument(

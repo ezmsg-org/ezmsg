@@ -1,6 +1,7 @@
 import os
 import socket
 import time
+import heapq
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, TypeAlias
@@ -425,6 +426,9 @@ class ProfileRegistry:
         )
 
     def set_trace_control(self, control: ProfilingTraceControl) -> None:
+        # Changing filters/mode should start from a clean trace buffer so new
+        # consumers do not receive stale samples from an old control scope.
+        self._clear_trace_samples()
         self._default_trace_control = control
         if control.enabled and control.ttl_seconds is not None:
             self._trace_control_expires_ns = PROFILE_TIME() + max(
@@ -442,17 +446,39 @@ class ProfileRegistry:
     def trace_batch(self, max_samples: int = 1000) -> ProcessProfilingTraceBatch:
         self._expire_trace_control_if_needed()
         samples: list[ProfilingTraceSample] = []
+        limit = max(1, int(max_samples))
+
+        queues: list[deque[ProfilingTraceSample]] = []
         for metric in self._publishers.values():
-            while metric.trace_samples and len(samples) < max_samples:
-                samples.append(metric.trace_samples.popleft())
-            if len(samples) >= max_samples:
-                break
-        if len(samples) < max_samples:
-            for metric in self._subscribers.values():
-                while metric.trace_samples and len(samples) < max_samples:
-                    samples.append(metric.trace_samples.popleft())
-                if len(samples) >= max_samples:
-                    break
+            if metric.trace_samples:
+                queues.append(metric.trace_samples)
+        for metric in self._subscribers.values():
+            if metric.trace_samples:
+                queues.append(metric.trace_samples)
+
+        if len(queues) == 1:
+            queue = queues[0]
+            while queue and len(samples) < limit:
+                samples.append(queue.popleft())
+        elif len(queues) > 1:
+            heap: list[tuple[float, int, int]] = []
+            for idx, queue in enumerate(queues):
+                sample = queue[0]
+                # Include sample_seq to keep deterministic ordering when timestamps tie.
+                seq = sample.sample_seq if sample.sample_seq is not None else -1
+                heapq.heappush(heap, (sample.timestamp, seq, idx))
+
+            while heap and len(samples) < limit:
+                _timestamp, _seq, queue_idx = heapq.heappop(heap)
+                queue = queues[queue_idx]
+                if not queue:
+                    continue
+                sample = queue.popleft()
+                samples.append(sample)
+                if queue:
+                    nxt = queue[0]
+                    nxt_seq = nxt.sample_seq if nxt.sample_seq is not None else -1
+                    heapq.heappush(heap, (nxt.timestamp, nxt_seq, queue_idx))
 
         return ProcessProfilingTraceBatch(
             process_id=self._process_id,
@@ -508,6 +534,12 @@ class ProfileRegistry:
         metric.trace_enabled = enabled
         metric.trace_sample_mod = sample_mod
         metric.trace_metrics = trace_metrics
+
+    def _clear_trace_samples(self) -> None:
+        for metric in self._publishers.values():
+            metric.trace_samples.clear()
+        for metric in self._subscribers.values():
+            metric.trace_samples.clear()
 
 
 PROFILES = ProfileRegistry()

@@ -66,10 +66,10 @@ class ProcessControlClient:
         self._owned_units = set()
         self._trace_push_task = None
         self._trace_push_interval_s = float(
-            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_INTERVAL_S", "0.05")
+            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_INTERVAL_S", "0.02")
         )
         self._trace_push_max_samples = int(
-            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_MAX_SAMPLES", "1000")
+            os.environ.get("EZMSG_PROFILE_TRACE_PUSH_MAX_SAMPLES", "5000")
         )
 
     def _require_client_id(self) -> UUID:

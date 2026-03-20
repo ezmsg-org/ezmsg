@@ -428,3 +428,112 @@ async def test_process_profiling_trace_subscription_does_not_starve_peer_subscri
         await process.close()
         await ctx.__aexit__(None, None, None)
         graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_batch_interleaves_publisher_and_subscriber_samples():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/U8"])
+
+    pub = await ctx.publisher("TOPIC_TRACE_MIX")
+    sub = await ctx.subscriber("TOPIC_TRACE_MIX")
+
+    try:
+        response = await ctx.process_set_profiling_trace(
+            "SYS/U8",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_topics=["TOPIC_TRACE_MIX"],
+                subscriber_topics=["TOPIC_TRACE_MIX"],
+                metrics=["publish_delta_ns", "lease_time_ns"],
+            ),
+            timeout=1.0,
+        )
+        assert response.ok
+
+        for idx in range(64):
+            await pub.broadcast(idx)
+            async with sub.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        batch = await ctx.process_profiling_trace_batch(
+            "SYS/U8", max_samples=32, timeout=1.0
+        )
+        metrics = {sample.metric for sample in batch.samples}
+        assert "publish_delta_ns" in metrics
+        assert "lease_time_ns" in metrics
+    finally:
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_profiling_trace_control_change_clears_stale_trace_samples():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    ctx = GraphContext(address, auto_start=False)
+    await ctx.__aenter__()
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/U9"])
+
+    pub_old = await ctx.publisher("TOPIC_TRACE_OLD")
+    sub_old = await ctx.subscriber("TOPIC_TRACE_OLD")
+    pub_new = await ctx.publisher("TOPIC_TRACE_NEW")
+    sub_new = await ctx.subscriber("TOPIC_TRACE_NEW")
+
+    try:
+        old_response = await ctx.process_set_profiling_trace(
+            "SYS/U9",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_topics=["TOPIC_TRACE_OLD"],
+                metrics=["publish_delta_ns"],
+            ),
+            timeout=1.0,
+        )
+        assert old_response.ok
+
+        for idx in range(12):
+            await pub_old.broadcast(idx)
+            async with sub_old.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        new_response = await ctx.process_set_profiling_trace(
+            "SYS/U9",
+            ProfilingTraceControl(
+                enabled=True,
+                sample_mod=1,
+                publisher_topics=["TOPIC_TRACE_NEW"],
+                metrics=["publish_delta_ns"],
+            ),
+            timeout=1.0,
+        )
+        assert new_response.ok
+
+        for idx in range(8):
+            await pub_new.broadcast(idx)
+            async with sub_new.recv_zero_copy() as _msg:
+                await asyncio.sleep(0)
+
+        batch = await ctx.process_profiling_trace_batch(
+            "SYS/U9", max_samples=256, timeout=1.0
+        )
+        assert len(batch.samples) > 0
+        assert all(sample.topic == "TOPIC_TRACE_NEW" for sample in batch.samples)
+    finally:
+        await process.close()
+        await ctx.__aexit__(None, None, None)
+        graph_server.stop()
