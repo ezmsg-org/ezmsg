@@ -128,26 +128,27 @@ def test_input_settings_hook_reports_to_graphserver():
             try:
                 settings = await observer.settings_snapshot()
                 sink_address = "SYS/SINK"
-                assert sink_address in settings
-                assert settings[sink_address].repr_value == {"gain": 7}
-                assert settings[sink_address].structured_value == {"gain": 7}
-                assert settings[sink_address].settings_schema is not None
-                schema = settings[sink_address].settings_schema
-                assert schema is not None
-                assert schema.provider == "dataclass"
-                assert any(
-                    field.name == "gain" and "int" in field.field_type.lower()
-                    for field in schema.fields
-                )
+                # Process-owned settings are cleaned up when the process exits.
+                assert sink_address not in settings
 
                 events = await observer.settings_events(after_seq=0)
                 matching = [
                     event
                     for event in events
                     if event.component_address == sink_address
-                    and event.event_type == SettingsEventType.SETTINGS_UPDATED
-                ]
+                        and event.event_type == SettingsEventType.SETTINGS_UPDATED
+                        and event.value.repr_value == {"gain": 7}
+                    ]
                 assert matching
+                latest = matching[-1].value
+                assert latest.structured_value == {"gain": 7}
+                assert latest.settings_schema is not None
+                schema = latest.settings_schema
+                assert schema.provider == "dataclass"
+                assert any(
+                    field.name == "gain" and "int" in field.field_type.lower()
+                    for field in schema.fields
+                )
             finally:
                 await observer.__aexit__(None, None, None)
 
@@ -187,7 +188,17 @@ async def test_graphcontext_update_settings_via_input_settings_topic():
         await asyncio.wait_for(run_task, timeout=5.0)
 
         settings = await observer.settings_snapshot()
-        assert settings["SYS/SINK"].repr_value == {"gain": 11}
+        assert "SYS/SINK" not in settings
+
+        events = await observer.settings_events(after_seq=0)
+        matching = [
+            event
+            for event in events
+            if event.component_address == "SYS/SINK"
+            and event.event_type == SettingsEventType.SETTINGS_UPDATED
+            and event.value.repr_value == {"gain": 11}
+        ]
+        assert matching
 
     finally:
         if not run_task.done():
@@ -364,4 +375,94 @@ async def test_metadata_registration_rejects_component_address_collision():
     finally:
         await owner_a.__aexit__(None, None, None)
         await owner_b.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_owned_settings_removed_when_process_disconnects_without_session_owner():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    observer = GraphContext(address, auto_start=False)
+    await observer.__aenter__()
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/UNIT_ORPHAN"])
+
+    try:
+        await process.report_settings_update(
+            component_address="SYS/UNIT_ORPHAN",
+            value=SettingsSnapshotValue(serialized=None, repr_value={"gain": 5}),
+        )
+        settings = await observer.settings_snapshot()
+        assert settings["SYS/UNIT_ORPHAN"].repr_value == {"gain": 5}
+    finally:
+        await process.close()
+
+    await asyncio.sleep(0.05)
+    settings = await observer.settings_snapshot()
+    assert "SYS/UNIT_ORPHAN" not in settings
+
+    await observer.__aexit__(None, None, None)
+    graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_disconnect_restores_metadata_initial_settings():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    owner = GraphContext(address, auto_start=False)
+    observer = GraphContext(address, auto_start=False)
+    await owner.__aenter__()
+    await observer.__aenter__()
+    await owner.register_metadata(_metadata_with_component("SYS/UNIT_RESTORE"))
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/UNIT_RESTORE"])
+
+    try:
+        await process.report_settings_update(
+            component_address="SYS/UNIT_RESTORE",
+            value=SettingsSnapshotValue(serialized=None, repr_value={"alpha": 9}),
+        )
+        settings = await observer.settings_snapshot()
+        assert settings["SYS/UNIT_RESTORE"].repr_value == {"alpha": 9}
+    finally:
+        await process.close()
+
+    await asyncio.sleep(0.05)
+    settings = await observer.settings_snapshot()
+    assert settings["SYS/UNIT_RESTORE"].repr_value == {"alpha": 1}
+
+    await owner.__aexit__(None, None, None)
+    await observer.__aexit__(None, None, None)
+    graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_settings_update_rejected_for_unowned_component():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    observer = GraphContext(address, auto_start=False)
+    await observer.__aenter__()
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/UNIT_OWNED"])
+
+    try:
+        with pytest.raises(RuntimeError, match="Process control command failed"):
+            await process.report_settings_update(
+                component_address="SYS/UNIT_UNOWNED",
+                value=SettingsSnapshotValue(serialized=None, repr_value={"gain": 7}),
+            )
+        settings = await observer.settings_snapshot()
+        assert "SYS/UNIT_UNOWNED" not in settings
+    finally:
+        await process.close()
+        await observer.__aexit__(None, None, None)
         graph_server.stop()
