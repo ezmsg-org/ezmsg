@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from ezmsg.core import profiling as profiling_core
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import (
     ProcessControlErrorCode,
@@ -10,6 +11,45 @@ from ezmsg.core.graphmeta import (
 )
 from ezmsg.core.graphserver import GraphService
 from ezmsg.core.processclient import ProcessControlClient
+
+
+def test_profiling_windows_age_out_during_idle_snapshots(monkeypatch: pytest.MonkeyPatch):
+    publisher = profiling_core._PublisherMetrics(
+        topic="TOPIC_IDLE",
+        endpoint_id="TOPIC_IDLE:ep1",
+        num_buffers=4,
+    )
+    subscriber = profiling_core._SubscriberMetrics(
+        topic="TOPIC_IDLE",
+        endpoint_id="TOPIC_IDLE:sub1",
+    )
+
+    publisher.record_publish(0, inflight=0)
+    publisher.record_publish(int(0.1e9), inflight=0)
+    subscriber.record_receive(
+        int(0.1e9),
+        lease_ns=int(0.2e6),
+        channel_kind=profiling_core.ProfileChannelType.LOCAL,
+    )
+
+    now_ns = {"value": int(0.2e9)}
+    monkeypatch.setattr(profiling_core, "PROFILE_TIME", lambda: now_ns["value"])
+
+    active_pub = publisher.snapshot()
+    active_sub = subscriber.snapshot()
+    assert active_pub.messages_published_window == 2
+    assert active_pub.publish_rate_hz_window > 0.0
+    assert active_sub.messages_received_window == 1
+
+    now_ns["value"] = int(30e9)
+    idle_pub = publisher.snapshot()
+    idle_sub = subscriber.snapshot()
+    assert idle_pub.messages_published_window == 0
+    assert idle_pub.publish_rate_hz_window == 0.0
+    assert idle_pub.backpressure_wait_ns_window == 0
+    assert idle_sub.messages_received_window == 0
+    assert idle_sub.attributable_backpressure_ns_window == 0
+    assert idle_sub.lease_time_ns_avg_window == 0.0
 
 
 @pytest.mark.asyncio

@@ -39,7 +39,7 @@ class _Rolling:
     max_value: list[int] = field(default_factory=list)
     _num_buckets: int = 0
     _bucket_ns: int = 0
-    _last_bucket: int | None = None
+    _last_bucket_tick: int | None = None
 
     def __post_init__(self) -> None:
         self._num_buckets = max(1, int(self.window_seconds / self.bucket_seconds))
@@ -48,27 +48,38 @@ class _Rolling:
         self.value_sum = [0 for _ in range(self._num_buckets)]
         self.max_value = [0 for _ in range(self._num_buckets)]
 
+    def _bucket_tick(self, ts_ns: int) -> int:
+        return ts_ns // self._bucket_ns
+
     def _bucket(self, ts_ns: int) -> int:
-        return (ts_ns // self._bucket_ns) % self._num_buckets
+        return self._bucket_tick(ts_ns) % self._num_buckets
+
+    def _reset_bucket(self, idx: int) -> None:
+        self.count[idx] = 0
+        self.value_sum[idx] = 0
+        self.max_value[idx] = 0
 
     def _advance(self, ts_ns: int) -> int:
-        bucket = self._bucket(ts_ns)
-        if self._last_bucket is None:
-            self._last_bucket = bucket
+        bucket_tick = self._bucket_tick(ts_ns)
+        bucket = bucket_tick % self._num_buckets
+        if self._last_bucket_tick is None:
+            self._last_bucket_tick = bucket_tick
             return bucket
-        if bucket == self._last_bucket:
+        if bucket_tick <= self._last_bucket_tick:
             return bucket
-        idx = (self._last_bucket + 1) % self._num_buckets
-        while idx != bucket:
-            self.count[idx] = 0
-            self.value_sum[idx] = 0
-            self.max_value[idx] = 0
-            idx = (idx + 1) % self._num_buckets
-        self.count[bucket] = 0
-        self.value_sum[bucket] = 0
-        self.max_value[bucket] = 0
-        self._last_bucket = bucket
+        elapsed_buckets = bucket_tick - self._last_bucket_tick
+        if elapsed_buckets >= self._num_buckets:
+            for idx in range(self._num_buckets):
+                self._reset_bucket(idx)
+        else:
+            previous_bucket = self._last_bucket_tick % self._num_buckets
+            for step in range(1, elapsed_buckets + 1):
+                self._reset_bucket((previous_bucket + step) % self._num_buckets)
+        self._last_bucket_tick = bucket_tick
         return bucket
+
+    def advance_to(self, ts_ns: int) -> None:
+        self._advance(ts_ns)
 
     def add(self, ts_ns: int, value: int) -> None:
         idx = self._advance(ts_ns)
@@ -167,6 +178,11 @@ class _PublisherMetrics:
         self._inflight.add(ts_ns, inflight)
 
     def snapshot(self) -> PublisherProfileSnapshot:
+        now_ns = PROFILE_TIME()
+        self._publish_delta.advance_to(now_ns)
+        self._publish_count.advance_to(now_ns)
+        self._backpressure_wait.advance_to(now_ns)
+        self._inflight.advance_to(now_ns)
         window_msgs = self._publish_count.count_total()
         return PublisherProfileSnapshot(
             endpoint_id=self.endpoint_id,
@@ -180,7 +196,7 @@ class _PublisherMetrics:
             inflight_messages_peak_window=self._inflight.max_total(),
             backpressure_wait_ns_total=self.backpressure_wait_ns_total,
             backpressure_wait_ns_window=self._backpressure_wait.sum_total(),
-            timestamp=float(PROFILE_TIME()),
+            timestamp=float(now_ns),
         )
 
 
@@ -282,6 +298,11 @@ class _SubscriberMetrics:
             )
 
     def snapshot(self) -> SubscriberProfileSnapshot:
+        now_ns = PROFILE_TIME()
+        self._recv_count.advance_to(now_ns)
+        self._lease_time.advance_to(now_ns)
+        self._user_span.advance_to(now_ns)
+        self._attrib_bp.advance_to(now_ns)
         recv_count = self._recv_count.count_total()
         user_count = self._user_span.count_total()
         return SubscriberProfileSnapshot(
@@ -301,7 +322,7 @@ class _SubscriberMetrics:
             attributable_backpressure_ns_window=self._attrib_bp.sum_total(),
             attributable_backpressure_events_total=self.attributable_backpressure_events_total,
             channel_kind_last=self.channel_kind_last,
-            timestamp=float(PROFILE_TIME()),
+            timestamp=float(now_ns),
         )
 
 
