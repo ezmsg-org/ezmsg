@@ -178,6 +178,8 @@ class TestSystemSettings(ez.Settings):
 class TestSystem(ez.Collection):
     SETTINGS = TestSystemSettings
 
+    OUTPUT_PING = ez.OutputTopic(str)
+
     # Publishers
     PING = MessageGenerator()
     FOO = MessageGenerator()
@@ -199,6 +201,7 @@ class TestSystem(ez.Collection):
     # Define Connections
     def network(self) -> ez.NetworkDefinition:
         return (
+            (self.PING.OUTPUT, self.OUTPUT_PING),
             (self.PING.OUTPUT, self.PINGSUB1.INPUT),
             (self.PING.OUTPUT, self.MODIFIER_COLLECTION.INPUT),
             (self.MODIFIER_COLLECTION.OUTPUT, self.PINGSUB2.INPUT),
@@ -219,7 +222,7 @@ if __name__ == "__main__":
     ez.run(
         SYSTEM=system,
         connections=[
-            # Make PING.OUTPUT available on a topic ezmsg_attach.py
-            (system.PING.OUTPUT, "GLOBAL_PING_TOPIC"),
+            # Make a system output available on a topic ezmsg_attach.py
+            (system.OUTPUT_PING, "GLOBAL_PING_TOPIC"),
         ],
     )
