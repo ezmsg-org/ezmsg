@@ -279,13 +279,9 @@ class PublisherProfileSnapshot:
     topic: str
     messages_published_total: int
     messages_published_window: int
-    publish_delta_ns_avg_window: float
     publish_rate_hz_window: float
     inflight_messages_current: int
     num_buffers: int
-    inflight_messages_peak_window: int
-    backpressure_wait_ns_total: int
-    backpressure_wait_ns_window: int
     timestamp: float
 
 
@@ -295,13 +291,6 @@ class SubscriberProfileSnapshot:
     topic: str
     messages_received_total: int
     messages_received_window: int
-    lease_time_ns_total: int
-    lease_time_ns_avg_window: float
-    user_span_ns_total: int
-    user_span_ns_avg_window: float
-    attributable_backpressure_ns_total: int
-    attributable_backpressure_ns_window: int
-    attributable_backpressure_events_total: int
     channel_kind_last: ProfileChannelType
     timestamp: float
 

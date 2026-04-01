@@ -2,10 +2,13 @@ import asyncio
 
 import pytest
 
+from uuid import uuid4
+
 from ezmsg.core import profiling as profiling_core
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import (
     ProcessControlErrorCode,
+    ProfileChannelType,
     ProfilingStreamControl,
     ProfilingTraceControl,
 )
@@ -13,43 +16,47 @@ from ezmsg.core.graphserver import GraphService
 from ezmsg.core.processclient import ProcessControlClient
 
 
-def test_profiling_windows_age_out_during_idle_snapshots(monkeypatch: pytest.MonkeyPatch):
-    publisher = profiling_core._PublisherMetrics(
-        topic="TOPIC_IDLE",
-        endpoint_id="TOPIC_IDLE:ep1",
-        num_buffers=4,
-    )
-    subscriber = profiling_core._SubscriberMetrics(
-        topic="TOPIC_IDLE",
-        endpoint_id="TOPIC_IDLE:sub1",
-    )
+def test_profiling_snapshot_uses_counter_deltas_between_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    registry = profiling_core.ProfileRegistry()
+    publisher = registry.register_publisher(uuid4(), "TOPIC_IDLE", 4)
+    subscriber = registry.register_subscriber(uuid4(), "TOPIC_IDLE")
 
-    publisher.record_publish(0, inflight=0)
-    publisher.record_publish(int(0.1e9), inflight=0)
-    subscriber.record_receive(
-        int(0.1e9),
-        lease_ns=int(0.2e6),
-        channel_kind=profiling_core.ProfileChannelType.LOCAL,
-    )
-
-    now_ns = {"value": int(0.2e9)}
+    now_ns = {"value": int(0.0)}
     monkeypatch.setattr(profiling_core, "PROFILE_TIME", lambda: now_ns["value"])
 
-    active_pub = publisher.snapshot()
-    active_sub = subscriber.snapshot()
-    assert active_pub.messages_published_window == 2
-    assert active_pub.publish_rate_hz_window > 0.0
-    assert active_sub.messages_received_window == 1
+    publisher.record_publish(inflight=0)
+    publisher.record_publish(inflight=1)
+    subscriber.record_receive(ProfileChannelType.LOCAL)
 
-    now_ns["value"] = int(30e9)
-    idle_pub = publisher.snapshot()
-    idle_sub = subscriber.snapshot()
-    assert idle_pub.messages_published_window == 0
-    assert idle_pub.publish_rate_hz_window == 0.0
-    assert idle_pub.backpressure_wait_ns_window == 0
-    assert idle_sub.messages_received_window == 0
-    assert idle_sub.attributable_backpressure_ns_window == 0
-    assert idle_sub.lease_time_ns_avg_window == 0.0
+    first = registry.snapshot()
+    pub_first = next(iter(first.publishers.values()))
+    sub_first = next(iter(first.subscribers.values()))
+    assert first.window_seconds == 0.0
+    assert pub_first.messages_published_total == 2
+    assert pub_first.messages_published_window == 0
+    assert pub_first.publish_rate_hz_window == 0.0
+    assert pub_first.inflight_messages_current == 1
+    assert sub_first.messages_received_total == 1
+    assert sub_first.messages_received_window == 0
+    assert sub_first.channel_kind_last == ProfileChannelType.LOCAL
+
+    now_ns["value"] = int(1.0e9)
+    publisher.record_publish(inflight=0)
+    subscriber.record_receive(ProfileChannelType.SHM)
+
+    second = registry.snapshot()
+    pub_second = next(iter(second.publishers.values()))
+    sub_second = next(iter(second.subscribers.values()))
+    assert second.window_seconds == pytest.approx(1.0)
+    assert pub_second.messages_published_total == 3
+    assert pub_second.messages_published_window == 1
+    assert pub_second.publish_rate_hz_window == pytest.approx(1.0)
+    assert pub_second.inflight_messages_current == 0
+    assert sub_second.messages_received_total == 2
+    assert sub_second.messages_received_window == 1
+    assert sub_second.channel_kind_last == ProfileChannelType.SHM
 
 
 @pytest.mark.asyncio
@@ -77,7 +84,7 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
 
         snap = await ctx.process_profiling_snapshot("SYS/U1", timeout=1.0)
         assert snap.process_id == process_key
-        assert snap.window_seconds > 0
+        assert snap.window_seconds >= 0.0
         assert len(snap.publishers) >= 1
         assert len(snap.subscribers) >= 1
 
@@ -85,14 +92,14 @@ async def test_process_profiling_snapshot_collects_pub_sub_metrics():
             pub for pub in snap.publishers.values() if pub.topic == "TOPIC_PROF"
         )
         assert pub_metrics.messages_published_total >= 8
-        assert pub_metrics.publish_rate_hz_window >= 0.0
+        assert pub_metrics.num_buffers > 0
+        assert pub_metrics.inflight_messages_current >= 0
 
         sub_metrics = next(
             sub for sub in snap.subscribers.values() if sub.topic == "TOPIC_PROF"
         )
         assert sub_metrics.messages_received_total >= 8
-        assert sub_metrics.lease_time_ns_total > 0
-        assert sub_metrics.lease_time_ns_avg_window >= 0.0
+        assert sub_metrics.channel_kind_last != ProfileChannelType.UNKNOWN
     finally:
         await process.close()
         await ctx.__aexit__(None, None, None)
@@ -180,6 +187,9 @@ async def test_process_profiling_trace_control_and_batch():
         )
         assert batch.process_id == process_key
         assert len(batch.samples) > 0
+        assert "publish_delta_ns" in {sample.metric for sample in batch.samples}
+        assert "lease_time_ns" in {sample.metric for sample in batch.samples}
+        assert "user_span_ns" in {sample.metric for sample in batch.samples}
 
         disable_response = await ctx.process_set_profiling_trace(
             "SYS/U2",

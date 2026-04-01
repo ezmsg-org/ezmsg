@@ -42,6 +42,7 @@ class Subscriber:
     _graph_address: AddressType | None
     _graph_task: asyncio.Task[None]
     _incoming: NotificationQueue
+    _profile: object
 
     # FIXME: This event allows Subscriber.create to block until
     # incoming initial connections (UPDATE) has completed. The
@@ -138,7 +139,7 @@ class Subscriber:
         else:
             self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
-        PROFILES.register_subscriber(self.id, self.topic)
+        self._profile = PROFILES.register_subscriber(self.id, self.topic)
 
     def _handle_dropped_notification(
         self, notification: typing.Tuple[UUID, int]
@@ -304,24 +305,27 @@ class Subscriber:
         channel_kind = getattr(channel, "channel_kind", ProfileChannelType.UNKNOWN)
         self._active_msg_seq = msg_id
         try:
-            start_ns = PROFILE_TIME()
+            trace_lease = self._profile.trace_metric_enabled("lease_time_ns")
+            start_ns = PROFILE_TIME() if trace_lease else None
             with channel.get(msg_id, self.id) as msg:
                 yield msg
-            end_ns = PROFILE_TIME()
-            PROFILES.subscriber_receive(
-                self.id, end_ns, end_ns - start_ns, channel_kind, msg_seq=msg_id
-            )
+            lease_ns = None
+            if trace_lease and start_ns is not None:
+                lease_ns = PROFILE_TIME() - start_ns
+            self._profile.record_receive(channel_kind, lease_ns, msg_seq=msg_id)
         finally:
             self._active_msg_seq = None
 
     def begin_profile(self) -> int:
+        if not self._profile.trace_metric_enabled("user_span_ns"):
+            return 0
         return PROFILE_TIME()
 
     def end_profile(self, start_ns: int, label: str | None = None) -> None:
+        if start_ns <= 0:
+            return
         end_ns = PROFILE_TIME()
-        PROFILES.subscriber_user_span(
-            self.id,
-            end_ns,
+        self._profile.record_user_span(
             end_ns - start_ns,
             label,
             msg_seq=self._active_msg_seq,
