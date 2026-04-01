@@ -299,6 +299,7 @@ class DefaultBackendProcess(BackendProcess):
                                 buf_size=stream.buf_size,
                                 start_paused=True,
                                 force_tcp=stream.force_tcp,
+                                allow_local=stream.allow_local,
                             ),
                             loop=loop,
                         ).result()

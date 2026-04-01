@@ -124,15 +124,20 @@ class OutputStream(Stream):
     :type num_buffers: int
     :param buf_size: Size of each message buffer in bytes
     :type buf_size: int
-    :param force_tcp: Whether to force TCP transport instead of shared memory
-    :type force_tcp: bool
+    :param force_tcp: Whether to force TCP transport instead of shared memory.
+        If None, inherit the process default from ``EZMSG_FORCE_TCP``.
+    :type force_tcp: bool | None
+    :param allow_local: Whether to allow the in-process fast path when available.
+        If None, inherit the process default from ``EZMSG_ALLOW_LOCAL``.
+    :type allow_local: bool | None
     """
 
     host: str | None
     port: int | None
     num_buffers: int
     buf_size: int
-    force_tcp: bool
+    force_tcp: bool | None
+    allow_local: bool | None
 
     def __init__(
         self,
@@ -141,7 +146,8 @@ class OutputStream(Stream):
         port: int | None = None,
         num_buffers: int = 32,
         buf_size: int = DEFAULT_SHM_SIZE,
-        force_tcp: bool = False,
+        force_tcp: bool | None = None,
+        allow_local: bool | None = None,
     ) -> None:
         super().__init__(msg_type)
         self.host = host
@@ -149,7 +155,11 @@ class OutputStream(Stream):
         self.num_buffers = num_buffers
         self.buf_size = buf_size
         self.force_tcp = force_tcp
+        self.allow_local = allow_local
 
     def __repr__(self) -> str:
         preamble = f"Output{super().__repr__()}"
-        return f"{preamble}({self.num_buffers=}, {self.force_tcp=})"
+        return (
+            f"{preamble}({self.num_buffers=}, {self.force_tcp=}, "
+            f"{self.allow_local=})"
+        )

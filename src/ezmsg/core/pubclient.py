@@ -37,6 +37,36 @@ logger = logging.getLogger("ezmsg")
 
 BACKPRESSURE_WARNING = "EZMSG_DISABLE_BACKPRESSURE_WARNING" not in os.environ
 BACKPRESSURE_REFRACTORY = 5.0  # sec
+ALLOW_LOCAL_ENV = "EZMSG_ALLOW_LOCAL"
+FORCE_TCP_ENV = "EZMSG_FORCE_TCP"
+
+
+def _process_allow_local_default() -> bool:
+    value = os.environ.get(ALLOW_LOCAL_ENV, "")
+    if value == "":
+        return True
+    return value.lower() in ("1", "true", "yes", "on")
+
+
+def _process_force_tcp_default() -> bool:
+    value = os.environ.get(FORCE_TCP_ENV, "")
+    if value == "":
+        return False
+    return value.lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_force_tcp(force_tcp: bool | None) -> bool:
+    if force_tcp is None:
+        return _process_force_tcp_default()
+    return force_tcp
+
+
+def _resolve_allow_local(force_tcp: bool, allow_local: bool | None) -> bool:
+    resolved = _process_allow_local_default() if allow_local is None else allow_local
+    if force_tcp and resolved:
+        logger.info("force_tcp=True disables local delivery for this publisher")
+        return False
+    return resolved
 
 
 # Publisher needs a bit more information about connected channels
@@ -75,6 +105,7 @@ class Publisher:
     _msg_id: int
     _shm: SHMContext
     _force_tcp: bool
+    _allow_local: bool
     _last_backpressure_event: float
 
     _graph_address: AddressType | None
@@ -99,7 +130,8 @@ class Publisher:
         buf_size: int = DEFAULT_SHM_SIZE,
         num_buffers: int = 32,
         start_paused: bool = False,
-        force_tcp: bool = False,
+        force_tcp: bool | None = None,
+        allow_local: bool | None = None,
     ) -> "Publisher":
         """
         Create a new Publisher instance and register it with the graph server.
@@ -116,6 +148,16 @@ class Publisher:
         :type port: int | None
         :param buf_size: Size of shared memory buffers.
         :type buf_size: int
+        :param force_tcp: Whether to force TCP transport instead of shared memory.
+            If None, inherit the process default from ``EZMSG_FORCE_TCP`` which
+            defaults to disabled.
+        :type force_tcp: bool | None
+        :param allow_local: Whether to allow the in-process fast path when available.
+            If None, inherit the process default from ``EZMSG_ALLOW_LOCAL`` which
+            defaults to enabled. Set to False to bypass local delivery and
+            characterize same-process SHM or TCP. When ``force_tcp=True``, local
+            delivery is disabled regardless of this value.
+        :type allow_local: bool | None
         :param kwargs: Additional keyword arguments for Publisher constructor.
         :return: Initialized and registered Publisher instance.
         :rtype: Publisher
@@ -127,6 +169,8 @@ class Publisher:
         writer.write(Command.PUBLISH.value)
         writer.write(encode_str(topic))
 
+        resolved_force_tcp = _resolve_force_tcp(force_tcp)
+
         pub_id = UUID(await read_str(reader))
         pub = cls(
             id=pub_id,
@@ -135,7 +179,8 @@ class Publisher:
             graph_address=graph_address,
             num_buffers=num_buffers,
             start_paused=start_paused,
-            force_tcp=force_tcp,
+            force_tcp=resolved_force_tcp,
+            allow_local=allow_local,
             _guard=cls._SENTINEL,
         )
 
@@ -189,7 +234,8 @@ class Publisher:
         graph_address: AddressType | None = None,
         num_buffers: int = 32,
         start_paused: bool = False,
-        force_tcp: bool = False,
+        force_tcp: bool | None = None,
+        allow_local: bool | None = None,
         _guard = None
     ) -> None:
         """
@@ -207,7 +253,12 @@ class Publisher:
         :param start_paused: Whether to start in paused state.
         :type start_paused: bool
         :param force_tcp: Whether to force TCP transport instead of shared memory.
-        :type force_tcp: bool
+            If None, inherit the process default from ``EZMSG_FORCE_TCP``.
+        :type force_tcp: bool | None
+        :param allow_local: Whether to allow the direct in-process fast path when available.
+            If None, inherit the process default from ``EZMSG_ALLOW_LOCAL``.
+            When ``force_tcp=True``, local delivery is disabled regardless of this value.
+        :type allow_local: bool | None
         """
         if _guard is not self._SENTINEL:
             raise TypeError(
@@ -227,7 +278,8 @@ class Publisher:
             self._running.set()
         self._num_buffers = num_buffers
         self._backpressure = Backpressure(num_buffers)
-        self._force_tcp = force_tcp
+        self._force_tcp = _resolve_force_tcp(force_tcp)
+        self._allow_local = _resolve_allow_local(self._force_tcp, allow_local)
         self._last_backpressure_event = -1
         self._graph_address = graph_address
 
@@ -436,12 +488,10 @@ class Publisher:
             self._last_backpressure_event = time.time()
             await self._backpressure.wait(buf_idx)
 
-        # Get local channel and put variable there for local tx
-        self._local_channel.put_local(self._msg_id, obj)
+        if self._should_use_local_fast_path():
+            self._local_channel.put_local(self._msg_id, obj)
 
-        if self._force_tcp or any(
-            ch.pid != self.pid or not ch.shm_ok for ch in self._channels.values()
-        ):
+        if any(not self._can_deliver_locally(ch) for ch in self._channels.values()):
             with MessageMarshal.serialize(self._msg_id, obj) as (
                 total_size,
                 header,
@@ -449,9 +499,7 @@ class Publisher:
             ):
                 total_size_bytes = uint64_to_bytes(total_size)
 
-                if not self._force_tcp and any(
-                    ch.pid != self.pid and ch.shm_ok for ch in self._channels.values()
-                ):
+                if any(self._can_deliver_via_shm(ch) for ch in self._channels.values()):
                     if self._shm.buf_size < total_size:
                         new_shm = await GraphService(self._graph_address).create_shm(
                             self._num_buffers, total_size * 2
@@ -475,14 +523,10 @@ class Publisher:
                 for channel in self._channels.values():
                     msg: bytes = b""
 
-                    if self.pid == channel.pid and channel.shm_ok:
+                    if self._can_deliver_locally(channel):
                         continue  # Local transmission handled by channel.put
 
-                    elif (
-                        (not self._force_tcp)
-                        and self.pid != channel.pid
-                        and channel.shm_ok
-                    ):
+                    elif self._can_deliver_via_shm(channel):
                         msg = (
                             Command.TX_SHM.value
                             + msg_id_bytes
@@ -509,3 +553,16 @@ class Publisher:
                         )
 
         self._msg_id += 1
+
+    def _should_use_local_fast_path(self) -> bool:
+        return any(self._can_deliver_locally(ch) for ch in self._channels.values())
+
+    def _can_deliver_locally(self, channel: PubChannelInfo) -> bool:
+        return self._allow_local and self.pid == channel.pid and channel.shm_ok
+
+    def _can_deliver_via_shm(self, channel: PubChannelInfo) -> bool:
+        return (
+            (not self._force_tcp)
+            and channel.shm_ok
+            and not self._can_deliver_locally(channel)
+        )
