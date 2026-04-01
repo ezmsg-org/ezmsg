@@ -443,6 +443,46 @@ async def test_process_disconnect_restores_metadata_initial_settings():
 
 
 @pytest.mark.asyncio
+async def test_session_drop_preserves_live_process_owned_settings():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    owner = GraphContext(address, auto_start=False)
+    observer = GraphContext(address, auto_start=False)
+    await owner.__aenter__()
+    await observer.__aenter__()
+    await owner.register_metadata(_metadata_with_component("SYS/UNIT_LIVE"))
+
+    process = ProcessControlClient(address)
+    await process.connect()
+    await process.register(["SYS/UNIT_LIVE"])
+
+    try:
+        await process.report_settings_update(
+            component_address="SYS/UNIT_LIVE",
+            value=SettingsSnapshotValue(serialized=None, repr_value={"alpha": 9}),
+        )
+        settings = await observer.settings_snapshot()
+        assert settings["SYS/UNIT_LIVE"].repr_value == {"alpha": 9}
+
+        await owner._close_session()
+        await asyncio.sleep(0.05)
+
+        settings = await observer.settings_snapshot()
+        assert settings["SYS/UNIT_LIVE"].repr_value == {"alpha": 9}
+    finally:
+        await process.close()
+
+    await asyncio.sleep(0.05)
+    settings = await observer.settings_snapshot()
+    assert "SYS/UNIT_LIVE" not in settings
+
+    await owner.__aexit__(None, None, None)
+    await observer.__aexit__(None, None, None)
+    graph_server.stop()
+
+
+@pytest.mark.asyncio
 async def test_process_settings_update_rejected_for_unowned_component():
     graph_server = GraphService().create_server()
     address = graph_server.address
@@ -464,5 +504,35 @@ async def test_process_settings_update_rejected_for_unowned_component():
         assert "SYS/UNIT_UNOWNED" not in settings
     finally:
         await process.close()
+        await observer.__aexit__(None, None, None)
+        graph_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_settings_update_requires_completed_process_registration():
+    graph_server = GraphService().create_server()
+    address = graph_server.address
+
+    owner = GraphContext(address, auto_start=False)
+    observer = GraphContext(address, auto_start=False)
+    await owner.__aenter__()
+    await observer.__aenter__()
+    await owner.register_metadata(_metadata_with_component("SYS/UNIT_PENDING"))
+
+    process = ProcessControlClient(address)
+    await process.connect()
+
+    try:
+        with pytest.raises(RuntimeError, match="Process control command failed"):
+            await process.report_settings_update(
+                component_address="SYS/UNIT_PENDING",
+                value=SettingsSnapshotValue(serialized=None, repr_value={"alpha": 7}),
+            )
+
+        settings = await observer.settings_snapshot()
+        assert settings["SYS/UNIT_PENDING"].repr_value == {"alpha": 1}
+    finally:
+        await process.close()
+        await owner.__aexit__(None, None, None)
         await observer.__aexit__(None, None, None)
         graph_server.stop()

@@ -319,7 +319,6 @@ class DefaultBackendProcess(BackendProcess):
         main_func = None
         context = GraphContext(self.graph_address)
         process_client = ProcessControlClient(self.graph_address)
-        process_register_future: concurrent.futures.Future[None] | None = None
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
         settings_input_topics: dict[str, str] = {}
         current_settings: dict[str, object] = {}
@@ -523,6 +522,11 @@ class DefaultBackendProcess(BackendProcess):
                             loop=loop,
                         ).result()
 
+            asyncio.run_coroutine_threadsafe(
+                process_client.register([unit.address for unit in self.units]),
+                loop,
+            ).result()
+
         except asyncio.CancelledError:
             pass
 
@@ -534,17 +538,6 @@ class DefaultBackendProcess(BackendProcess):
         try:
             logger.debug("Waiting at start barrier!")
             self.start_barrier.wait()
-
-            async def register_process_control() -> None:
-                try:
-                    await process_client.register([unit.address for unit in self.units])
-                except Exception as exc:
-                    logger.warning(f"Process control registration failed: {exc}")
-
-            process_register_future = asyncio.run_coroutine_threadsafe(
-                register_process_control(),
-                loop,
-            )
 
             for unit in self.units:
                 for thread_fn in unit.threads.values():
@@ -643,8 +636,6 @@ class DefaultBackendProcess(BackendProcess):
                 loop=loop,
             )
             with suppress(Exception):
-                if process_register_future is not None:
-                    process_register_future.result(timeout=0.5)
                 process_close_future.result()
 
             logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")

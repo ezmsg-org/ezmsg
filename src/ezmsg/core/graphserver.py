@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Sequence
 from contextlib import suppress
 from uuid import UUID, uuid1
+from dataclasses import dataclass
 
 
 from . import __version__
@@ -66,6 +67,13 @@ logger = logging.getLogger("ezmsg")
 PERSISTENT_EDGE_OWNER = None
 
 
+@dataclass
+class _SettingsState:
+    value: SettingsSnapshotValue
+    metadata_session_id: UUID | None
+    source_process_id: UUID | None
+
+
 class GraphServer(threading.Thread):
     """
     Pub-sub directed acyclic graph (DAG) server.
@@ -94,9 +102,7 @@ class GraphServer(threading.Thread):
 
     _client_tasks: dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
-    _settings_current: dict[str, SettingsSnapshotValue]
-    _settings_source_session: dict[str, UUID | None]
-    _settings_source_process: dict[str, UUID | None]
+    _settings_state: dict[str, _SettingsState]
     _settings_events: list[SettingsChangedEvent]
     _settings_event_seq: int
     _settings_owned_by_session: dict[UUID, set[str]]
@@ -125,9 +131,7 @@ class GraphServer(threading.Thread):
         self._client_tasks = {}
         self.shms = {}
         self._address = None
-        self._settings_current = {}
-        self._settings_source_session = {}
-        self._settings_source_process = {}
+        self._settings_state = {}
         self._settings_events = []
         self._settings_event_seq = 0
         self._settings_owned_by_session = {}
@@ -1130,44 +1134,32 @@ class GraphServer(threading.Thread):
             if process_info is None:
                 return Command.ERROR.value
             if update.component_address not in process_info.units:
-                metadata_owner = self._session_owner_for_component_locked(
-                    update.component_address
+                logger.warning(
+                    "Process control %s settings update rejected for unowned component: %s",
+                    process_client_id,
+                    update.component_address,
                 )
-                known_owner = self._process_owner_for_unit(update.component_address)
-                allow_startup_race = (
-                    len(process_info.units) == 0 and metadata_owner is not None
-                )
-                if known_owner == process_client_id or allow_startup_race:
-                    pass
-                else:
-                    logger.warning(
-                        "Process control %s settings update rejected for unowned component: %s",
-                        process_client_id,
-                        update.component_address,
-                    )
-                    return Command.ERROR.value
-            else:
-                metadata_owner = self._session_owner_for_component_locked(
-                    update.component_address
-                )
+                return Command.ERROR.value
 
-            if metadata_owner is None:
-                source_session_id = self._settings_source_session.get(
-                    update.component_address
-                )
-            else:
-                source_session_id = metadata_owner
+            prior_state = self._settings_state.get(update.component_address)
+            metadata_session_id = self._session_owner_for_component_locked(
+                update.component_address
+            )
+            if metadata_session_id is None and prior_state is not None:
+                metadata_session_id = prior_state.metadata_session_id
 
             source_process_id = self._process_key(process_client_id)
-            self._settings_current[update.component_address] = update.value
-            self._settings_source_session[update.component_address] = source_session_id
-            self._settings_source_process[update.component_address] = source_process_id
+            self._settings_state[update.component_address] = _SettingsState(
+                value=update.value,
+                metadata_session_id=metadata_session_id,
+                source_process_id=source_process_id,
+            )
             self._append_settings_event_locked(
                 event_type=SettingsEventType.SETTINGS_UPDATED,
                 component_address=update.component_address,
                 value=update.value,
                 source_session_id=(
-                    str(source_session_id) if source_session_id is not None else None
+                    str(metadata_session_id) if metadata_session_id is not None else None
                 ),
                 source_process_id=source_process_id,
                 timestamp=update.timestamp,
@@ -1417,10 +1409,13 @@ class GraphServer(threading.Thread):
     def _remove_settings_for_session_locked(self, session_id: UUID) -> None:
         component_addresses = self._settings_owned_by_session.pop(session_id, set())
         for component_address in component_addresses:
-            if self._settings_source_session.get(component_address) == session_id:
-                self._settings_current.pop(component_address, None)
-                self._settings_source_session.pop(component_address, None)
-                self._settings_source_process.pop(component_address, None)
+            state = self._settings_state.get(component_address)
+            if state is None or state.metadata_session_id != session_id:
+                continue
+            if state.source_process_id is None:
+                self._settings_state.pop(component_address, None)
+            else:
+                state.metadata_session_id = None
 
     def _session_owner_for_component_locked(self, component_address: str) -> UUID | None:
         for client_id, info in self.clients.items():
@@ -1453,34 +1448,33 @@ class GraphServer(threading.Thread):
         source_process_id = self._process_key(process_client_id)
         component_addresses = [
             component_address
-            for component_address, owner_process_id in self._settings_source_process.items()
-            if owner_process_id == source_process_id
+            for component_address, state in self._settings_state.items()
+            if state.source_process_id == source_process_id
         ]
 
         for component_address in component_addresses:
-            source_session_id = self._settings_source_session.get(component_address)
-            if source_session_id is None:
-                self._settings_current.pop(component_address, None)
-                self._settings_source_session.pop(component_address, None)
-                self._settings_source_process.pop(component_address, None)
+            state = self._settings_state.get(component_address)
+            if state is None:
+                continue
+            metadata_session_id = state.metadata_session_id
+            if metadata_session_id is None:
+                self._settings_state.pop(component_address, None)
                 continue
 
             restored = self._initial_settings_for_component_locked(
-                source_session_id, component_address
+                metadata_session_id, component_address
             )
             if restored is None:
-                self._settings_current.pop(component_address, None)
-                self._settings_source_session.pop(component_address, None)
-                self._settings_source_process.pop(component_address, None)
+                self._settings_state.pop(component_address, None)
                 continue
 
-            self._settings_current[component_address] = restored
-            self._settings_source_process[component_address] = None
+            state.value = restored
+            state.source_process_id = None
             self._append_settings_event_locked(
                 event_type=SettingsEventType.SETTINGS_UPDATED,
                 component_address=component_address,
                 value=restored,
-                source_session_id=str(source_session_id),
+                source_session_id=str(metadata_session_id),
                 source_process_id=None,
             )
 
@@ -1496,9 +1490,15 @@ class GraphServer(threading.Thread):
                 structured_value=initial_repr if isinstance(initial_repr, dict) else None,
                 settings_schema=component.settings_schema,
             )
-            self._settings_current[component.address] = value
-            self._settings_source_session[component.address] = session_id
-            self._settings_source_process[component.address] = None
+            existing_state = self._settings_state.get(component.address)
+            if existing_state is not None and existing_state.source_process_id is not None:
+                existing_state.metadata_session_id = session_id
+            else:
+                self._settings_state[component.address] = _SettingsState(
+                    value=value,
+                    metadata_session_id=session_id,
+                    source_process_id=None,
+                )
             session_components.add(component.address)
             self._append_settings_event_locked(
                 event_type=SettingsEventType.INITIAL_SETTINGS,
@@ -1591,8 +1591,8 @@ class GraphServer(threading.Thread):
     ) -> None:
         async with self._command_lock:
             snapshot = {
-                component_address: self._settings_current[component_address]
-                for component_address in sorted(self._settings_current)
+                component_address: self._settings_state[component_address].value
+                for component_address in sorted(self._settings_state)
             }
             snapshot_bytes = pickle.dumps(snapshot)
             writer.write(uint64_to_bytes(len(snapshot_bytes)))
