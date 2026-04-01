@@ -10,7 +10,6 @@ from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import NotificationQueue, LeakyQueue, Channel
 from .profiling import PROFILES, PROFILE_TIME
-from .graphmeta import ProfileChannelType
 
 from .netprotocol import (
     AddressType,
@@ -302,10 +301,10 @@ class Subscriber:
             # Stale notification from an unregistered publisher — skip.
 
         channel = self._channels[pub_id]
-        channel_kind = getattr(channel, "channel_kind", ProfileChannelType.UNKNOWN)
+        channel_kind = channel.channel_kind
         self._active_msg_seq = msg_id
         try:
-            trace_lease = self._profile.trace_metric_enabled("lease_time_ns")
+            trace_lease = self._profile._trace_lease_time_enabled
             start_ns = PROFILE_TIME() if trace_lease else None
             with channel.get(msg_id, self.id) as msg:
                 yield msg
@@ -317,7 +316,7 @@ class Subscriber:
             self._active_msg_seq = None
 
     def begin_profile(self) -> int:
-        if not self._profile.trace_metric_enabled("user_span_ns"):
+        if not self._profile._trace_user_span_enabled:
             return 0
         return PROFILE_TIME()
 

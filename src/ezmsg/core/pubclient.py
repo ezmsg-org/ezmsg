@@ -492,9 +492,7 @@ class Publisher:
             if BACKPRESSURE_WARNING and (delta > BACKPRESSURE_REFRACTORY):
                 logger.warning(f"{self.topic} under subscriber backpressure!")
             self._last_backpressure_event = time.time()
-            trace_backpressure = self._profile.trace_metric_enabled(
-                "backpressure_wait_ns"
-            )
+            trace_backpressure = self._profile._trace_backpressure_wait_enabled
             wait_start_ns = PROFILE_TIME() if trace_backpressure else None
             await self._backpressure.wait(buf_idx)
             if trace_backpressure and wait_start_ns is not None:

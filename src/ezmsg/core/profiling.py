@@ -42,22 +42,19 @@ class _PublisherMetrics:
     trace_sample_mod: int = 1
     trace_metrics: set[str] | None = None
     _trace_counter: int = 0
+    _trace_publish_delta_enabled: bool = False
+    _trace_backpressure_wait_enabled: bool = False
     trace_samples: deque[ProfilingTraceSample] = field(
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
 
-    def trace_metric_enabled(self, metric: str) -> bool:
-        return self.trace_enabled and (
-            self.trace_metrics is None or metric in self.trace_metrics
-        )
-
     def record_publish(self, inflight: int, msg_seq: int | None = None) -> None:
         self.messages_published_total += 1
         self.inflight_messages_current = inflight
-        self._trace_counter += 1
 
-        if not self.trace_metric_enabled("publish_delta_ns"):
+        if not self._trace_publish_delta_enabled:
             return
+        self._trace_counter += 1
         if self._trace_counter % max(1, self.trace_sample_mod) != 0:
             return
 
@@ -78,7 +75,7 @@ class _PublisherMetrics:
         )
 
     def record_backpressure_wait(self, wait_ns: int, msg_seq: int | None = None) -> None:
-        if not self.trace_metric_enabled("backpressure_wait_ns"):
+        if not self._trace_backpressure_wait_enabled:
             return
 
         now_ns = PROFILE_TIME()
@@ -136,14 +133,11 @@ class _SubscriberMetrics:
     trace_sample_mod: int = 1
     trace_metrics: set[str] | None = None
     _trace_counter: int = 0
+    _trace_lease_time_enabled: bool = False
+    _trace_user_span_enabled: bool = False
     trace_samples: deque[ProfilingTraceSample] = field(
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
-
-    def trace_metric_enabled(self, metric: str) -> bool:
-        return self.trace_enabled and (
-            self.trace_metrics is None or metric in self.trace_metrics
-        )
 
     def record_receive(
         self,
@@ -153,10 +147,10 @@ class _SubscriberMetrics:
     ) -> None:
         self.messages_received_total += 1
         self.channel_kind_last = channel_kind
-        self._trace_counter += 1
 
-        if lease_ns is None or not self.trace_metric_enabled("lease_time_ns"):
+        if lease_ns is None or not self._trace_lease_time_enabled:
             return
+        self._trace_counter += 1
         if self._trace_counter % max(1, self.trace_sample_mod) != 0:
             return
 
@@ -176,7 +170,7 @@ class _SubscriberMetrics:
     def record_user_span(
         self, span_ns: int, label: str | None, msg_seq: int | None = None
     ) -> None:
-        if not self.trace_metric_enabled("user_span_ns"):
+        if not self._trace_user_span_enabled:
             return
 
         now_ns = PROFILE_TIME()
@@ -385,6 +379,12 @@ class ProfileRegistry:
         metric.trace_metrics = trace_metrics
         metric._trace_counter = 0
         metric._last_publish_ts_ns = None
+        metric._trace_publish_delta_enabled = enabled and (
+            trace_metrics is None or "publish_delta_ns" in trace_metrics
+        )
+        metric._trace_backpressure_wait_enabled = enabled and (
+            trace_metrics is None or "backpressure_wait_ns" in trace_metrics
+        )
 
     def _apply_trace_control_to_subscriber(self, metric: _SubscriberMetrics) -> None:
         control = self._default_trace_control
@@ -403,6 +403,12 @@ class ProfileRegistry:
         metric.trace_sample_mod = sample_mod
         metric.trace_metrics = trace_metrics
         metric._trace_counter = 0
+        metric._trace_lease_time_enabled = enabled and (
+            trace_metrics is None or "lease_time_ns" in trace_metrics
+        )
+        metric._trace_user_span_enabled = enabled and (
+            trace_metrics is None or "user_span_ns" in trace_metrics
+        )
 
     def _clear_trace_samples(self) -> None:
         for metric in self._publishers.values():
