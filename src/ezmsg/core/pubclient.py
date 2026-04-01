@@ -108,6 +108,7 @@ class Publisher:
     _force_tcp: bool
     _allow_local: bool
     _last_backpressure_event: float
+    _profile: object
 
     _graph_address: AddressType | None
 
@@ -283,7 +284,7 @@ class Publisher:
         self._allow_local = _resolve_allow_local(self._force_tcp, allow_local)
         self._last_backpressure_event = -1
         self._graph_address = graph_address
-        PROFILES.register_publisher(self.id, self.topic, self._num_buffers)
+        self._profile = PROFILES.register_publisher(self.id, self.topic, self._num_buffers)
 
     @property
     def log_name(self) -> str:
@@ -424,18 +425,14 @@ class Publisher:
                 elif msg == Command.RX_ACK.value:
                     msg_id = await read_int(reader)
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
-                    PROFILES.publisher_sample_inflight(
-                        self.id, PROFILE_TIME(), self._backpressure.pressure
-                    )
+                    self._profile.sample_inflight(self._backpressure.pressure)
 
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
 
         finally:
             self._backpressure.free(info.id)
-            PROFILES.publisher_sample_inflight(
-                self.id, PROFILE_TIME(), self._backpressure.pressure
-            )
+            self._profile.sample_inflight(self._backpressure.pressure)
             await close_stream_writer(self._channels[info.id].writer)
             del self._channels[info.id]
 
@@ -495,15 +492,13 @@ class Publisher:
             if BACKPRESSURE_WARNING and (delta > BACKPRESSURE_REFRACTORY):
                 logger.warning(f"{self.topic} under subscriber backpressure!")
             self._last_backpressure_event = time.time()
-            wait_start_ns = PROFILE_TIME()
+            trace_backpressure = self._profile._trace_backpressure_wait_enabled
+            wait_start_ns = PROFILE_TIME() if trace_backpressure else None
             await self._backpressure.wait(buf_idx)
-            wait_end_ns = PROFILE_TIME()
-            PROFILES.publisher_backpressure_wait(
-                self.id,
-                wait_end_ns,
-                wait_end_ns - wait_start_ns,
-                msg_seq=self._msg_id,
-            )
+            if trace_backpressure and wait_start_ns is not None:
+                self._profile.record_backpressure_wait(
+                    PROFILE_TIME() - wait_start_ns, msg_seq=self._msg_id
+                )
 
         if self._should_use_local_fast_path():
             self._local_channel.put_local(self._msg_id, obj)
@@ -563,22 +558,14 @@ class Publisher:
                         channel.writer.write(msg)
                         await channel.writer.drain()
                         self._backpressure.lease(channel.id, buf_idx)
-                        PROFILES.publisher_sample_inflight(
-                            self.id, PROFILE_TIME(), self._backpressure.pressure
-                        )
+                        self._profile.sample_inflight(self._backpressure.pressure)
 
                     except (ConnectionResetError, BrokenPipeError):
                         logger.debug(
                             f"Publisher {self.id}: Channel {channel.id} connection fail"
                         )
 
-        now_ns = PROFILE_TIME()
-        PROFILES.publisher_publish(
-            self.id,
-            now_ns,
-            self._backpressure.pressure,
-            msg_seq=self._msg_id,
-        )
+        self._profile.record_publish(self._backpressure.pressure, msg_seq=self._msg_id)
         self._msg_id += 1
 
     def _should_use_local_fast_path(self) -> bool:

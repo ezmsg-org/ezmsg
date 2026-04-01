@@ -21,7 +21,6 @@ from .netprotocol import (
     encode_str,
     close_stream_writer,
 )
-from .profiling import PROFILES, PROFILE_TIME
 from .graphmeta import ProfileChannelType
 
 logger = logging.getLogger("ezmsg")
@@ -102,7 +101,6 @@ class Channel:
     _graph_address: AddressType | None
     _local_backpressure: Backpressure | None
     _channel_kind: ProfileChannelType
-    _lease_start: dict[tuple[UUID, int], int]
 
     def __init__(
         self,
@@ -130,7 +128,6 @@ class Channel:
         self._graph_address = graph_address
         self._local_backpressure = None
         self._channel_kind = ProfileChannelType.UNKNOWN
-        self._lease_start = {}
 
     @classmethod
     async def create(
@@ -340,12 +337,10 @@ class Channel:
     def _notify_clients(self, msg_id: int) -> bool:
         """notify interested clients and return true if any were notified"""
         buf_idx = msg_id % self.num_buffers
-        now_ns = PROFILE_TIME()
         for client_id, queue in self.clients.items():
             if queue is None:
                 continue  # queue is none if this is the pub
             self.backpressure.lease(client_id, buf_idx)
-            self._lease_start[(client_id, msg_id)] = now_ns
             queue.put_nowait((self.pub_id, msg_id))
         return not self.backpressure.available(buf_idx)
 
@@ -409,18 +404,6 @@ class Channel:
         :param client_id: UUID of client releasing this message
         :type client_id: UUID
         """
-        now_ns = PROFILE_TIME()
-        lease = self._lease_start.pop((client_id, msg_id), None)
-        if lease is not None:
-            start_ns = lease
-            PROFILES.subscriber_attributed_backpressure(
-                client_id,
-                now_ns,
-                now_ns - start_ns,
-                self._channel_kind,
-                msg_seq=msg_id,
-            )
-
         buf_idx = msg_id % self.num_buffers
         self.backpressure.free(client_id, buf_idx)
         if self.backpressure.buffers[buf_idx].is_empty:
@@ -476,11 +459,6 @@ class Channel:
                     queue.put_nowait((pub_id, msg_id))
 
             self.backpressure.free(client_id)
-            stale = [
-                key for key in self._lease_start.keys() if key[0] == client_id
-            ]
-            for key in stale:
-                self._lease_start.pop(key, None)
 
         elif client_id == self.pub_id and self._local_backpressure is not None:
             self._local_backpressure.free(self.id)
