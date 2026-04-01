@@ -31,77 +31,91 @@ def _endpoint_id(topic: str, id: UUID) -> str:
 
 
 @dataclass
-class _Rolling:
-    window_seconds: float = WINDOW_SECONDS
-    bucket_seconds: float = BUCKET_SECONDS
-    count: list[int] = field(default_factory=list)
-    value_sum: list[int] = field(default_factory=list)
-    max_value: list[int] = field(default_factory=list)
-    _num_buckets: int = 0
-    _bucket_ns: int = 0
-    _last_bucket_tick: int | None = None
+class _PublisherBucket:
+    publish_count: int = 0
+    publish_delta_sum: int = 0
+    publish_delta_count: int = 0
+    backpressure_wait_sum: int = 0
+    inflight_peak: int = 0
 
-    def __post_init__(self) -> None:
-        self._num_buckets = max(1, int(self.window_seconds / self.bucket_seconds))
-        self._bucket_ns = max(1, int(self.bucket_seconds * 1e9))
-        self.count = [0 for _ in range(self._num_buckets)]
-        self.value_sum = [0 for _ in range(self._num_buckets)]
-        self.max_value = [0 for _ in range(self._num_buckets)]
+    def reset(self) -> None:
+        self.publish_count = 0
+        self.publish_delta_sum = 0
+        self.publish_delta_count = 0
+        self.backpressure_wait_sum = 0
+        self.inflight_peak = 0
+
+
+@dataclass
+class _SubscriberBucket:
+    recv_count: int = 0
+    lease_time_sum: int = 0
+    user_span_sum: int = 0
+    user_span_count: int = 0
+    attributable_backpressure_sum: int = 0
+    attributable_backpressure_count: int = 0
+
+    def reset(self) -> None:
+        self.recv_count = 0
+        self.lease_time_sum = 0
+        self.user_span_sum = 0
+        self.user_span_count = 0
+        self.attributable_backpressure_sum = 0
+        self.attributable_backpressure_count = 0
+
+
+class _BucketWindow:
+    def __init__(self, bucket_type: type[_PublisherBucket | _SubscriberBucket]) -> None:
+        self._num_buckets = max(1, int(WINDOW_SECONDS / BUCKET_SECONDS))
+        self._bucket_ns = max(1, int(BUCKET_SECONDS * 1e9))
+        self._bucket_type = bucket_type
+        self._ticks = [-1 for _ in range(self._num_buckets)]
+        self._buckets = [bucket_type() for _ in range(self._num_buckets)]
+        self._last_tick: int | None = None
 
     def _bucket_tick(self, ts_ns: int) -> int:
         return ts_ns // self._bucket_ns
 
-    def _bucket(self, ts_ns: int) -> int:
-        return self._bucket_tick(ts_ns) % self._num_buckets
-
-    def _reset_bucket(self, idx: int) -> None:
-        self.count[idx] = 0
-        self.value_sum[idx] = 0
-        self.max_value[idx] = 0
+    def _clear_bucket(self, idx: int) -> None:
+        self._ticks[idx] = -1
+        self._buckets[idx].reset()
 
     def _advance(self, ts_ns: int) -> int:
-        bucket_tick = self._bucket_tick(ts_ns)
-        bucket = bucket_tick % self._num_buckets
-        if self._last_bucket_tick is None:
-            self._last_bucket_tick = bucket_tick
-            return bucket
-        if bucket_tick <= self._last_bucket_tick:
-            return bucket
-        elapsed_buckets = bucket_tick - self._last_bucket_tick
-        if elapsed_buckets >= self._num_buckets:
+        tick = self._bucket_tick(ts_ns)
+        if self._last_tick is None:
+            self._last_tick = tick
+            return tick
+        if tick <= self._last_tick:
+            return tick
+
+        elapsed = tick - self._last_tick
+        if elapsed >= self._num_buckets:
             for idx in range(self._num_buckets):
-                self._reset_bucket(idx)
+                self._clear_bucket(idx)
         else:
-            previous_bucket = self._last_bucket_tick % self._num_buckets
-            for step in range(1, elapsed_buckets + 1):
-                self._reset_bucket((previous_bucket + step) % self._num_buckets)
-        self._last_bucket_tick = bucket_tick
-        return bucket
+            previous_idx = self._last_tick % self._num_buckets
+            for step in range(1, elapsed + 1):
+                self._clear_bucket((previous_idx + step) % self._num_buckets)
 
-    def advance_to(self, ts_ns: int) -> None:
-        self._advance(ts_ns)
+        self._last_tick = tick
+        return tick
 
-    def add(self, ts_ns: int, value: int) -> None:
-        idx = self._advance(ts_ns)
-        self.count[idx] += 1
-        self.value_sum[idx] += value
-        if value > self.max_value[idx]:
-            self.max_value[idx] = value
+    def bucket(self, ts_ns: int) -> _PublisherBucket | _SubscriberBucket:
+        tick = self._advance(ts_ns)
+        idx = tick % self._num_buckets
+        if self._ticks[idx] != tick:
+            self._ticks[idx] = tick
+            self._buckets[idx].reset()
+        return self._buckets[idx]
 
-    def count_total(self) -> int:
-        return sum(self.count)
-
-    def sum_total(self) -> int:
-        return sum(self.value_sum)
-
-    def max_total(self) -> int:
-        return max(self.max_value) if self.max_value else 0
-
-    def avg(self) -> float:
-        c = self.count_total()
-        if c == 0:
-            return 0.0
-        return float(self.sum_total()) / float(c)
+    def buckets(self, ts_ns: int) -> list[_PublisherBucket | _SubscriberBucket]:
+        tick = self._advance(ts_ns)
+        min_tick = tick - self._num_buckets + 1
+        return [
+            bucket
+            for bucket_tick, bucket in zip(self._ticks, self._buckets)
+            if bucket_tick >= min_tick
+        ]
 
 
 @dataclass
@@ -113,10 +127,9 @@ class _PublisherMetrics:
     backpressure_wait_ns_total: int = 0
     inflight_messages_current: int = 0
     _last_publish_ts_ns: int | None = None
-    _publish_delta: _Rolling = field(default_factory=_Rolling)
-    _publish_count: _Rolling = field(default_factory=lambda: _Rolling())
-    _backpressure_wait: _Rolling = field(default_factory=_Rolling)
-    _inflight: _Rolling = field(default_factory=_Rolling)
+    _window: _BucketWindow = field(
+        default_factory=lambda: _BucketWindow(_PublisherBucket)
+    )
     trace_enabled: bool = False
     trace_sample_mod: int = 1
     trace_metrics: set[str] | None = None
@@ -132,13 +145,18 @@ class _PublisherMetrics:
         self, ts_ns: int, inflight: int, msg_seq: int | None = None
     ) -> None:
         self.messages_published_total += 1
-        self._publish_count.add(ts_ns, 1)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _PublisherBucket)
+        bucket.publish_count += 1
         publish_delta_ns = 0
         if self._last_publish_ts_ns is not None:
             publish_delta_ns = ts_ns - self._last_publish_ts_ns
-            self._publish_delta.add(ts_ns, publish_delta_ns)
+            bucket.publish_delta_sum += publish_delta_ns
+            bucket.publish_delta_count += 1
         self._last_publish_ts_ns = ts_ns
-        self.sample_inflight(ts_ns, inflight)
+        self.inflight_messages_current = inflight
+        if inflight > bucket.inflight_peak:
+            bucket.inflight_peak = inflight
         self._trace_counter += 1
         if (
             self.trace_enabled
@@ -147,7 +165,7 @@ class _PublisherMetrics:
         ):
             self.trace_samples.append(
                 ProfilingTraceSample(
-                    timestamp=float(PROFILE_TIME()),
+                    timestamp=float(ts_ns),
                     endpoint_id=self.endpoint_id,
                     topic=self.topic,
                     metric="publish_delta_ns",
@@ -160,11 +178,13 @@ class _PublisherMetrics:
         self, ts_ns: int, wait_ns: int, msg_seq: int | None = None
     ) -> None:
         self.backpressure_wait_ns_total += wait_ns
-        self._backpressure_wait.add(ts_ns, wait_ns)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _PublisherBucket)
+        bucket.backpressure_wait_sum += wait_ns
         if self.trace_enabled and self._trace_metric_enabled("backpressure_wait_ns"):
             self.trace_samples.append(
                 ProfilingTraceSample(
-                    timestamp=float(PROFILE_TIME()),
+                    timestamp=float(ts_ns),
                     endpoint_id=self.endpoint_id,
                     topic=self.topic,
                     metric="backpressure_wait_ns",
@@ -175,27 +195,43 @@ class _PublisherMetrics:
 
     def sample_inflight(self, ts_ns: int, inflight: int) -> None:
         self.inflight_messages_current = inflight
-        self._inflight.add(ts_ns, inflight)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _PublisherBucket)
+        if inflight > bucket.inflight_peak:
+            bucket.inflight_peak = inflight
 
     def snapshot(self) -> PublisherProfileSnapshot:
         now_ns = PROFILE_TIME()
-        self._publish_delta.advance_to(now_ns)
-        self._publish_count.advance_to(now_ns)
-        self._backpressure_wait.advance_to(now_ns)
-        self._inflight.advance_to(now_ns)
-        window_msgs = self._publish_count.count_total()
+        buckets = self._window.buckets(now_ns)
+        window_msgs = 0
+        publish_delta_sum = 0
+        publish_delta_count = 0
+        backpressure_wait_sum = 0
+        inflight_peak = 0
+        for bucket in buckets:
+            assert isinstance(bucket, _PublisherBucket)
+            window_msgs += bucket.publish_count
+            publish_delta_sum += bucket.publish_delta_sum
+            publish_delta_count += bucket.publish_delta_count
+            backpressure_wait_sum += bucket.backpressure_wait_sum
+            if bucket.inflight_peak > inflight_peak:
+                inflight_peak = bucket.inflight_peak
         return PublisherProfileSnapshot(
             endpoint_id=self.endpoint_id,
             topic=self.topic,
             messages_published_total=self.messages_published_total,
             messages_published_window=window_msgs,
-            publish_delta_ns_avg_window=self._publish_delta.avg(),
+            publish_delta_ns_avg_window=(
+                float(publish_delta_sum) / float(publish_delta_count)
+                if publish_delta_count > 0
+                else 0.0
+            ),
             publish_rate_hz_window=float(window_msgs) / max(WINDOW_SECONDS, 1e-9),
             inflight_messages_current=self.inflight_messages_current,
             num_buffers=self.num_buffers,
-            inflight_messages_peak_window=self._inflight.max_total(),
+            inflight_messages_peak_window=inflight_peak,
             backpressure_wait_ns_total=self.backpressure_wait_ns_total,
-            backpressure_wait_ns_window=self._backpressure_wait.sum_total(),
+            backpressure_wait_ns_window=backpressure_wait_sum,
             timestamp=float(now_ns),
         )
 
@@ -210,10 +246,9 @@ class _SubscriberMetrics:
     attributable_backpressure_ns_total: int = 0
     attributable_backpressure_events_total: int = 0
     channel_kind_last: ProfileChannelType = ProfileChannelType.UNKNOWN
-    _recv_count: _Rolling = field(default_factory=lambda: _Rolling())
-    _lease_time: _Rolling = field(default_factory=_Rolling)
-    _user_span: _Rolling = field(default_factory=_Rolling)
-    _attrib_bp: _Rolling = field(default_factory=_Rolling)
+    _window: _BucketWindow = field(
+        default_factory=lambda: _BucketWindow(_SubscriberBucket)
+    )
     trace_enabled: bool = False
     trace_sample_mod: int = 1
     trace_metrics: set[str] | None = None
@@ -235,8 +270,10 @@ class _SubscriberMetrics:
         self.messages_received_total += 1
         self.lease_time_ns_total += lease_ns
         self.channel_kind_last = channel_kind
-        self._recv_count.add(ts_ns, 1)
-        self._lease_time.add(ts_ns, lease_ns)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _SubscriberBucket)
+        bucket.recv_count += 1
+        bucket.lease_time_sum += lease_ns
         self._trace_counter += 1
         if (
             self.trace_enabled
@@ -245,7 +282,7 @@ class _SubscriberMetrics:
         ):
             self.trace_samples.append(
                 ProfilingTraceSample(
-                    timestamp=float(PROFILE_TIME()),
+                    timestamp=float(ts_ns),
                     endpoint_id=self.endpoint_id,
                     topic=self.topic,
                     metric="lease_time_ns",
@@ -259,11 +296,14 @@ class _SubscriberMetrics:
         self, ts_ns: int, span_ns: int, label: str | None, msg_seq: int | None = None
     ) -> None:
         self.user_span_ns_total += span_ns
-        self._user_span.add(ts_ns, span_ns)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _SubscriberBucket)
+        bucket.user_span_sum += span_ns
+        bucket.user_span_count += 1
         if self.trace_enabled and self._trace_metric_enabled("user_span_ns"):
             self.trace_samples.append(
                 ProfilingTraceSample(
-                    timestamp=float(PROFILE_TIME()),
+                    timestamp=float(ts_ns),
                     endpoint_id=self.endpoint_id,
                     topic=self.topic if label is None else f"{self.topic}:{label}",
                     metric="user_span_ns",
@@ -283,11 +323,14 @@ class _SubscriberMetrics:
         self.attributable_backpressure_ns_total += duration_ns
         self.attributable_backpressure_events_total += 1
         self.channel_kind_last = channel_kind
-        self._attrib_bp.add(ts_ns, duration_ns)
+        bucket = self._window.bucket(ts_ns)
+        assert isinstance(bucket, _SubscriberBucket)
+        bucket.attributable_backpressure_sum += duration_ns
+        bucket.attributable_backpressure_count += 1
         if self.trace_enabled and self._trace_metric_enabled("attributable_backpressure_ns"):
             self.trace_samples.append(
                 ProfilingTraceSample(
-                    timestamp=float(PROFILE_TIME()),
+                    timestamp=float(ts_ns),
                     endpoint_id=self.endpoint_id,
                     topic=self.topic,
                     metric="attributable_backpressure_ns",
@@ -299,27 +342,36 @@ class _SubscriberMetrics:
 
     def snapshot(self) -> SubscriberProfileSnapshot:
         now_ns = PROFILE_TIME()
-        self._recv_count.advance_to(now_ns)
-        self._lease_time.advance_to(now_ns)
-        self._user_span.advance_to(now_ns)
-        self._attrib_bp.advance_to(now_ns)
-        recv_count = self._recv_count.count_total()
-        user_count = self._user_span.count_total()
+        buckets = self._window.buckets(now_ns)
+        recv_count = 0
+        lease_time_sum = 0
+        user_span_sum = 0
+        user_count = 0
+        attributable_backpressure_sum = 0
+        for bucket in buckets:
+            assert isinstance(bucket, _SubscriberBucket)
+            recv_count += bucket.recv_count
+            lease_time_sum += bucket.lease_time_sum
+            user_span_sum += bucket.user_span_sum
+            user_count += bucket.user_span_count
+            attributable_backpressure_sum += bucket.attributable_backpressure_sum
         return SubscriberProfileSnapshot(
             endpoint_id=self.endpoint_id,
             topic=self.topic,
             messages_received_total=self.messages_received_total,
             messages_received_window=recv_count,
             lease_time_ns_total=self.lease_time_ns_total,
-            lease_time_ns_avg_window=self._lease_time.avg(),
+            lease_time_ns_avg_window=(
+                float(lease_time_sum) / float(recv_count) if recv_count > 0 else 0.0
+            ),
             user_span_ns_total=self.user_span_ns_total,
             user_span_ns_avg_window=(
-                float(self._user_span.sum_total()) / float(user_count)
+                float(user_span_sum) / float(user_count)
                 if user_count > 0
                 else 0.0
             ),
             attributable_backpressure_ns_total=self.attributable_backpressure_ns_total,
-            attributable_backpressure_ns_window=self._attrib_bp.sum_total(),
+            attributable_backpressure_ns_window=attributable_backpressure_sum,
             attributable_backpressure_events_total=self.attributable_backpressure_events_total,
             channel_kind_last=self.channel_kind_last,
             timestamp=float(now_ns),
