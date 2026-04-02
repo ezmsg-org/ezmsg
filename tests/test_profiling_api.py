@@ -191,6 +191,9 @@ async def test_process_profiling_trace_control_and_batch():
     assert process.client_id is not None
     process_key = process.client_id
     await process.register(["SYS/U2"])
+    # Keep direct batch assertions deterministic by preventing the background
+    # trace-push loop from draining the local trace buffer during this test.
+    process._trace_push_interval_s = 60.0
 
     pub = await ctx.publisher("TOPIC_TRACE")
     sub = await ctx.subscriber("TOPIC_TRACE")
@@ -339,6 +342,9 @@ async def test_process_profiling_trace_control_endpoint_metric_and_ttl():
     process = ProcessControlClient(address)
     await process.connect()
     await process.register(["SYS/U5"])
+    # This test reads batches directly from the process, so disable the
+    # automatic push loop long enough that it cannot race and drain samples.
+    process._trace_push_interval_s = 60.0
 
     pub_a = await ctx.publisher("TOPIC_A")
     sub_a = await ctx.subscriber("TOPIC_A")
@@ -526,6 +532,9 @@ async def test_process_profiling_trace_batch_interleaves_publisher_and_subscribe
     process = ProcessControlClient(address)
     await process.connect()
     await process.register(["SYS/U8"])
+    # Avoid races with the automatic graph-server push path when reading the
+    # process-local trace batch directly in this test.
+    process._trace_push_interval_s = 60.0
 
     pub = await ctx.publisher("TOPIC_TRACE_MIX")
     sub = await ctx.subscriber("TOPIC_TRACE_MIX")
@@ -572,6 +581,9 @@ async def test_process_profiling_trace_control_change_clears_stale_trace_samples
     process = ProcessControlClient(address)
     await process.connect()
     await process.register(["SYS/U9"])
+    # This test validates local batch contents after a control change, so keep
+    # the background push loop from draining new samples before the assertion.
+    process._trace_push_interval_s = 60.0
 
     pub_old = await ctx.publisher("TOPIC_TRACE_OLD")
     sub_old = await ctx.subscriber("TOPIC_TRACE_OLD")
