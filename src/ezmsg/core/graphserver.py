@@ -1739,15 +1739,18 @@ class GraphServer(threading.Thread):
 
             # Update requires us to read a 'COMPLETE'
             # This cannot be done from this context
-            async with asyncio.timeout(SUBSCRIBER_UPDATE_TIMEOUT_SEC):
+            async def send_update() -> None:
                 async with sub.sync_writer() as writer:
                     notify_str = ",".join(pub_ids)
                     writer.write(Command.UPDATE.value)
                     writer.write(encode_str(notify_str))
+            await asyncio.wait_for(
+                send_update(), timeout=SUBSCRIBER_UPDATE_TIMEOUT_SEC
+            )
 
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")
-        except TimeoutError:
+        except asyncio.TimeoutError:
             logger.warning(
                 "Timed out waiting for Subscriber %s to apply routing update for topic %s",
                 sub.id,
