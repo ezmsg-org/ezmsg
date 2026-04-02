@@ -12,14 +12,22 @@ from copy import deepcopy
 from abc import abstractmethod
 from dataclasses import dataclass, fields as dataclass_fields, is_dataclass, replace
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from functools import wraps, partial
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
-from contextlib import suppress, contextmanager
+from contextlib import suppress, contextmanager, asynccontextmanager
 from concurrent.futures import TimeoutError
 from typing import Any
 
@@ -751,14 +759,26 @@ async def handle_subscriber(
     # Non-leaky subscribers use recv_zero_copy() to hold backpressure during
     # processing, which provides zero-copy performance but applies backpressure.
 
+    @asynccontextmanager
+    async def next_message() -> AsyncGenerator[Any, None]:
+        if sub.leaky:
+            msg = await sub.recv()
+            try:
+                yield msg
+            finally:
+                del msg
+            return
+
+        async with sub.recv_zero_copy() as msg:
+            yield msg
+
     while True:
         if not callables:
             sub.close()
             await sub.wait_closed()
             break
 
-        if sub.leaky:
-            msg = await sub.recv()
+        async with next_message() as msg:
             try:
                 if on_message is not None:
                     try:
@@ -780,29 +800,6 @@ async def handle_subscriber(
                         callables.remove(callable)
             finally:
                 del msg
-        else:
-            async with sub.recv_zero_copy() as msg:
-                try:
-                    if on_message is not None:
-                        try:
-                            await on_message(msg)
-                        except Exception as exc:
-                            logger.warning(
-                                f"Failed to report subscriber message metadata: {exc}"
-                            )
-                    for callable in list(callables):
-                        try:
-                            span_start_ns = sub.begin_profile()
-                            try:
-                                await callable(msg)
-                            finally:
-                                sub.end_profile(
-                                    span_start_ns, getattr(callable, "__name__", None)
-                                )
-                        except (Complete, NormalTermination):
-                            callables.remove(callable)
-                finally:
-                    del msg
 
         if len(callables) > 1:
             await asyncio.sleep(0)

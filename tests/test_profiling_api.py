@@ -59,6 +59,41 @@ def test_profiling_snapshot_uses_counter_deltas_between_snapshots(
     assert sub_second.channel_kind_last == ProfileChannelType.SHM
 
 
+def test_subscriber_trace_sampling_uses_one_decision_per_message():
+    registry = profiling_core.ProfileRegistry()
+    subscriber = registry.register_subscriber(uuid4(), "TOPIC_SAMPLE")
+    registry.set_trace_control(
+        ProfilingTraceControl(
+            enabled=True,
+            sample_mod=3,
+            subscriber_topics=["TOPIC_SAMPLE"],
+            metrics=["lease_time_ns", "user_span_ns"],
+        )
+    )
+
+    for msg_seq in range(7):
+        sampled = subscriber.begin_message(ProfileChannelType.LOCAL)
+        subscriber.record_lease_time(
+            ProfileChannelType.LOCAL,
+            100 + msg_seq,
+            msg_seq=msg_seq,
+            sampled=sampled,
+        )
+        subscriber.record_user_span(
+            200 + msg_seq,
+            "taskA",
+            msg_seq=msg_seq,
+            sampled=sampled,
+        )
+
+    batch = registry.trace_batch(max_samples=100)
+    lease_samples = [sample for sample in batch.samples if sample.metric == "lease_time_ns"]
+    user_span_samples = [sample for sample in batch.samples if sample.metric == "user_span_ns"]
+
+    assert [sample.sample_seq for sample in lease_samples] == [2, 5]
+    assert [sample.sample_seq for sample in user_span_samples] == [2, 5]
+
+
 @pytest.mark.asyncio
 async def test_process_profiling_snapshot_collects_pub_sub_metrics():
     graph_server = GraphService().create_server()

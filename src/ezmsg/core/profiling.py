@@ -139,19 +139,39 @@ class _SubscriberMetrics:
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
 
+    def begin_message(self, channel_kind: ProfileChannelType) -> bool:
+        self.messages_received_total += 1
+        self.channel_kind_last = channel_kind
+
+        if not (self._trace_lease_time_enabled or self._trace_user_span_enabled):
+            return False
+
+        self._trace_counter += 1
+        return self._trace_counter % max(1, self.trace_sample_mod) == 0
+
     def record_receive(
         self,
         channel_kind: ProfileChannelType,
         lease_ns: int | None = None,
         msg_seq: int | None = None,
     ) -> None:
-        self.messages_received_total += 1
-        self.channel_kind_last = channel_kind
+        sampled = self.begin_message(channel_kind)
+        self.record_lease_time(
+            channel_kind,
+            lease_ns,
+            msg_seq=msg_seq,
+            sampled=sampled,
+        )
 
-        if lease_ns is None or not self._trace_lease_time_enabled:
-            return
-        self._trace_counter += 1
-        if self._trace_counter % max(1, self.trace_sample_mod) != 0:
+    def record_lease_time(
+        self,
+        channel_kind: ProfileChannelType,
+        lease_ns: int | None,
+        msg_seq: int | None = None,
+        *,
+        sampled: bool,
+    ) -> None:
+        if lease_ns is None or not self._trace_lease_time_enabled or not sampled:
             return
 
         now_ns = PROFILE_TIME()
@@ -168,9 +188,14 @@ class _SubscriberMetrics:
         )
 
     def record_user_span(
-        self, span_ns: int, label: str | None, msg_seq: int | None = None
+        self,
+        span_ns: int,
+        label: str | None,
+        msg_seq: int | None = None,
+        *,
+        sampled: bool,
     ) -> None:
-        if not self._trace_user_span_enabled:
+        if not self._trace_user_span_enabled or not sampled:
             return
 
         now_ns = PROFILE_TIME()

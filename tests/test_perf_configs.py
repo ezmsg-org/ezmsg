@@ -1,4 +1,5 @@
 import contextlib
+from dataclasses import replace
 import os
 import tempfile
 from pathlib import Path
@@ -6,7 +7,16 @@ from pathlib import Path
 import pytest
 
 from ezmsg.core.graphserver import GraphServer
-from ezmsg.util.perf.impl import Communication, CONFIGS, perform_test
+from ezmsg.util.perf.impl import (
+    Communication,
+    CONFIGS,
+    ConfigSettings,
+    LoadTestSettings,
+    LoadTestSink,
+    LoadTestSource,
+    fanin,
+    perform_test,
+)
 
 
 PERF_MAX_DURATION = 0.5
@@ -91,6 +101,26 @@ def test_fanout_perf(perf_graph_server, comm, msg_size):
 @pytest.mark.parametrize("comm", list(Communication), ids=lambda c: f"comm={c.value}")
 def test_fanin_perf(perf_graph_server, comm, msg_size):
     _run_perf_case("fanin", comm, msg_size, perf_graph_server)
+
+
+def test_fanin_config_counts_all_publishers():
+    settings = LoadTestSettings(
+        max_duration=1.0,
+        num_msgs=8,
+        dynamic_size=64,
+        buffers=2,
+        force_tcp=False,
+    )
+    source = LoadTestSource(settings)
+    sink = LoadTestSink(settings)
+
+    clients, connections = fanin(
+        ConfigSettings(n_clients=2, settings=settings, source=source, sink=sink)
+    )
+
+    assert len(clients) == 2
+    assert len(connections) == 3
+    assert sink.SETTINGS == replace(settings, num_msgs=24)
 
 
 @pytest.mark.parametrize("msg_size", PERF_MSG_SIZES, ids=lambda s: f"msg={s}")

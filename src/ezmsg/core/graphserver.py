@@ -65,6 +65,9 @@ from .shm import SHMContext, SHMInfo
 
 logger = logging.getLogger("ezmsg")
 PERSISTENT_EDGE_OWNER = None
+SUBSCRIBER_UPDATE_TIMEOUT_SEC = float(
+    os.environ.get("EZMSG_SUBSCRIBER_UPDATE_TIMEOUT_SEC", "1.0")
+)
 
 
 @dataclass
@@ -72,6 +75,19 @@ class _SettingsState:
     value: SettingsSnapshotValue
     metadata_session_id: UUID | None
     source_process_id: UUID | None
+
+
+@dataclass(frozen=True)
+class _RetentionPolicy:
+    profiling_trace_buffer_limit: int = int(
+        os.environ.get("EZMSG_PROFILE_TRACE_BUFFER_LIMIT", "200000")
+    )
+    settings_event_history_limit: int = int(
+        os.environ.get("EZMSG_SETTINGS_EVENT_HISTORY_LIMIT", "10000")
+    )
+    topology_event_history_limit: int = int(
+        os.environ.get("EZMSG_TOPOLOGY_EVENT_HISTORY_LIMIT", "10000")
+    )
 
 
 class GraphServer(threading.Thread):
@@ -116,6 +132,7 @@ class GraphServer(threading.Thread):
     _profiling_trace_buffers: dict[UUID, deque[tuple[int, ProfilingTraceSample]]]
     _profiling_trace_process_meta: dict[UUID, tuple[int, str]]
     _profiling_trace_seq: dict[UUID, int]
+    _retention_policy: _RetentionPolicy
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -143,6 +160,7 @@ class GraphServer(threading.Thread):
         self._profiling_trace_buffers = {}
         self._profiling_trace_process_meta = {}
         self._profiling_trace_seq = {}
+        self._retention_policy = _RetentionPolicy()
 
     @property
     def address(self) -> Address:
@@ -1014,7 +1032,8 @@ class GraphServer(threading.Thread):
         async with self._command_lock:
             process_id = self._process_key(process_client_id)
             trace_buffer = self._profiling_trace_buffers.setdefault(
-                process_id, deque(maxlen=200_000)
+                process_id,
+                deque(maxlen=self._retention_policy.profiling_trace_buffer_limit),
             )
             next_seq = self._profiling_trace_seq.get(process_id, 0)
             for sample in batch.samples:
@@ -1376,7 +1395,7 @@ class GraphServer(threading.Thread):
             self._queue_stream_event(queue, event)
 
         # Bound memory growth for long-lived servers.
-        max_events = 10_000
+        max_events = self._retention_policy.settings_event_history_limit
         if len(self._settings_events) > max_events:
             del self._settings_events[0 : len(self._settings_events) - max_events]
 
@@ -1402,7 +1421,7 @@ class GraphServer(threading.Thread):
         for queue in self._topology_subscribers.values():
             self._queue_stream_event(queue, event)
 
-        max_events = 10_000
+        max_events = self._retention_policy.topology_event_history_limit
         if len(self._topology_events) > max_events:
             del self._topology_events[0 : len(self._topology_events) - max_events]
 
@@ -1518,36 +1537,40 @@ class GraphServer(threading.Thread):
     ) -> bytes:
         from_topic = await read_str(reader)
         to_topic = await read_str(reader)
+        should_notify = False
 
         async with self._command_lock:
             try:
                 if req == Command.SESSION_CONNECT.value:
-                    topology_changed = self._connect_owner(
+                    should_notify = self._connect_owner(
                         from_topic, to_topic, session_id
                     )
                 else:
-                    topology_changed = self._disconnect_owner(
+                    should_notify = self._disconnect_owner(
                         from_topic, to_topic, session_id
                     )
             except CyclicException:
                 return Command.CYCLIC.value
 
-            if topology_changed:
+            if should_notify:
                 self._append_topology_event_locked(
                     event_type=TopologyEventType.GRAPH_CHANGED,
                     changed_topics=[to_topic],
                     source_session_id=str(session_id),
                     source_process_id=None,
                 )
-                await self._notify_downstream_for_topic(to_topic)
+
+        if should_notify:
+            await self._notify_downstream_for_topic(to_topic)
 
         return Command.COMPLETE.value
 
     async def _handle_session_clear_request(self, session_id: UUID) -> bytes:
         async with self._command_lock:
             notify_topics = self._clear_session_state(session_id)
-            for topic in notify_topics:
-                await self._notify_downstream_for_topic(topic)
+
+        for topic in notify_topics:
+            await self._notify_downstream_for_topic(topic)
         return Command.COMPLETE.value
 
     async def _handle_session_register_request(
@@ -1716,13 +1739,20 @@ class GraphServer(threading.Thread):
 
             # Update requires us to read a 'COMPLETE'
             # This cannot be done from this context
-            async with sub.sync_writer() as writer:
-                notify_str = ",".join(pub_ids)
-                writer.write(Command.UPDATE.value)
-                writer.write(encode_str(notify_str))
+            async with asyncio.timeout(SUBSCRIBER_UPDATE_TIMEOUT_SEC):
+                async with sub.sync_writer() as writer:
+                    notify_str = ",".join(pub_ids)
+                    writer.write(Command.UPDATE.value)
+                    writer.write(encode_str(notify_str))
 
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")
+        except TimeoutError:
+            logger.warning(
+                "Timed out waiting for Subscriber %s to apply routing update for topic %s",
+                sub.id,
+                sub.topic,
+            )
 
     def _publishers(self) -> list[PublisherInfo]:
         return [
