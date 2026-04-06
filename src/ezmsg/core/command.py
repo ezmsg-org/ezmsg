@@ -2,8 +2,6 @@ import argparse
 import asyncio
 import inspect
 
-from ezmsg.util.perf.command import setup_perf_cmdline
-
 from .commands import setup_core_cmdline
 from .commands.graphviz import handle_graphviz
 from .commands.mermaid import handle_mermaid, mermaid_url as mm
@@ -38,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True, help="command for ezmsg")
 
     setup_core_cmdline(subparsers)
+    from ezmsg.util.perf.command import setup_perf_cmdline
+
     setup_perf_cmdline(subparsers)
     return parser
 
