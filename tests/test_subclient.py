@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from ezmsg.core.subclient import Subscriber
+from ezmsg.core.graphmeta import ProfileChannelType
 from ezmsg.core.netprotocol import Command, encode_str
 from ezmsg.core import channelmanager as channelmanager_module
 from ezmsg.core import subclient as subclient_module
@@ -19,6 +20,7 @@ class DummyChannel:
         self.waited = False
         self.topic = "test"
         self.num_buffers = 8
+        self.channel_kind = ProfileChannelType.LOCAL
 
     def register_client(self, client_id, queue, local_backpressure=None):
         self.clients[client_id] = queue

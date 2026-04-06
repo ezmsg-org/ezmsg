@@ -8,11 +8,14 @@ import sys
 
 import ezmsg.core as ez
 
+STARTED = threading.Event()
+
 
 class BlockingDiskIO(ez.Unit):
     @ez.task
     async def blocked_read(self) -> None:
         # Cross-platform "hung disk I/O" simulation.
+        STARTED.set()
         event = threading.Event()
         self._event = event
         await asyncio.shield(asyncio.to_thread(event.wait))
@@ -21,6 +24,7 @@ class BlockingDiskIO(ez.Unit):
 class BlockingSocket(ez.Unit):
     @ez.task
     async def blocked_recv(self) -> None:
+        STARTED.set()
         sock_r, sock_w = socket.socketpair()
         sock_r.setblocking(True)
         sock_w.setblocking(True)
@@ -33,6 +37,7 @@ class BlockingSocket(ez.Unit):
 class ExplodeOnCancel(ez.Unit):
     @ez.task
     async def explode(self) -> None:
+        STARTED.set()
         try:
             while True:
                 await asyncio.sleep(1.0)
@@ -43,6 +48,7 @@ class ExplodeOnCancel(ez.Unit):
 class StubbornTask(ez.Unit):
     @ez.task
     async def ignore_cancel(self) -> None:
+        STARTED.set()
         while True:
             try:
                 await asyncio.sleep(1.0)
@@ -84,7 +90,7 @@ def main() -> None:
 
     def _watch_ready() -> None:
         while not done.is_set():
-            if runner.running:
+            if runner.running and STARTED.is_set():
                 _emit_ready()
                 return
             time.sleep(0.01)

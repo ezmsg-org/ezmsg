@@ -22,14 +22,30 @@ from .netprotocol import (
 from .graphserver import GraphServer, GraphService
 from .pubclient import Publisher
 from .subclient import Subscriber
-from .graphmeta import GraphMetadata, GraphSnapshot
+from .graphmeta import (
+    ProcessControlOperation,
+    GraphMetadata,
+    GraphSnapshot,
+    ProcessPing,
+    ProcessProfilingSnapshot,
+    ProcessProfilingTraceBatch,
+    ProfilingTraceStreamBatch,
+    ProfilingStreamControl,
+    ProcessStats,
+    ProcessControlResponse,
+    ProfilingTraceControl,
+    SettingsFieldUpdateRequest,
+    SettingsChangedEvent,
+    SettingsSnapshotValue,
+    TopologyChangedEvent,
+)
 
 logger = logging.getLogger("ezmsg")
 
 
 class _SessionResponseKind(enum.Enum):
     BYTE = enum.auto()
-    SNAPSHOT = enum.auto()
+    PICKLED = enum.auto()
 
 
 @dataclass
@@ -43,25 +59,35 @@ class _SessionCommand:
 
 class GraphContext:
     """
-    GraphContext maintains a list of created publishers, subscribers, and connections in the graph.
+    Session-scoped client for graph mutation, metadata, settings, and process control.
 
-    The GraphContext provides a managed environment for creating and tracking publishers,
-    subscribers, and graph connections. When the context is no longer needed, it can
-    revert changes in the graph which disconnects publishers and removes modifications
-    that this context made.
+    `GraphContext` opens a session connection to `GraphServer` and acts as a control
+    plane for both low-level graph operations and high-level API introspection.
 
-    It also maintains a context manager that ensures the GraphServer is running.
+    Core capabilities:
+    - Create/track `Publisher` and `Subscriber` clients.
+    - Connect/disconnect topic edges owned by this session.
+    - Register high-level `GraphMetadata`.
+    - Read graph snapshots (topology, edge ownership, sessions, process ownership).
+    - Query settings snapshots/events and subscribe to push-based settings updates.
+    - Route process-control requests (ping/stats/profiling and custom operations).
+    - Revert all session-owned mutations on context exit (`SESSION_CLEAR`).
 
-    :param graph_service: Optional graph service instance to use
-    :type graph_service: GraphService | None
+    Session semantics:
+    - Mutations and metadata are tied to the session lifecycle.
+    - If the session disconnects, session-owned graph state is dropped by server cleanup.
+    - Low-level pub/sub API usage remains supported independently of metadata.
+
+    :param graph_address: Graph server address. If `None`, defaults are used.
+    :type graph_address: AddressType | None
     :param auto_start: Whether to auto-start a GraphServer if connection fails.
         If None, defaults to auto-start only when graph_address is not provided
         and no environment override is set.
     :type auto_start: bool | None
 
     .. note::
-    The GraphContext is typically managed automatically by the ezmsg runtime
-    and doesn't need to be instantiated directly by user code.
+    `GraphContext` is used by the runtime, and can also be used directly by tools
+    (inspectors, profilers, dashboards, and operational scripts).
     """
 
     _clients: set[Publisher | Subscriber]
@@ -248,13 +274,13 @@ class GraphContext:
                 if cmd.response_kind == _SessionResponseKind.BYTE:
                     response = await reader.read(1)
 
-                elif cmd.response_kind == _SessionResponseKind.SNAPSHOT:
+                elif cmd.response_kind == _SessionResponseKind.PICKLED:
                     num_bytes = await read_int(reader)
-                    snapshot_bytes = await reader.readexactly(num_bytes)
+                    payload_bytes = await reader.readexactly(num_bytes)
                     complete = await reader.read(1)
                     if complete != Command.COMPLETE.value:
-                        raise RuntimeError("Unexpected response to session snapshot")
-                    response = pickle.loads(snapshot_bytes)
+                        raise RuntimeError("Unexpected pickled response from session")
+                    response = pickle.loads(payload_bytes)
 
                 else:
                     raise RuntimeError(f"Unsupported response kind: {cmd.response_kind}")
@@ -334,17 +360,378 @@ class GraphContext:
             payload=payload,
             response_kind=_SessionResponseKind.BYTE,
         )
-        if response != Command.COMPLETE.value:
-            raise RuntimeError("Unexpected response to session metadata registration")
+        if response == Command.COMPLETE.value:
+            return
+        if response == Command.ERROR.value:
+            requested = set(metadata.components.keys())
+            collisions: set[str] = set()
+            if len(requested) > 0:
+                own_session_id = str(self._session_id) if self._session_id is not None else None
+                try:
+                    snapshot = await self.snapshot()
+                    for session_id, session in snapshot.sessions.items():
+                        if own_session_id is not None and session_id == own_session_id:
+                            continue
+                        if session.metadata is None:
+                            continue
+                        collisions.update(
+                            requested.intersection(session.metadata.components.keys())
+                        )
+                except Exception:
+                    # Fall back to a generic error if snapshot lookup fails.
+                    pass
+
+            if len(collisions) > 0:
+                collision_str = ", ".join(sorted(collisions))
+                raise RuntimeError(
+                    "Session metadata registration rejected by GraphServer due to "
+                    f"component address collision(s): {collision_str}"
+                )
+            raise RuntimeError("Session metadata registration rejected by GraphServer")
+        raise RuntimeError(
+            "Unexpected response to session metadata registration: "
+            f"{response!r}"
+        )
 
     async def snapshot(self) -> GraphSnapshot:
         snapshot = await self._session_command(
             Command.SESSION_SNAPSHOT,
-            response_kind=_SessionResponseKind.SNAPSHOT,
+            response_kind=_SessionResponseKind.PICKLED,
         )
         if not isinstance(snapshot, GraphSnapshot):
             raise RuntimeError("Session snapshot payload was not a GraphSnapshot")
         return snapshot
+
+    async def settings_snapshot(self) -> dict[str, SettingsSnapshotValue]:
+        snapshot = await self._session_command(
+            Command.SESSION_SETTINGS_SNAPSHOT,
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(snapshot, dict):
+            raise RuntimeError("Settings snapshot payload was not a dictionary")
+        if not all(isinstance(value, SettingsSnapshotValue) for value in snapshot.values()):
+            raise RuntimeError("Settings snapshot payload contained invalid values")
+        return snapshot
+
+    async def settings_events(self, after_seq: int = 0) -> list[SettingsChangedEvent]:
+        events = await self._session_command(
+            Command.SESSION_SETTINGS_EVENTS,
+            str(after_seq),
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(events, list):
+            raise RuntimeError("Settings event payload was not a list")
+        if not all(isinstance(event, SettingsChangedEvent) for event in events):
+            raise RuntimeError("Settings event payload contained invalid entries")
+        return events
+
+    async def settings_input_topic(self, component_address: str) -> str:
+        """
+        Resolve the dynamic settings input topic for a component.
+
+        The topic is discovered from currently registered session metadata.
+        Raises if the component is missing, does not opt in to dynamic settings,
+        or appears with conflicting dynamic settings topics.
+        """
+        snapshot = await self.snapshot()
+        topics: set[str] = set()
+        for session in snapshot.sessions.values():
+            metadata = session.metadata
+            if metadata is None:
+                continue
+            component = metadata.components.get(component_address)
+            if component is None:
+                continue
+            dynamic_settings = component.dynamic_settings
+            if dynamic_settings.enabled and dynamic_settings.input_topic is not None:
+                topics.add(dynamic_settings.input_topic)
+
+        if len(topics) == 1:
+            return next(iter(topics))
+        if len(topics) > 1:
+            raise RuntimeError(
+                "Conflicting dynamic settings topics for component "
+                f"'{component_address}': {sorted(topics)}"
+            )
+        raise RuntimeError(
+            f"Component '{component_address}' does not expose dynamic settings metadata"
+        )
+
+    async def update_settings(
+        self,
+        component_address: str,
+        value: object,
+        *,
+        input_topic: str | None = None,
+    ) -> None:
+        """
+        Publish a settings value to a component's `INPUT_SETTINGS` inlet.
+
+        By default the target topic is resolved from metadata via
+        :meth:`settings_input_topic`. Supplying `input_topic` bypasses
+        metadata lookup.
+        """
+        topic = input_topic if input_topic is not None else await self.settings_input_topic(
+            component_address
+        )
+        pub = await self.publisher(topic)
+        try:
+            await pub.broadcast(value)
+        finally:
+            pub.close()
+            await pub.wait_closed()
+            self._clients.discard(pub)
+
+    async def update_setting(
+        self,
+        component_address: str,
+        field_path: str,
+        value: object,
+        *,
+        timeout: float = 2.0,
+    ) -> SettingsSnapshotValue:
+        """
+        Patch one field of a unit's current dynamic settings value.
+
+        The patch is routed to the owning backend process, applied in-process
+        using dataclass replacement, and then published to `INPUT_SETTINGS`.
+        Returns a snapshot representation of the patched settings value.
+        """
+        response = await self.process_request(
+            component_address,
+            ProcessControlOperation.UPDATE_SETTING_FIELD,
+            payload_obj=SettingsFieldUpdateRequest(field_path=field_path, value=value),
+            timeout=timeout,
+        )
+        return typing.cast(
+            SettingsSnapshotValue,
+            self.decode_process_payload(response, SettingsSnapshotValue),
+        )
+
+    async def subscribe_settings_events(
+        self,
+        *,
+        after_seq: int = 0,
+    ) -> typing.AsyncIterator[SettingsChangedEvent]:
+        async for event in self._subscribe_pickled_stream(
+            command=Command.SESSION_SETTINGS_SUBSCRIBE,
+            setup_payload=encode_str(str(after_seq)),
+            expected_type=SettingsChangedEvent,
+            subscribe_error="Failed to subscribe to settings events",
+            payload_error="Settings subscription received invalid event payload",
+        ):
+            yield typing.cast(SettingsChangedEvent, event)
+
+    async def subscribe_topology_events(
+        self,
+        *,
+        after_seq: int = 0,
+    ) -> typing.AsyncIterator[TopologyChangedEvent]:
+        async for event in self._subscribe_pickled_stream(
+            command=Command.SESSION_TOPOLOGY_SUBSCRIBE,
+            setup_payload=encode_str(str(after_seq)),
+            expected_type=TopologyChangedEvent,
+            subscribe_error="Failed to subscribe to topology events",
+            payload_error="Topology subscription received invalid event payload",
+        ):
+            yield typing.cast(TopologyChangedEvent, event)
+
+    async def subscribe_profiling_trace(
+        self,
+        control: ProfilingStreamControl,
+    ) -> typing.AsyncIterator[ProfilingTraceStreamBatch]:
+        """
+        Subscribe to streamed profiling trace batches from GraphServer.
+        """
+        payload = pickle.dumps(control)
+        setup_payload = uint64_to_bytes(len(payload)) + payload
+        async for batch in self._subscribe_pickled_stream(
+            command=Command.SESSION_PROFILING_SUBSCRIBE,
+            setup_payload=setup_payload,
+            expected_type=ProfilingTraceStreamBatch,
+            subscribe_error="Failed to subscribe to profiling trace stream",
+            payload_error="Profiling subscription received invalid batch payload",
+        ):
+            yield typing.cast(ProfilingTraceStreamBatch, batch)
+
+    async def _subscribe_pickled_stream(
+        self,
+        *,
+        command: Command,
+        setup_payload: bytes,
+        expected_type: type[object],
+        subscribe_error: str,
+        payload_error: str,
+    ) -> typing.AsyncIterator[object]:
+        reader, writer = await GraphService(self.graph_address).open_connection()
+        writer.write(command.value)
+        writer.write(setup_payload)
+        await writer.drain()
+
+        _subscriber_id = UUID(await read_str(reader))
+        response = await reader.read(1)
+        if response != Command.COMPLETE.value:
+            await close_stream_writer(writer)
+            raise RuntimeError(subscribe_error)
+
+        try:
+            while True:
+                payload_size = await read_int(reader)
+                payload = await reader.readexactly(payload_size)
+                value = pickle.loads(payload)
+                if not isinstance(value, expected_type):
+                    raise RuntimeError(payload_error)
+                yield value
+        except asyncio.IncompleteReadError:
+            return
+        finally:
+            await close_stream_writer(writer)
+
+    async def process_request(
+        self,
+        unit_address: str,
+        operation: ProcessControlOperation | str,
+        *,
+        payload: bytes | None = None,
+        payload_obj: object | None = None,
+        timeout: float = 2.0,
+    ) -> ProcessControlResponse:
+        if payload is not None and payload_obj is not None:
+            raise ValueError("Specify only one of payload or payload_obj")
+
+        if payload_obj is not None:
+            payload = pickle.dumps(payload_obj)
+
+        operation_name = (
+            operation.value if isinstance(operation, ProcessControlOperation) else operation
+        )
+        response = await self._session_command(
+            Command.SESSION_PROCESS_REQUEST,
+            unit_address,
+            operation_name,
+            str(timeout),
+            payload=payload if payload is not None else b"",
+            response_kind=_SessionResponseKind.PICKLED,
+        )
+        if not isinstance(response, ProcessControlResponse):
+            raise RuntimeError("Session process request payload was not ProcessControlResponse")
+        return response
+
+    async def process_ping(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessPing:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.PING,
+            timeout=timeout,
+        )
+        return typing.cast(ProcessPing, self.decode_process_payload(response, ProcessPing))
+
+    async def process_stats(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessStats:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROCESS_STATS,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessStats, self.decode_process_payload(response, ProcessStats)
+        )
+
+    async def process_profiling_snapshot(
+        self,
+        unit_address: str,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessProfilingSnapshot:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROFILING_SNAPSHOT,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessProfilingSnapshot,
+            self.decode_process_payload(response, ProcessProfilingSnapshot),
+        )
+
+    async def process_set_profiling_trace(
+        self,
+        unit_address: str,
+        control: ProfilingTraceControl,
+        *,
+        timeout: float = 2.0,
+    ) -> ProcessControlResponse:
+        return await self.process_request(
+            unit_address,
+            ProcessControlOperation.SET_PROFILING_TRACE,
+            payload_obj=control,
+            timeout=timeout,
+        )
+
+    async def process_profiling_trace_batch(
+        self,
+        unit_address: str,
+        *,
+        max_samples: int = 1000,
+        timeout: float = 2.0,
+    ) -> ProcessProfilingTraceBatch:
+        response = await self.process_request(
+            unit_address,
+            ProcessControlOperation.GET_PROFILING_TRACE_BATCH,
+            payload_obj=max_samples,
+            timeout=timeout,
+        )
+        return typing.cast(
+            ProcessProfilingTraceBatch,
+            self.decode_process_payload(response, ProcessProfilingTraceBatch),
+        )
+
+    async def profiling_snapshot_all(
+        self,
+        *,
+        timeout_per_process: float = 0.5,
+    ) -> dict[UUID, ProcessProfilingSnapshot]:
+        graph_snapshot = await self.snapshot()
+        out: dict[UUID, ProcessProfilingSnapshot] = {}
+        for process in graph_snapshot.processes.values():
+            if len(process.units) == 0:
+                continue
+            route_unit = process.units[0]
+            try:
+                out[process.process_id] = await self.process_profiling_snapshot(
+                    route_unit, timeout=timeout_per_process
+                )
+            except Exception:
+                continue
+        return out
+
+    def decode_process_payload(
+        self,
+        response: ProcessControlResponse,
+        expected_type: type[object] = object,
+    ) -> object:
+        if not response.ok:
+            raise RuntimeError(
+                f"Process request failed ({response.error_code}): {response.error}"
+            )
+        if response.payload is None:
+            raise RuntimeError("Process response did not include a payload")
+        decoded = pickle.loads(response.payload)
+        if expected_type is object:
+            return decoded
+        if not isinstance(decoded, expected_type):
+            raise RuntimeError(
+                "Unexpected process payload type: "
+                f"{type(decoded).__name__} (expected {expected_type.__name__})"
+            )
+        return decoded
 
     async def _shutdown_servers(self) -> None:
         if self._graph_server is not None:

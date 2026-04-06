@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import Callable, Mapping, Iterable
 from collections.abc import Collection as AbstractCollection
-from dataclasses import asdict, is_dataclass
 import enum
 import inspect
 import logging
@@ -53,6 +52,11 @@ from .graphmeta import (
     UnitMetadata,
 )
 from .relay import _CollectionRelayUnit, _RelaySettings
+from .settingsmeta import (
+    settings_repr_value,
+    settings_schema_from_type,
+    settings_schema_from_value,
+)
 
 from .graphserver import GraphService
 from .graphcontext import GraphContext
@@ -424,15 +428,7 @@ class GraphRunner:
         return repr(stream_type)
 
     def _settings_repr(self, value: object) -> dict[str, object] | str:
-        if is_dataclass(value):
-            try:
-                asdict_value = asdict(value)
-                if isinstance(asdict_value, dict):
-                    return asdict_value
-            except Exception:
-                pass
-
-        return repr(value)
+        return settings_repr_value(value)
 
     def _settings_snapshot(self, value: object) -> tuple[bytes | None, dict[str, object] | str]:
         try:
@@ -579,6 +575,11 @@ class GraphRunner:
                     if inspect.isclass(settings_type)
                     else repr(settings_type)
                 )
+                settings_schema = (
+                    settings_schema_from_value(comp.SETTINGS)
+                    if comp.SETTINGS is not None
+                    else settings_schema_from_type(settings_type)
+                )
 
                 component_common = dict(
                     address=comp.address,
@@ -587,6 +588,7 @@ class GraphRunner:
                     settings_type=settings_type_name,
                     initial_settings=self._settings_snapshot(comp.SETTINGS),
                     dynamic_settings=dynamic_settings,
+                    settings_schema=settings_schema,
                 )
 
                 metadata_entry: ComponentMetadataType

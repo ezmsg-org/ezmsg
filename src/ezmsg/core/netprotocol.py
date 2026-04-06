@@ -176,6 +176,18 @@ class SessionInfo(ClientInfo):
     metadata: GraphMetadata | None = None
 
 
+@dataclass
+class ProcessInfo(ClientInfo):
+    """
+    Process-scoped control-plane client information.
+    """
+
+    pid: int | None = None
+    host: str | None = None
+    units: set[str] = field(default_factory=set)
+    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+
+
 def uint64_to_bytes(i: int) -> bytes:
     """
     Convert a 64-bit unsigned integer to bytes.
@@ -318,6 +330,22 @@ class Command(enum.Enum):
     SESSION_CLEAR = enum.auto()
     SESSION_REGISTER = enum.auto()
     SESSION_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_EVENTS = enum.auto()
+    SESSION_SETTINGS_SUBSCRIBE = enum.auto()
+    SESSION_TOPOLOGY_SUBSCRIBE = enum.auto()
+    SESSION_PROFILING_SUBSCRIBE = enum.auto()
+    SESSION_PROCESS_REQUEST = enum.auto()
+
+    # Backend Process Control Commands
+    PROCESS = enum.auto()
+    PROCESS_REGISTER = enum.auto()
+    PROCESS_UPDATE_OWNERSHIP = enum.auto()
+    PROCESS_SETTINGS_UPDATE = enum.auto()
+    PROCESS_PROFILING_TRACE_UPDATE = enum.auto()
+    PROCESS_ROUTE_REQUEST = enum.auto()
+    PROCESS_ROUTE_RESPONSE = enum.auto()
+    ERROR = enum.auto()
 
 
 def create_socket(

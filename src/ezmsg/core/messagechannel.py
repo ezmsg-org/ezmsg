@@ -21,6 +21,7 @@ from .netprotocol import (
     encode_str,
     close_stream_writer,
 )
+from .graphmeta import ProfileChannelType
 
 logger = logging.getLogger("ezmsg")
 
@@ -99,6 +100,7 @@ class Channel:
     _pub_writer: asyncio.StreamWriter
     _graph_address: AddressType | None
     _local_backpressure: Backpressure | None
+    _channel_kind: ProfileChannelType
 
     def __init__(
         self,
@@ -125,6 +127,7 @@ class Channel:
         self.clients = dict()
         self._graph_address = graph_address
         self._local_backpressure = None
+        self._channel_kind = ProfileChannelType.UNKNOWN
 
     @classmethod
     async def create(
@@ -257,8 +260,10 @@ class Channel:
 
                 msg_id = await read_int(reader)
                 buf_idx = msg_id % self.num_buffers
+                channel_kind = ProfileChannelType.UNKNOWN
 
                 if msg == Command.TX_SHM.value:
+                    channel_kind = ProfileChannelType.SHM
                     shm_name = await read_str(reader)
 
                     if self.shm is not None and self.shm.name != shm_name:
@@ -285,6 +290,7 @@ class Channel:
                     self.cache.put_from_mem(self.shm[buf_idx])
 
                 elif msg == Command.TX_TCP.value:
+                    channel_kind = ProfileChannelType.TCP
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
                     assert MessageMarshal.msg_id(obj_bytes) == msg_id
@@ -292,6 +298,8 @@ class Channel:
 
                 else:
                     raise ValueError(f"unimplemented data telemetry: {msg}")
+
+                self._set_channel_kind(channel_kind)
 
                 if not self._notify_clients(msg_id):
                     # Nobody is listening; need to ack!
@@ -309,6 +317,22 @@ class Channel:
             await close_stream_writer(self._pub_writer)
 
             logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+
+    def _set_channel_kind(self, kind: ProfileChannelType) -> None:
+        if self._channel_kind == ProfileChannelType.UNKNOWN:
+            self._channel_kind = kind
+        elif self._channel_kind != kind:
+            logger.warning(
+                "Channel %s observed channel kind change: %s -> %s",
+                self.id,
+                self._channel_kind.value,
+                kind.value,
+            )
+            self._channel_kind = kind
+
+    @property
+    def channel_kind(self) -> ProfileChannelType:
+        return self._channel_kind
 
     def _notify_clients(self, msg_id: int) -> bool:
         """notify interested clients and return true if any were notified"""
@@ -331,6 +355,7 @@ class Channel:
             )
 
         buf_idx = msg_id % self.num_buffers
+        self._set_channel_kind(ProfileChannelType.LOCAL)
         if self._notify_clients(msg_id):
             self.cache.put_local(msg, msg_id)
             self._local_backpressure.lease(self.id, buf_idx)

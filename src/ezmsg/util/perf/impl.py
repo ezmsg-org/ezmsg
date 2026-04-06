@@ -209,7 +209,8 @@ def fanin(config: ConfigSettings) -> Configuration:
     """many pubs to one sub"""
     connections: ez.NetworkDefinition = [(config.source.OUTPUT, config.sink.INPUT)]
     pubs = [LoadTestSource(config.settings) for _ in range(config.n_clients)]
-    expected_num_msgs = config.sink.SETTINGS.num_msgs * len(pubs)
+    total_publishers = 1 + len(pubs)
+    expected_num_msgs = config.sink.SETTINGS.num_msgs * total_publishers
     config.sink.SETTINGS = replace(config.sink.SETTINGS, num_msgs=expected_num_msgs)  # type: ignore
     for pub in pubs:
         connections.append((pub.OUTPUT, config.sink.INPUT))
