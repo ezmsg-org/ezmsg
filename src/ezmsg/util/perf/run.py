@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -14,20 +16,10 @@ from pathlib import Path
 import ezmsg.core as ez
 from ezmsg.core.graphserver import GraphServer
 
-from ..messagecodec import MessageEncoder
-from .envinfo import TestEnvironmentInfo
-from .util import warmup
-from .impl import (
-    TestParameters,
-    TestLogEntry,
-    perform_test,
-    Communication,
-    CONFIGS,
-)
-
 DEFAULT_MSG_SIZES = [2**4, 2**20]
 DEFAULT_N_CLIENTS = [1, 16]
-DEFAULT_COMMS = [c for c in Communication]
+DEFAULT_COMMS = ["local", "shm", "tcp", "shm_spread", "tcp_spread"]
+DEFAULT_CONFIGS = ["fanin", "fanout", "relay"]
 
 
 # --- Output Suppression Context Manager ---
@@ -103,6 +95,18 @@ def output_paths_for_name(name: str) -> tuple[Path, Path]:
     return Path(f"perf_{name}.txt"), Path(f"report_{name}.html")
 
 
+def warmup(*args, **kwargs):
+    from .util import warmup as _warmup
+
+    return _warmup(*args, **kwargs)
+
+
+def perform_test(**kwargs):
+    from .impl import perform_test as _perform_test
+
+    return _perform_test(**kwargs)
+
+
 def benchmark(
     max_duration: float,
     num_msgs: int,
@@ -118,6 +122,10 @@ def benchmark(
     name: str | None = None,
     open_browser: bool = True,
 ) -> tuple[Path, Path | None]:
+    from ..messagecodec import MessageEncoder
+    from .envinfo import TestEnvironmentInfo
+    from .impl import Communication, CONFIGS, TestLogEntry, TestParameters
+
     if n_clients is None:
         n_clients = DEFAULT_N_CLIENTS
     if any(c < 0 for c in n_clients):
@@ -339,7 +347,7 @@ def setup_benchmark_cmdline(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         default=None,
         nargs="*",
-        help=f"communication strategies to test (default = {[c.value for c in DEFAULT_COMMS]})",
+        help=f"communication strategies to test (default = {DEFAULT_COMMS})",
     )
 
     p_run.add_argument(
@@ -347,7 +355,7 @@ def setup_benchmark_cmdline(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         default=None,
         nargs="*",
-        help=f"configurations to test (default = {[c for c in CONFIGS]})",
+        help=f"configurations to test (default = {DEFAULT_CONFIGS})",
     )
 
     p_run.add_argument(

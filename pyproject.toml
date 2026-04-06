@@ -52,6 +52,9 @@ docs = [
 axisarray = [
     "numpy>=2.2.6",
 ]
+perf = [
+  "xarray",
+]
 
 [project.scripts]
 ezmsg = "ezmsg.core.command:cmdline"

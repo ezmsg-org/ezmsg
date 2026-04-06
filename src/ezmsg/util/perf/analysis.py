@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import dataclasses
 import html
@@ -6,25 +8,43 @@ import math
 import webbrowser
 
 from pathlib import Path
-
-from ..messagecodec import MessageDecoder
-from .envinfo import TestEnvironmentInfo, format_env_diff
-from .impl import Metrics, TestLogEntry, TestParameters
+from typing import TYPE_CHECKING, Any
 
 import ezmsg.core as ez
 
-try:
-    import xarray as xr
-    import pandas as pd  # xarray depends on pandas
-except ImportError:
-    ez.logger.error("ezmsg perf analysis requires xarray")
-    raise
-
-try:
+if TYPE_CHECKING:
     import numpy as np
-except ImportError:
-    ez.logger.error("ezmsg perf analysis requires numpy")
-    raise
+    import pandas as pd
+    import xarray as xr
+    from .envinfo import TestEnvironmentInfo
+
+xr: Any | None = None
+pd: Any | None = None
+np: Any | None = None
+
+
+def _load_analysis_dependencies() -> tuple[Any, Any, Any]:
+    global xr, pd, np
+
+    if xr is None or pd is None:
+        try:
+            import xarray as _xr
+            import pandas as _pd  # xarray depends on pandas
+        except ImportError:
+            ez.logger.error("ezmsg perf analysis requires xarray")
+            raise
+        xr = _xr
+        pd = _pd
+
+    if np is None:
+        try:
+            import numpy as _np
+        except ImportError:
+            ez.logger.error("ezmsg perf analysis requires numpy")
+            raise
+        np = _np
+
+    return xr, pd, np
 
 TEST_DESCRIPTION = """
 Configurations (config):
@@ -112,7 +132,12 @@ class ReportBundle:
 
 
 def load_perf(perf: Path) -> xr.Dataset:
-    all_results: dict[TestParameters, dict[int, list[Metrics]]] = dict()
+    xr, _, np = _load_analysis_dependencies()
+    from ..messagecodec import MessageDecoder
+    from .envinfo import TestEnvironmentInfo
+    from .impl import Metrics, TestLogEntry
+
+    all_results: dict[Any, dict[int, list[Any]]] = dict()
     run_idx = 0
 
     with open(perf, "r") as perf_f:
@@ -326,6 +351,9 @@ def _terminal_delta_summary(
 
 
 def build_report_bundle(perf_path: Path, baseline_path: Path | None = None) -> ReportBundle:
+    _load_analysis_dependencies()
+    from .envinfo import format_env_diff
+
     candidate = load_perf(perf_path)
     info: TestEnvironmentInfo = candidate.attrs["info"]
     candidate_frame = _display_frame(_frame_from_dataset(candidate), relative=False)
