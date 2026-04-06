@@ -74,6 +74,38 @@ def test_perf_compare_subparser_accepts_baseline_args():
     assert args.no_browser is True
 
 
+def test_perf_ab_subparser_accepts_manual_env_args():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "perf",
+            "ab",
+            "--dir-a",
+            "/tmp/a",
+            "--dir-b",
+            "/tmp/b",
+            "--env-mode",
+            "existing",
+            "--env",
+            "FOO=bar",
+            "--env-a",
+            "ONLY_A=1",
+            "--python-b",
+            "/tmp/b/.venv/bin/python",
+        ]
+    )
+
+    assert args.command == "perf"
+    assert args.perf_command == "ab"
+    assert str(args.dir_a) == "/tmp/a"
+    assert str(args.dir_b) == "/tmp/b"
+    assert args.env_mode == "existing"
+    assert args.env == ["FOO=bar"]
+    assert args.env_a == ["ONLY_A=1"]
+    assert args.python_b == "/tmp/b/.venv/bin/python"
+
+
 def test_graphviz_subparser_rejects_mermaid_only_args():
     parser = build_parser()
 
