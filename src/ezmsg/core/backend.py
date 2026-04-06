@@ -667,7 +667,6 @@ class GraphRunner:
             force_single_process=self._force_single_process, wait_for_ready=False
         ):
             return
-        self._started = True
         self._run_main_process()
 
     def _initialize(self, force_single_process: bool, wait_for_ready: bool) -> bool:
@@ -767,11 +766,12 @@ class GraphRunner:
         if self._execution_context is None or self._loop is None:
             return
         self._main_process = self._execution_context.processes[0]
-        self._start_processes(self._execution_context.processes[1:])
 
         interrupts = 0
         forced_sigint = False
         try:
+            self._start_processes(self._execution_context.processes[1:])
+            self._started = True
             self._main_process.process(self._loop)
             self._join_spawned_processes()
             logger.info("All processes exited normally")
