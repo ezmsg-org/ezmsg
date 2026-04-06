@@ -2,19 +2,20 @@ import argparse
 import sys
 
 from .ab import setup_ab_cmdline
-from .analysis import setup_summary_cmdline
+from .analysis import setup_compare_cmdline, setup_report_cmdline
 from .hotpath import setup_hotpath_cmdline
-from .run import setup_run_cmdline
+from .run import setup_benchmark_cmdline
 
 
 def setup_perf_cmdline(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("perf", help="performance test utilities")
     perf_subparsers = parser.add_subparsers(dest="perf_command", required=True)
 
-    setup_run_cmdline(perf_subparsers)
+    setup_benchmark_cmdline(perf_subparsers)
+    setup_report_cmdline(perf_subparsers)
+    setup_compare_cmdline(perf_subparsers)
     setup_hotpath_cmdline(perf_subparsers)
     setup_ab_cmdline(perf_subparsers)
-    setup_summary_cmdline(perf_subparsers)
 
 
 def build_parser() -> argparse.ArgumentParser:

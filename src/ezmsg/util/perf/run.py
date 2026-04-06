@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -9,24 +11,15 @@ import time
 
 from datetime import datetime, timedelta
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
+from pathlib import Path
 
 import ezmsg.core as ez
 from ezmsg.core.graphserver import GraphServer
 
-from ..messagecodec import MessageEncoder
-from .envinfo import TestEnvironmentInfo
-from .util import warmup
-from .impl import (
-    TestParameters,
-    TestLogEntry,
-    perform_test,
-    Communication,
-    CONFIGS,
-)
-
 DEFAULT_MSG_SIZES = [2**4, 2**20]
 DEFAULT_N_CLIENTS = [1, 16]
-DEFAULT_COMMS = [c for c in Communication]
+DEFAULT_COMMS = ["local", "shm", "tcp", "shm_spread", "tcp_spread"]
+DEFAULT_CONFIGS = ["fanin", "fanout", "relay"]
 
 
 # --- Output Suppression Context Manager ---
@@ -98,7 +91,23 @@ def get_datestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-def perf_run(
+def output_paths_for_name(name: str) -> tuple[Path, Path]:
+    return Path(f"perf_{name}.txt"), Path(f"report_{name}.html")
+
+
+def warmup(*args, **kwargs):
+    from .util import warmup as _warmup
+
+    return _warmup(*args, **kwargs)
+
+
+def perform_test(**kwargs):
+    from .impl import perform_test as _perform_test
+
+    return _perform_test(**kwargs)
+
+
+def benchmark(
     max_duration: float,
     num_msgs: int,
     num_buffers: int,
@@ -110,17 +119,24 @@ def perf_run(
     configs: typing.Iterable[str] | None,
     grid: bool,
     warmup_dur: float,
-) -> None:
+    name: str | None = None,
+    open_browser: bool = True,
+) -> tuple[Path, Path | None]:
+    from ..messagecodec import MessageEncoder
+    from .envinfo import TestEnvironmentInfo
+    from .impl import Communication, CONFIGS, TestLogEntry, TestParameters
+
     if n_clients is None:
         n_clients = DEFAULT_N_CLIENTS
     if any(c < 0 for c in n_clients):
         ez.logger.error("All tests must have >=0 clients")
-        return
+        raise ValueError("All tests must have >=0 clients")
 
     if msg_sizes is None:
         msg_sizes = DEFAULT_MSG_SIZES
     if any(s < 0 for s in msg_sizes):
         ez.logger.error("All msg_sizes must be >=0 bytes")
+        raise ValueError("All msg_sizes must be >=0 bytes")
 
     if not grid and len(list(n_clients)) != len(list(msg_sizes)):
         ez.logger.warning(
@@ -136,7 +152,7 @@ def perf_run(
         ez.logger.error(
             f"Invalid test communications requested. Valid communications: {', '.join([c.value for c in Communication])}"
         )
-        return
+        raise ValueError("Invalid test communications requested")
 
     try:
         configurators = (
@@ -146,7 +162,7 @@ def perf_run(
         ez.logger.error(
             f"Invalid test configuration requested. Valid configurations: {', '.join([c for c in CONFIGS])}"
         )
-        return
+        raise ValueError("Invalid test configuration requested")
 
     subitr = itertools.product if grid else zip
 
@@ -177,12 +193,17 @@ def perf_run(
     quitting = False
 
     start_time = time.time()
+    if name is not None:
+        output_path, html_out = output_paths_for_name(name)
+    else:
+        output_path = Path(f"perf_{get_datestamp()}.txt")
+        html_out = None
 
     try:
         ez.logger.info(f"Warming up for {warmup_dur} seconds...")
         warmup(warmup_dur)
 
-        with open(f"perf_{get_datestamp()}.txt", "w") as out_f:
+        with open(output_path, "w") as out_f:
             for _ in range(repeats):
                 out_f.write(
                     json.dumps(TestEnvironmentInfo(), cls=MessageEncoder) + "\n"
@@ -235,9 +256,25 @@ def perf_run(
         )
         ez.logger.info(f"Tests concluded.  Wallclock Runtime: {dur_str}s")
 
+    html_path = None
+    try:
+        from .analysis import write_html_report
 
-def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
-    p_run = subparsers.add_parser("run", help="run performance test")
+        html_path = write_html_report(
+            perf_path=output_path,
+            output_path=html_out,
+            open_browser=open_browser,
+        )
+        ez.logger.info(f"Wrote benchmark log to {output_path}")
+        ez.logger.info(f"Wrote benchmark report to {html_path}")
+    except ImportError:
+        ez.logger.warning("Could not generate benchmark HTML report; analysis dependencies are unavailable.")
+
+    return output_path, html_path
+
+
+def setup_benchmark_cmdline(subparsers: argparse._SubParsersAction) -> None:
+    p_run = subparsers.add_parser("benchmark", help="run the legacy benchmark matrix")
 
     p_run.add_argument(
         "--max-duration",
@@ -310,7 +347,7 @@ def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         default=None,
         nargs="*",
-        help=f"communication strategies to test (default = {[c.value for c in DEFAULT_COMMS]})",
+        help=f"communication strategies to test (default = {DEFAULT_COMMS})",
     )
 
     p_run.add_argument(
@@ -318,7 +355,7 @@ def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         default=None,
         nargs="*",
-        help=f"configurations to test (default = {[c for c in CONFIGS]})",
+        help=f"configurations to test (default = {DEFAULT_CONFIGS})",
     )
 
     p_run.add_argument(
@@ -328,8 +365,21 @@ def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
         help="warmup CPU with busy task for some number of seconds (default = 60.0)",
     )
 
+    p_run.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="optional short name used for perf_<name>.txt and report_<name>.html",
+    )
+
+    p_run.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="write the generated HTML report without opening it in a browser",
+    )
+
     p_run.set_defaults(
-        _handler=lambda ns: perf_run(
+        _handler=lambda ns: benchmark(
             max_duration=ns.max_duration,
             num_msgs=ns.num_msgs,
             num_buffers=ns.num_buffers,
@@ -341,5 +391,7 @@ def setup_run_cmdline(subparsers: argparse._SubParsersAction) -> None:
             configs=ns.configs,
             grid=True,
             warmup_dur=ns.warmup,
+            name=ns.name,
+            open_browser=not ns.no_browser,
         )
     )
