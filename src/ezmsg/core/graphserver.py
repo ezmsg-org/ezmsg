@@ -4,17 +4,46 @@ import pickle
 import os
 import socket
 import threading
+import time
+from collections import deque
+from collections.abc import Sequence
 from contextlib import suppress
 from uuid import UUID, uuid1
+from dataclasses import dataclass
 
 
 from . import __version__
 from .dag import DAG, CyclicException
 from .graph_util import get_compactified_graph, graph_string, prune_graph_connections
+from .graphmeta import (
+    Edge,
+    ProcessControlOperation,
+    ProcessControlErrorCode,
+    GraphMetadata,
+    GraphSnapshot,
+    ProcessProfilingTraceBatch,
+    ProfilingTraceSample,
+    ProfilingTraceStreamBatch,
+    ProfilingStreamControl,
+    ProcessControlRequest,
+    ProcessControlResponse,
+    ProcessRegistration,
+    ProcessOwnershipUpdate,
+    ProcessSettingsUpdate,
+    SettingsChangedEvent,
+    SettingsEventType,
+    SettingsSnapshotValue,
+    TopologyChangedEvent,
+    TopologyEventType,
+    SnapshotProcess,
+    SnapshotSession,
+)
 from .netprotocol import (
     Address,
     Command,
     ClientInfo,
+    ProcessInfo,
+    SessionInfo,
     SubscriberInfo,
     PublisherInfo,
     ChannelInfo,
@@ -35,6 +64,30 @@ from .netprotocol import (
 from .shm import SHMContext, SHMInfo
 
 logger = logging.getLogger("ezmsg")
+PERSISTENT_EDGE_OWNER = None
+SUBSCRIBER_UPDATE_TIMEOUT_SEC = float(
+    os.environ.get("EZMSG_SUBSCRIBER_UPDATE_TIMEOUT_SEC", "1.0")
+)
+
+
+@dataclass
+class _SettingsState:
+    value: SettingsSnapshotValue
+    metadata_session_id: UUID | None
+    source_process_id: UUID | None
+
+
+@dataclass(frozen=True)
+class _RetentionPolicy:
+    profiling_trace_buffer_limit: int = int(
+        os.environ.get("EZMSG_PROFILE_TRACE_BUFFER_LIMIT", "200000")
+    )
+    settings_event_history_limit: int = int(
+        os.environ.get("EZMSG_SETTINGS_EVENT_HISTORY_LIMIT", "10000")
+    )
+    topology_event_history_limit: int = int(
+        os.environ.get("EZMSG_TOPOLOGY_EVENT_HISTORY_LIMIT", "10000")
+    )
 
 
 class GraphServer(threading.Thread):
@@ -65,6 +118,21 @@ class GraphServer(threading.Thread):
 
     _client_tasks: dict[UUID, "asyncio.Task[None]"]
     _command_lock: asyncio.Lock
+    _settings_state: dict[str, _SettingsState]
+    _settings_events: list[SettingsChangedEvent]
+    _settings_event_seq: int
+    _settings_owned_by_session: dict[UUID, set[str]]
+    _settings_subscribers: dict[UUID, asyncio.Queue[object]]
+    _topology_events: list[TopologyChangedEvent]
+    _topology_event_seq: int
+    _topology_subscribers: dict[UUID, asyncio.Queue[object]]
+    _pending_process_requests: dict[
+        str, tuple[UUID, "asyncio.Future[ProcessControlResponse]"]
+    ]
+    _profiling_trace_buffers: dict[UUID, deque[tuple[int, ProfilingTraceSample]]]
+    _profiling_trace_process_meta: dict[UUID, tuple[int, str]]
+    _profiling_trace_seq: dict[UUID, int]
+    _retention_policy: _RetentionPolicy
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
@@ -80,6 +148,19 @@ class GraphServer(threading.Thread):
         self._client_tasks = {}
         self.shms = {}
         self._address = None
+        self._settings_state = {}
+        self._settings_events = []
+        self._settings_event_seq = 0
+        self._settings_owned_by_session = {}
+        self._settings_subscribers = {}
+        self._topology_events = []
+        self._topology_event_seq = 0
+        self._topology_subscribers = {}
+        self._pending_process_requests = {}
+        self._profiling_trace_buffers = {}
+        self._profiling_trace_process_meta = {}
+        self._profiling_trace_seq = {}
+        self._retention_policy = _RetentionPolicy()
 
     @property
     def address(self) -> Address:
@@ -261,6 +342,85 @@ class GraphServer(threading.Thread):
                 # to avoid closing writer
                 return
 
+            elif req == Command.SESSION.value:
+                session_id = uuid1()
+                self.clients[session_id] = SessionInfo(session_id, writer)
+                writer.write(encode_str(str(session_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[session_id] = asyncio.create_task(
+                    self._handle_session(session_id, reader, writer)
+                )
+
+                # NOTE: Created a session client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.SESSION_SETTINGS_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                after_seq = int(await read_str(reader))
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_settings_subscriber(
+                        subscriber_id, after_seq, reader, writer
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.SESSION_TOPOLOGY_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                after_seq = int(await read_str(reader))
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_topology_subscriber(
+                        subscriber_id, after_seq, reader, writer
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.SESSION_PROFILING_SUBSCRIBE.value:
+                subscriber_id = uuid1()
+                stream_control = await self._read_profiling_stream_control(reader)
+                writer.write(encode_str(str(subscriber_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[subscriber_id] = asyncio.create_task(
+                    self._handle_profiling_subscriber(
+                        subscriber_id,
+                        stream_control,
+                        reader,
+                        writer,
+                    )
+                )
+
+                # NOTE: Created a stream client, must return early
+                # to avoid closing writer
+                return
+
+            elif req == Command.PROCESS.value:
+                process_client_id = uuid1()
+                self.clients[process_client_id] = ProcessInfo(process_client_id, writer)
+                writer.write(encode_str(str(process_client_id)))
+                writer.write(Command.COMPLETE.value)
+                await writer.drain()
+                self._client_tasks[process_client_id] = asyncio.create_task(
+                    self._handle_process(process_client_id, reader, writer)
+                )
+
+                # NOTE: Created a process control client, must return early
+                # to avoid closing writer
+                return
+
             else:
                 # We only want to handle one command at a time
                 async with self._command_lock:
@@ -302,23 +462,31 @@ class GraphServer(threading.Thread):
                     elif req in [Command.CONNECT.value, Command.DISCONNECT.value]:
                         from_topic = await read_str(reader)
                         to_topic = await read_str(reader)
-
-                        cmd = self.graph.add_edge
-                        if req == Command.DISCONNECT.value:
-                            cmd = self.graph.remove_edge
+                        topology_changed = False
 
                         try:
-                            cmd(from_topic, to_topic)
-                            for sub in self._downstream_subs(to_topic):
-                                await self._notify_subscriber(sub)
+                            if req == Command.CONNECT.value:
+                                topology_changed = self._connect_owner(
+                                    from_topic, to_topic, PERSISTENT_EDGE_OWNER
+                                )
+                            else:
+                                topology_changed = self._disconnect_owner(
+                                    from_topic, to_topic, PERSISTENT_EDGE_OWNER
+                                )
                             writer.write(Command.COMPLETE.value)
                         except CyclicException:
                             writer.write(Command.CYCLIC.value)
 
-                        await writer.drain()
+                        if topology_changed:
+                            self._append_topology_event_locked(
+                                event_type=TopologyEventType.GRAPH_CHANGED,
+                                changed_topics=[to_topic],
+                                source_session_id=None,
+                                source_process_id=None,
+                            )
+                            await self._notify_downstream_for_topic(to_topic)
 
-                        if req == Command.DISCONNECT.value:
-                            await close_stream_writer(writer)
+                        await writer.drain()
 
                     elif req == Command.SYNC.value:
                         for pub in self._publishers():
@@ -393,10 +561,1177 @@ class GraphServer(threading.Thread):
 
         finally:
             # Ensure any waiter on this client unblocks
-            # with suppress(Exception):
             self.clients[client_id].set_sync()
             self.clients.pop(client_id, None)
             await close_stream_writer(writer)
+
+    async def _handle_session(
+        self,
+        session_id: UUID,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        logger.debug(f"Graph Server: Session connected: {session_id}")
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req in [
+                    Command.SESSION_CONNECT.value,
+                    Command.SESSION_DISCONNECT.value,
+                ]:
+                    response = await self._handle_session_edge_request(
+                        session_id, req, reader
+                    )
+                    writer.write(response)
+                    await writer.drain()
+
+                elif req == Command.SESSION_CLEAR.value:
+                    response = await self._handle_session_clear_request(session_id)
+                    writer.write(response)
+                    await writer.drain()
+
+                elif req == Command.SESSION_REGISTER.value:
+                    response = await self._handle_session_register_request(
+                        session_id, reader
+                    )
+                    writer.write(response)
+                    await writer.drain()
+
+                elif req == Command.SESSION_SNAPSHOT.value:
+                    await self._handle_session_snapshot_request(writer)
+                    await writer.drain()
+
+                elif req == Command.SESSION_SETTINGS_SNAPSHOT.value:
+                    await self._handle_session_settings_snapshot_request(writer)
+                    await writer.drain()
+
+                elif req == Command.SESSION_SETTINGS_EVENTS.value:
+                    after_seq = int(await read_str(reader))
+                    await self._handle_session_settings_events_request(
+                        writer, after_seq
+                    )
+                    await writer.drain()
+
+                elif req == Command.SESSION_PROCESS_REQUEST.value:
+                    await self._handle_session_process_request(writer, reader)
+                    await writer.drain()
+
+                else:
+                    logger.warning(
+                        f"Session {session_id} rx unknown command from GraphServer: {req}"
+                    )
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Session {session_id} disconnected from GraphServer: {e}")
+
+        finally:
+            async with self._command_lock:
+                notify_topics = self._drop_session(session_id)
+
+            for topic in notify_topics:
+                await self._notify_downstream_for_topic(topic)
+
+            self._client_tasks.pop(session_id, None)
+            await close_stream_writer(writer)
+
+    def _process_info(self, process_client_id: UUID) -> ProcessInfo | None:
+        info = self.clients.get(process_client_id)
+        if isinstance(info, ProcessInfo):
+            return info
+        return None
+
+    def _process_key(self, process_client_id: UUID) -> UUID:
+        return process_client_id
+
+    async def _handle_process(
+        self,
+        process_client_id: UUID,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        logger.debug(f"Graph Server: Process control connected: {process_client_id}")
+
+        try:
+            while True:
+                req = await reader.read(1)
+
+                if not req:
+                    break
+
+                if req == Command.PROCESS_REGISTER.value:
+                    response = await self._handle_process_register_request(
+                        process_client_id, reader
+                    )
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
+
+                elif req == Command.PROCESS_UPDATE_OWNERSHIP.value:
+                    response = await self._handle_process_update_ownership_request(
+                        process_client_id, reader
+                    )
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
+
+                elif req == Command.PROCESS_SETTINGS_UPDATE.value:
+                    response = await self._handle_process_settings_update_request(
+                        process_client_id, reader
+                    )
+                    await self._write_process_response(
+                        process_client_id, writer, response
+                    )
+
+                elif req == Command.PROCESS_PROFILING_TRACE_UPDATE.value:
+                    await self._handle_process_profiling_trace_update_request(
+                        process_client_id, reader
+                    )
+
+                elif req == Command.PROCESS_ROUTE_RESPONSE.value:
+                    await self._handle_process_route_response_request(
+                        process_client_id, reader
+                    )
+
+                else:
+                    logger.warning(
+                        f"Process control {process_client_id} rx unknown command: {req}"
+                    )
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(
+                f"Process control {process_client_id} disconnected from GraphServer: {e}"
+            )
+
+        finally:
+            process_info = self._process_info(process_client_id)
+
+            async with self._command_lock:
+                request_ids = [
+                    request_id
+                    for request_id, (owner_process_id, _) in self._pending_process_requests.items()
+                    if owner_process_id == process_client_id
+                ]
+                for request_id in request_ids:
+                    pending = self._pending_process_requests.pop(request_id, None)
+                    if pending is None:
+                        continue
+                    _, response_fut = pending
+                    if not response_fut.done():
+                        response_fut.set_result(
+                            ProcessControlResponse(
+                                request_id=request_id,
+                                ok=False,
+                                error="Owning process disconnected before response",
+                                error_code=ProcessControlErrorCode.PROCESS_DISCONNECTED,
+                                process_id=self._process_key(process_client_id),
+                            )
+                        )
+                self._remove_settings_for_process_locked(process_client_id)
+                if process_info is not None:
+                    source_process_id = self._process_key(process_client_id)
+                    self._profiling_trace_buffers.pop(source_process_id, None)
+                    self._profiling_trace_process_meta.pop(source_process_id, None)
+                    self._profiling_trace_seq.pop(source_process_id, None)
+                    self._append_topology_event_locked(
+                        event_type=TopologyEventType.PROCESS_CHANGED,
+                        changed_topics=[],
+                        source_session_id=None,
+                        source_process_id=source_process_id,
+                    )
+                self.clients.pop(process_client_id, None)
+            self._client_tasks.pop(process_client_id, None)
+            await close_stream_writer(writer)
+
+    async def _write_process_response(
+        self,
+        process_client_id: UUID,
+        fallback_writer: asyncio.StreamWriter,
+        response: bytes,
+    ) -> None:
+        process_info = self._process_info(process_client_id)
+        if process_info is None:
+            fallback_writer.write(response)
+            await fallback_writer.drain()
+            return
+
+        async with process_info.write_lock:
+            writer = process_info.writer
+            writer.write(response)
+            await writer.drain()
+
+    async def _read_pickled_payload(self, reader: asyncio.StreamReader) -> object:
+        payload_size = await read_int(reader)
+        payload = await reader.readexactly(payload_size)
+        return pickle.loads(payload)
+
+    async def _read_typed_payload(
+        self,
+        reader: asyncio.StreamReader,
+        expected_type: type[object],
+        *,
+        log_prefix: str,
+    ) -> object | None:
+        try:
+            payload_obj = await self._read_pickled_payload(reader)
+            if not isinstance(payload_obj, expected_type):
+                raise RuntimeError(
+                    f"payload was not {expected_type.__name__}: {type(payload_obj).__name__}"
+                )
+            return payload_obj
+        except Exception as exc:
+            logger.warning("%s parse failed; ignoring payload: %s", log_prefix, exc)
+            return None
+
+    def _queue_stream_event(
+        self,
+        queue: asyncio.Queue[object],
+        event: object,
+    ) -> None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Keep most recent samples under backpressure.
+            with suppress(asyncio.QueueEmpty):
+                queue.get_nowait()
+            with suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
+
+    async def _stream_sender(
+        self,
+        subscriber_id: UUID,
+        queue: asyncio.Queue[object],
+        writer: asyncio.StreamWriter,
+        label: str,
+    ) -> None:
+        try:
+            while True:
+                event = await queue.get()
+                payload = pickle.dumps(event)
+                writer.write(uint64_to_bytes(len(payload)))
+                writer.write(payload)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(f"{label} subscriber {subscriber_id} disconnected on send")
+        except asyncio.CancelledError:
+            raise
+
+    async def _handle_event_subscriber(
+        self,
+        *,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        queue: asyncio.Queue[object],
+        subscribers: dict[UUID, asyncio.Queue[object]],
+        events: Sequence[object],
+        label: str,
+    ) -> None:
+        async with self._command_lock:
+            subscribers[subscriber_id] = queue
+            for event in events:
+                if getattr(event, "seq", 0) > after_seq:
+                    self._queue_stream_event(queue, event)
+
+        sender_task = asyncio.create_task(
+            self._stream_sender(subscriber_id, queue, writer, label),
+            name=f"{label}-sender-{subscriber_id}",
+        )
+
+        try:
+            while True:
+                req = await reader.read(1)
+                if not req:
+                    break
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"{label} subscriber {subscriber_id} disconnected: {e}")
+        finally:
+            async with self._command_lock:
+                subscribers.pop(subscriber_id, None)
+            self._client_tasks.pop(subscriber_id, None)
+            sender_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sender_task
+            await close_stream_writer(writer)
+
+    async def _handle_settings_subscriber(
+        self,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1024)
+        await self._handle_event_subscriber(
+            subscriber_id=subscriber_id,
+            after_seq=after_seq,
+            reader=reader,
+            writer=writer,
+            queue=queue,
+            subscribers=self._settings_subscribers,
+            events=self._settings_events,
+            label="settings",
+        )
+
+    async def _handle_topology_subscriber(
+        self,
+        subscriber_id: UUID,
+        after_seq: int,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1024)
+        await self._handle_event_subscriber(
+            subscriber_id=subscriber_id,
+            after_seq=after_seq,
+            reader=reader,
+            writer=writer,
+            queue=queue,
+            subscribers=self._topology_subscribers,
+            events=self._topology_events,
+            label="topology",
+        )
+
+    async def _read_profiling_stream_control(
+        self, reader: asyncio.StreamReader
+    ) -> ProfilingStreamControl:
+        payload_obj = await self._read_pickled_payload(reader)
+        if not isinstance(payload_obj, ProfilingStreamControl):
+            raise RuntimeError(
+                "Invalid profiling stream control payload type: "
+                f"{type(payload_obj).__name__}"
+            )
+        return payload_obj
+
+    async def _collect_profiling_trace_stream_batch(
+        self,
+        *,
+        stream_control: ProfilingStreamControl,
+        last_seq_by_process: dict[UUID, int],
+    ) -> ProfilingTraceStreamBatch:
+        process_ids_filter = (
+            set(stream_control.process_ids)
+            if stream_control.process_ids is not None
+            else None
+        )
+        max_samples = max(1, int(stream_control.max_samples))
+        now_ts = time.time()
+        batches: dict[UUID, ProcessProfilingTraceBatch] = {}
+
+        async with self._command_lock:
+            connected_processes: dict[UUID, tuple[int, str]] = {}
+            for client_id, info in self.clients.items():
+                if not isinstance(info, ProcessInfo):
+                    continue
+                process_id = self._process_key(client_id)
+                pid = info.pid if info.pid is not None else -1
+                host = info.host if info.host is not None else ""
+                connected_processes[process_id] = (pid, host)
+
+            process_ids: list[UUID]
+            if process_ids_filter is not None:
+                process_ids = sorted(process_ids_filter, key=str)
+            else:
+                process_ids = sorted(connected_processes.keys(), key=str)
+
+            for process_id in process_ids:
+                sample_buffer = self._profiling_trace_buffers.get(process_id)
+                samples: list[ProfilingTraceSample] = []
+                if sample_buffer:
+                    last_seq = last_seq_by_process.get(process_id, 0)
+                    oldest_seq = sample_buffer[0][0]
+                    if last_seq < oldest_seq - 1:
+                        last_seq = oldest_seq - 1
+                    for seq, sample in sample_buffer:
+                        if seq <= last_seq:
+                            continue
+                        samples.append(sample)
+                        last_seq = seq
+                        if len(samples) >= max_samples:
+                            break
+                    last_seq_by_process[process_id] = last_seq
+
+                if len(samples) == 0 and not stream_control.include_empty_batches:
+                    continue
+
+                pid, host = connected_processes.get(
+                    process_id,
+                    self._profiling_trace_process_meta.get(process_id, (-1, "")),
+                )
+                batches[process_id] = ProcessProfilingTraceBatch(
+                    process_id=process_id,
+                    pid=pid,
+                    host=host,
+                    timestamp=now_ts,
+                    samples=samples,
+                )
+
+        return ProfilingTraceStreamBatch(timestamp=now_ts, batches=batches)
+
+    async def _handle_profiling_subscriber(
+        self,
+        subscriber_id: UUID,
+        stream_control: ProfilingStreamControl,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        interval = max(0.01, float(stream_control.interval))
+        last_seq_by_process: dict[UUID, int] = {}
+        try:
+            while True:
+                try:
+                    req = await asyncio.wait_for(reader.read(1), timeout=interval)
+                    if not req:
+                        break
+                    # No control commands currently supported on this stream.
+                    continue
+                except asyncio.TimeoutError:
+                    pass
+
+                batch = await self._collect_profiling_trace_stream_batch(
+                    stream_control=stream_control,
+                    last_seq_by_process=last_seq_by_process,
+                )
+                if len(batch.batches) == 0:
+                    continue
+
+                payload = pickle.dumps(batch)
+                writer.write(uint64_to_bytes(len(payload)))
+                writer.write(payload)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.debug(f"Profiling subscriber {subscriber_id} disconnected: {e}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Profiling subscriber %s failed: %s",
+                subscriber_id,
+                exc,
+            )
+        finally:
+            self._client_tasks.pop(subscriber_id, None)
+            await close_stream_writer(writer)
+
+    async def _handle_process_profiling_trace_update_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> None:
+        batch = await self._read_typed_payload(
+            reader,
+            ProcessProfilingTraceBatch,
+            log_prefix=f"Process control {process_client_id} trace update",
+        )
+        if batch is None:
+            return
+
+        async with self._command_lock:
+            process_id = self._process_key(process_client_id)
+            trace_buffer = self._profiling_trace_buffers.setdefault(
+                process_id,
+                deque(maxlen=self._retention_policy.profiling_trace_buffer_limit),
+            )
+            next_seq = self._profiling_trace_seq.get(process_id, 0)
+            for sample in batch.samples:
+                next_seq += 1
+                trace_buffer.append((next_seq, sample))
+            self._profiling_trace_seq[process_id] = next_seq
+            self._profiling_trace_process_meta[process_id] = (batch.pid, batch.host)
+
+    async def _handle_process_register_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        registration = await self._read_typed_payload(
+            reader,
+            ProcessRegistration,
+            log_prefix=f"Process control {process_client_id} registration",
+        )
+        if registration is None:
+            return Command.ERROR.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.ERROR.value
+
+            conflicts = sorted(
+                {
+                    unit
+                    for unit in set(registration.units)
+                    if (
+                        (owner := self._process_owner_for_unit(unit)) is not None
+                        and owner != process_client_id
+                    )
+                }
+            )
+            if conflicts:
+                logger.warning(
+                    "Process control %s register rejected due to unit ownership conflict(s): %s",
+                    process_client_id,
+                    ", ".join(conflicts),
+                )
+                return Command.ERROR.value
+
+            prev_units = set(process_info.units)
+            process_info.pid = registration.pid
+            process_info.host = registration.host
+            process_info.units = set(registration.units)
+            if prev_units != process_info.units:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.PROCESS_CHANGED,
+                    changed_topics=[],
+                    source_session_id=None,
+                    source_process_id=self._process_key(process_client_id),
+                )
+
+        return Command.COMPLETE.value
+
+    async def _handle_process_update_ownership_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        update = await self._read_typed_payload(
+            reader,
+            ProcessOwnershipUpdate,
+            log_prefix=f"Process control {process_client_id} ownership update",
+        )
+        if update is None:
+            return Command.ERROR.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.ERROR.value
+
+            conflicts = sorted(
+                {
+                    unit
+                    for unit in set(update.added_units)
+                    if (
+                        (owner := self._process_owner_for_unit(unit)) is not None
+                        and owner != process_client_id
+                    )
+                }
+            )
+            if conflicts:
+                logger.warning(
+                    "Process control %s ownership update rejected due to unit ownership conflict(s): %s",
+                    process_client_id,
+                    ", ".join(conflicts),
+                )
+                return Command.ERROR.value
+
+            prev_units = set(process_info.units)
+            process_info.units.update(update.added_units)
+            process_info.units.difference_update(update.removed_units)
+            if prev_units != process_info.units:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.PROCESS_CHANGED,
+                    changed_topics=[],
+                    source_session_id=None,
+                    source_process_id=self._process_key(process_client_id),
+                )
+
+        return Command.COMPLETE.value
+
+    async def _handle_process_settings_update_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        update = await self._read_typed_payload(
+            reader,
+            ProcessSettingsUpdate,
+            log_prefix=f"Process control {process_client_id} settings update",
+        )
+        if update is None:
+            return Command.ERROR.value
+
+        async with self._command_lock:
+            process_info = self._process_info(process_client_id)
+            if process_info is None:
+                return Command.ERROR.value
+            if update.component_address not in process_info.units:
+                logger.warning(
+                    "Process control %s settings update rejected for unowned component: %s",
+                    process_client_id,
+                    update.component_address,
+                )
+                return Command.ERROR.value
+
+            prior_state = self._settings_state.get(update.component_address)
+            metadata_session_id = self._session_owner_for_component_locked(
+                update.component_address
+            )
+            if metadata_session_id is None and prior_state is not None:
+                metadata_session_id = prior_state.metadata_session_id
+
+            source_process_id = self._process_key(process_client_id)
+            self._settings_state[update.component_address] = _SettingsState(
+                value=update.value,
+                metadata_session_id=metadata_session_id,
+                source_process_id=source_process_id,
+            )
+            self._append_settings_event_locked(
+                event_type=SettingsEventType.SETTINGS_UPDATED,
+                component_address=update.component_address,
+                value=update.value,
+                source_session_id=(
+                    str(metadata_session_id) if metadata_session_id is not None else None
+                ),
+                source_process_id=source_process_id,
+                timestamp=update.timestamp,
+            )
+
+        return Command.COMPLETE.value
+
+    async def _handle_process_route_response_request(
+        self, process_client_id: UUID, reader: asyncio.StreamReader
+    ) -> None:
+        response = await self._read_typed_payload(
+            reader,
+            ProcessControlResponse,
+            log_prefix=f"Process control {process_client_id} route response",
+        )
+        if response is None:
+            return
+
+        async with self._command_lock:
+            pending = self._pending_process_requests.pop(response.request_id, None)
+
+        if pending is None:
+            logger.warning(
+                "Process control %s returned unknown request_id: %s",
+                process_client_id,
+                response.request_id,
+            )
+            return
+
+        owner_process_id, response_fut = pending
+        if owner_process_id != process_client_id:
+            if not response_fut.done():
+                response_fut.set_result(
+                    ProcessControlResponse(
+                        request_id=response.request_id,
+                        ok=False,
+                        error=(
+                            "Received response from unexpected process "
+                            f"{process_client_id}; expected {owner_process_id}"
+                        ),
+                        error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                        process_id=response.process_id,
+                    )
+                )
+            return
+
+        if not response_fut.done():
+            response_fut.set_result(response)
+
+    def _process_for_unit(self, unit_address: str) -> ProcessInfo | None:
+        for info in self.clients.values():
+            if isinstance(info, ProcessInfo) and unit_address in info.units:
+                return info
+        return None
+
+    def _process_owner_for_unit(self, unit_address: str) -> UUID | None:
+        for client_id, info in self.clients.items():
+            if isinstance(info, ProcessInfo) and unit_address in info.units:
+                return client_id
+        return None
+
+    def _metadata_collisions(
+        self, session_id: UUID, metadata: GraphMetadata
+    ) -> list[str]:
+        collisions: list[str] = []
+        requested = set(metadata.components.keys())
+        if not requested:
+            return collisions
+        for other_session_id, info in self.clients.items():
+            if other_session_id == session_id or not isinstance(info, SessionInfo):
+                continue
+            if info.metadata is None:
+                continue
+            overlap = requested.intersection(info.metadata.components.keys())
+            collisions.extend(overlap)
+        return sorted(set(collisions))
+
+    async def _route_process_request(
+        self,
+        unit_address: str,
+        operation: str,
+        payload: bytes | None,
+        timeout: float,
+    ) -> ProcessControlResponse:
+        request_id = str(uuid1())
+        response_fut: asyncio.Future[ProcessControlResponse] = (
+            asyncio.get_running_loop().create_future()
+        )
+        request = ProcessControlRequest(
+            request_id=request_id,
+            unit_address=unit_address,
+            operation=operation,
+            payload=payload,
+        )
+
+        async with self._command_lock:
+            process_info = self._process_for_unit(unit_address)
+            if process_info is None:
+                return ProcessControlResponse(
+                    request_id=request_id,
+                    ok=False,
+                    error=f"No process owns unit '{unit_address}'",
+                    error_code=ProcessControlErrorCode.UNROUTABLE_UNIT,
+                )
+
+            self._pending_process_requests[request_id] = (process_info.id, response_fut)
+
+            try:
+                async with process_info.write_lock:
+                    process_writer = process_info.writer
+                    request_bytes = pickle.dumps(request)
+                    process_writer.write(Command.PROCESS_ROUTE_REQUEST.value)
+                    process_writer.write(uint64_to_bytes(len(request_bytes)))
+                    process_writer.write(request_bytes)
+                    await process_writer.drain()
+            except Exception as exc:
+                self._pending_process_requests.pop(request_id, None)
+                return ProcessControlResponse(
+                    request_id=request_id,
+                    ok=False,
+                    error=f"Failed to route request to owning process: {exc}",
+                    error_code=ProcessControlErrorCode.ROUTE_WRITE_FAILED,
+                    process_id=self._process_key(process_info.id),
+                )
+
+        try:
+            return await asyncio.wait_for(response_fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            async with self._command_lock:
+                self._pending_process_requests.pop(request_id, None)
+            return ProcessControlResponse(
+                request_id=request_id,
+                ok=False,
+                error=(
+                    f"Timed out waiting for process response "
+                    f"(unit={unit_address}, operation={operation}, timeout={timeout}s)"
+                ),
+                error_code=ProcessControlErrorCode.TIMEOUT,
+                process_id=self._process_key(process_info.id),
+            )
+
+    async def _handle_session_process_request(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+    ) -> None:
+        unit_address = await read_str(reader)
+        operation = await read_str(reader)
+        timeout = float(await read_str(reader))
+        payload_size = await read_int(reader)
+        payload: bytes | None = None
+        if payload_size > 0:
+            payload = await reader.readexactly(payload_size)
+
+        response = await self._route_process_request(
+            unit_address=unit_address,
+            operation=operation,
+            payload=payload,
+            timeout=timeout,
+        )
+        response_bytes = pickle.dumps(response)
+        writer.write(uint64_to_bytes(len(response_bytes)))
+        writer.write(response_bytes)
+        writer.write(Command.COMPLETE.value)
+
+    def _connect_owner(
+        self, from_topic: str, to_topic: str, owner: UUID | str | None
+    ) -> bool:
+        topology_changed = self.graph.add_edge(from_topic, to_topic, owner=owner)
+        if isinstance(owner, UUID):
+            session = self._session_info(owner)
+            if session is not None:
+                session.edges.add((from_topic, to_topic))
+        return topology_changed
+
+    def _disconnect_owner(
+        self, from_topic: str, to_topic: str, owner: UUID | str | None
+    ) -> bool:
+        topology_changed = self.graph.remove_edge(from_topic, to_topic, owner=owner)
+        if isinstance(owner, UUID):
+            session = self._session_info(owner)
+            if session is not None:
+                session.edges.discard((from_topic, to_topic))
+        return topology_changed
+
+    def _session_info(self, session_id: UUID) -> SessionInfo | None:
+        info = self.clients.get(session_id)
+        if isinstance(info, SessionInfo):
+            return info
+        return None
+
+    def _append_settings_event_locked(
+        self,
+        event_type: SettingsEventType,
+        component_address: str,
+        value: SettingsSnapshotValue,
+        source_session_id: str | None,
+        source_process_id: UUID | None,
+        timestamp: float | None = None,
+    ) -> None:
+        self._settings_event_seq += 1
+        event = SettingsChangedEvent(
+            seq=self._settings_event_seq,
+            event_type=event_type,
+            component_address=component_address,
+            timestamp=timestamp if timestamp is not None else time.time(),
+            source_session_id=source_session_id,
+            source_process_id=source_process_id,
+            value=value,
+        )
+        self._settings_events.append(event)
+
+        for queue in self._settings_subscribers.values():
+            self._queue_stream_event(queue, event)
+
+        # Bound memory growth for long-lived servers.
+        max_events = self._retention_policy.settings_event_history_limit
+        if len(self._settings_events) > max_events:
+            del self._settings_events[0 : len(self._settings_events) - max_events]
+
+    def _append_topology_event_locked(
+        self,
+        event_type: TopologyEventType,
+        changed_topics: list[str],
+        source_session_id: str | None,
+        source_process_id: UUID | None,
+        timestamp: float | None = None,
+    ) -> None:
+        self._topology_event_seq += 1
+        event = TopologyChangedEvent(
+            seq=self._topology_event_seq,
+            event_type=event_type,
+            timestamp=timestamp if timestamp is not None else time.time(),
+            changed_topics=sorted(set(changed_topics)),
+            source_session_id=source_session_id,
+            source_process_id=source_process_id,
+        )
+        self._topology_events.append(event)
+
+        for queue in self._topology_subscribers.values():
+            self._queue_stream_event(queue, event)
+
+        max_events = self._retention_policy.topology_event_history_limit
+        if len(self._topology_events) > max_events:
+            del self._topology_events[0 : len(self._topology_events) - max_events]
+
+    def _remove_settings_for_session_locked(self, session_id: UUID) -> None:
+        component_addresses = self._settings_owned_by_session.pop(session_id, set())
+        for component_address in component_addresses:
+            state = self._settings_state.get(component_address)
+            if state is None or state.metadata_session_id != session_id:
+                continue
+            if state.source_process_id is None:
+                self._settings_state.pop(component_address, None)
+            else:
+                state.metadata_session_id = None
+
+    def _session_owner_for_component_locked(self, component_address: str) -> UUID | None:
+        for client_id, info in self.clients.items():
+            if not isinstance(info, SessionInfo):
+                continue
+            if info.metadata is None:
+                continue
+            if component_address in info.metadata.components:
+                return client_id
+        return None
+
+    def _initial_settings_for_component_locked(
+        self, session_id: UUID, component_address: str
+    ) -> SettingsSnapshotValue | None:
+        session = self._session_info(session_id)
+        if session is None or session.metadata is None:
+            return None
+        component = session.metadata.components.get(component_address)
+        if component is None:
+            return None
+        initial_repr = component.initial_settings[1]
+        return SettingsSnapshotValue(
+            serialized=component.initial_settings[0],
+            repr_value=initial_repr,
+            structured_value=initial_repr if isinstance(initial_repr, dict) else None,
+            settings_schema=component.settings_schema,
+        )
+
+    def _remove_settings_for_process_locked(self, process_client_id: UUID) -> None:
+        source_process_id = self._process_key(process_client_id)
+        component_addresses = [
+            component_address
+            for component_address, state in self._settings_state.items()
+            if state.source_process_id == source_process_id
+        ]
+
+        for component_address in component_addresses:
+            state = self._settings_state.get(component_address)
+            if state is None:
+                continue
+            metadata_session_id = state.metadata_session_id
+            if metadata_session_id is None:
+                self._settings_state.pop(component_address, None)
+                continue
+
+            restored = self._initial_settings_for_component_locked(
+                metadata_session_id, component_address
+            )
+            if restored is None:
+                self._settings_state.pop(component_address, None)
+                continue
+
+            state.value = restored
+            state.source_process_id = None
+            self._append_settings_event_locked(
+                event_type=SettingsEventType.SETTINGS_UPDATED,
+                component_address=component_address,
+                value=restored,
+                source_session_id=str(metadata_session_id),
+                source_process_id=None,
+            )
+
+    def _apply_session_metadata_settings_locked(
+        self, session_id: UUID, metadata: GraphMetadata
+    ) -> None:
+        session_components: set[str] = set()
+        for component in metadata.components.values():
+            initial_repr = component.initial_settings[1]
+            value = SettingsSnapshotValue(
+                serialized=component.initial_settings[0],
+                repr_value=initial_repr,
+                structured_value=initial_repr if isinstance(initial_repr, dict) else None,
+                settings_schema=component.settings_schema,
+            )
+            existing_state = self._settings_state.get(component.address)
+            if existing_state is not None and existing_state.source_process_id is not None:
+                existing_state.metadata_session_id = session_id
+            else:
+                self._settings_state[component.address] = _SettingsState(
+                    value=value,
+                    metadata_session_id=session_id,
+                    source_process_id=None,
+                )
+            session_components.add(component.address)
+            self._append_settings_event_locked(
+                event_type=SettingsEventType.INITIAL_SETTINGS,
+                component_address=component.address,
+                value=value,
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
+
+        self._settings_owned_by_session[session_id] = session_components
+
+    async def _handle_session_edge_request(
+        self,
+        session_id: UUID,
+        req: bytes,
+        reader: asyncio.StreamReader,
+    ) -> bytes:
+        from_topic = await read_str(reader)
+        to_topic = await read_str(reader)
+        should_notify = False
+
+        async with self._command_lock:
+            try:
+                if req == Command.SESSION_CONNECT.value:
+                    should_notify = self._connect_owner(
+                        from_topic, to_topic, session_id
+                    )
+                else:
+                    should_notify = self._disconnect_owner(
+                        from_topic, to_topic, session_id
+                    )
+            except CyclicException:
+                return Command.CYCLIC.value
+
+            if should_notify:
+                self._append_topology_event_locked(
+                    event_type=TopologyEventType.GRAPH_CHANGED,
+                    changed_topics=[to_topic],
+                    source_session_id=str(session_id),
+                    source_process_id=None,
+                )
+
+        if should_notify:
+            await self._notify_downstream_for_topic(to_topic)
+
+        return Command.COMPLETE.value
+
+    async def _handle_session_clear_request(self, session_id: UUID) -> bytes:
+        async with self._command_lock:
+            notify_topics = self._clear_session_state(session_id)
+
+        for topic in notify_topics:
+            await self._notify_downstream_for_topic(topic)
+        return Command.COMPLETE.value
+
+    async def _handle_session_register_request(
+        self, session_id: UUID, reader: asyncio.StreamReader
+    ) -> bytes:
+        metadata = await self._read_typed_payload(
+            reader,
+            GraphMetadata,
+            log_prefix=f"Session {session_id} metadata",
+        )
+
+        async with self._command_lock:
+            session = self._session_info(session_id)
+            if session is not None and metadata is not None:
+                collisions = self._metadata_collisions(session_id, metadata)
+                if collisions:
+                    logger.warning(
+                        "Session %s metadata registration rejected due to component address collision(s): %s",
+                        session_id,
+                        ", ".join(collisions),
+                    )
+                    return Command.ERROR.value
+                self._remove_settings_for_session_locked(session_id)
+                session.metadata = metadata
+                self._apply_session_metadata_settings_locked(session_id, metadata)
+
+        return Command.COMPLETE.value
+
+    async def _handle_session_snapshot_request(
+        self, writer: asyncio.StreamWriter
+    ) -> None:
+        async with self._command_lock:
+            snapshot = self._snapshot()
+            snapshot_bytes = pickle.dumps(snapshot)
+            writer.write(uint64_to_bytes(len(snapshot_bytes)))
+            writer.write(snapshot_bytes)
+            writer.write(Command.COMPLETE.value)
+
+    async def _handle_session_settings_snapshot_request(
+        self, writer: asyncio.StreamWriter
+    ) -> None:
+        async with self._command_lock:
+            snapshot = {
+                component_address: self._settings_state[component_address].value
+                for component_address in sorted(self._settings_state)
+            }
+            snapshot_bytes = pickle.dumps(snapshot)
+            writer.write(uint64_to_bytes(len(snapshot_bytes)))
+            writer.write(snapshot_bytes)
+            writer.write(Command.COMPLETE.value)
+
+    async def _handle_session_settings_events_request(
+        self, writer: asyncio.StreamWriter, after_seq: int
+    ) -> None:
+        async with self._command_lock:
+            events = [event for event in self._settings_events if event.seq > after_seq]
+            event_bytes = pickle.dumps(events)
+            writer.write(uint64_to_bytes(len(event_bytes)))
+            writer.write(event_bytes)
+            writer.write(Command.COMPLETE.value)
+
+    def _clear_session_state(self, session_id: UUID) -> set[str]:
+        notify_topics: set[str] = set()
+        session = self._session_info(session_id)
+        if session is None:
+            return notify_topics
+
+        for from_topic, to_topic in list(session.edges):
+            if self._disconnect_owner(from_topic, to_topic, session_id):
+                notify_topics.add(to_topic)
+
+        self._remove_settings_for_session_locked(session_id)
+        session.metadata = None
+        if notify_topics:
+            self._append_topology_event_locked(
+                event_type=TopologyEventType.GRAPH_CHANGED,
+                changed_topics=list(notify_topics),
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
+        return notify_topics
+
+    def _drop_session(self, session_id: UUID) -> set[str]:
+        notify_topics: set[str] = set()
+        session = self._session_info(session_id)
+        if session is None:
+            return notify_topics
+
+        for from_topic, to_topic in list(session.edges):
+            if self._disconnect_owner(from_topic, to_topic, session_id):
+                notify_topics.add(to_topic)
+
+        self._remove_settings_for_session_locked(session_id)
+        session.metadata = None
+        self.clients.pop(session_id, None)
+        if notify_topics:
+            self._append_topology_event_locked(
+                event_type=TopologyEventType.GRAPH_CHANGED,
+                changed_topics=list(notify_topics),
+                source_session_id=str(session_id),
+                source_process_id=None,
+            )
+        return notify_topics
+
+    def _snapshot(self) -> GraphSnapshot:
+        graph = {node: sorted(conns) for node, conns in self.graph.graph.items()}
+        edge_owners = {
+            Edge(from_topic=from_topic, to_topic=to_topic): [
+                "persistent" if owner is None else str(owner)
+                for owner in sorted(
+                    owners, key=lambda owner: "" if owner is None else str(owner)
+                )
+            ]
+            for (from_topic, to_topic), owners in sorted(self.graph.edge_owners.items())
+        }
+        sessions = {
+            str(session_id): SnapshotSession(
+                edges=sorted(
+                    [
+                        Edge(from_topic=from_topic, to_topic=to_topic)
+                        for from_topic, to_topic in session.edges
+                    ],
+                    key=lambda edge: (edge.from_topic, edge.to_topic),
+                ),
+                metadata=session.metadata,
+            )
+            for session_id, session in sorted(
+                [
+                    (client_id, info)
+                    for client_id, info in self.clients.items()
+                    if isinstance(info, SessionInfo)
+                ],
+                key=lambda item: str(item[0]),
+            )
+        }
+        processes = {
+            client_id: SnapshotProcess(
+                process_id=self._process_key(client_id),
+                pid=process.pid,
+                host=process.host,
+                units=sorted(process.units),
+            )
+            for client_id, process in sorted(
+                [
+                    (client_id, info)
+                    for client_id, info in self.clients.items()
+                    if isinstance(info, ProcessInfo)
+                ],
+                key=lambda item: str(item[0]),
+            )
+        }
+        return GraphSnapshot(
+            graph=graph,
+            edge_owners=edge_owners,
+            sessions=sessions,
+            processes=processes,
+        )
+
+    async def _notify_downstream_for_topic(self, topic: str) -> None:
+        for sub in self._downstream_subs(topic):
+            await self._notify_subscriber(sub)
 
     async def _notify_subscriber(self, sub: SubscriberInfo) -> None:
         try:
@@ -404,13 +1739,23 @@ class GraphServer(threading.Thread):
 
             # Update requires us to read a 'COMPLETE'
             # This cannot be done from this context
-            async with sub.sync_writer() as writer:
-                notify_str = ",".join(pub_ids)
-                writer.write(Command.UPDATE.value)
-                writer.write(encode_str(notify_str))
+            async def send_update() -> None:
+                async with sub.sync_writer() as writer:
+                    notify_str = ",".join(pub_ids)
+                    writer.write(Command.UPDATE.value)
+                    writer.write(encode_str(notify_str))
+            await asyncio.wait_for(
+                send_update(), timeout=SUBSCRIBER_UPDATE_TIMEOUT_SEC
+            )
 
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"Failed to update Subscriber {sub.id}: {e}")
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out waiting for Subscriber %s to apply routing update for topic %s",
+                sub.id,
+                sub.topic,
+            )
 
     def _publishers(self) -> list[PublisherInfo]:
         return [

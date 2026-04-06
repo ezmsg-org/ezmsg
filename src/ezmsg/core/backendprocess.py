@@ -3,22 +3,31 @@ import concurrent.futures
 import logging
 import inspect
 import os
-import time
+import pickle
 import traceback
 import threading
 import weakref
+from copy import deepcopy
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass, replace
 from collections import defaultdict
-from collections.abc import Callable, Coroutine, Generator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from functools import wraps, partial
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
 from multiprocessing import Process
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
-from contextlib import suppress, contextmanager
+from contextlib import suppress, contextmanager, asynccontextmanager
 from concurrent.futures import TimeoutError
 from typing import Any
 
@@ -26,9 +35,24 @@ from .stream import Stream, InputStream, OutputStream
 from .unit import Unit, TIMEIT_ATTR, SUBSCRIBES_ATTR
 
 from .graphcontext import GraphContext
+from .graphmeta import (
+    ProcessControlErrorCode,
+    ProcessControlOperation,
+    ProcessControlRequest,
+    ProcessControlResponse,
+    SettingsFieldUpdateRequest,
+    SettingsSnapshotValue,
+)
+from .profiling import PROFILES, PROFILE_TIME
+from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
+from .settingsmeta import (
+    settings_repr_value,
+    settings_schema_from_value,
+    settings_structured_value,
+)
 
 logger = logging.getLogger("ezmsg")
 
@@ -220,11 +244,187 @@ class DefaultBackendProcess(BackendProcess):
     pubs: dict[str, Publisher]
     _shutdown_errors: bool
 
+    def _settings_snapshot_value(self, value: object) -> SettingsSnapshotValue:
+        try:
+            serialized = pickle.dumps(value)
+        except Exception:
+            serialized = None
+
+        return SettingsSnapshotValue(
+            serialized=serialized,
+            repr_value=settings_repr_value(value),
+            structured_value=settings_structured_value(value),
+            settings_schema=settings_schema_from_value(value),
+        )
+
+    def _replace_settings_field(
+        self, settings_value: object, field_path: str, value: object
+    ) -> object:
+        if field_path == "":
+            raise ValueError("field_path must not be empty")
+        path = field_path.split(".")
+
+        def apply(current: object, idx: int) -> object:
+            field_name = path[idx]
+            if isinstance(current, Mapping):
+                if field_name not in current:
+                    raise AttributeError(
+                        f"Settings field '{field_name}' does not exist in mapping"
+                    )
+                if idx == len(path) - 1:
+                    updated = dict(current)
+                    updated[field_name] = value
+                    return updated
+                patched_child = apply(current[field_name], idx + 1)
+                updated = dict(current)
+                updated[field_name] = patched_child
+                return updated
+
+            if not hasattr(current, field_name):
+                raise AttributeError(
+                    f"Settings field '{field_name}' does not exist on "
+                    f"{type(current).__name__}"
+                )
+
+            if idx == len(path) - 1:
+                return self._patch_object_field(current, field_name, value)
+
+            child_value = getattr(current, field_name)
+            patched_child = apply(child_value, idx + 1)
+            return self._patch_object_field(current, field_name, patched_child)
+
+        return apply(settings_value, 0)
+
+    def _patch_object_field(
+        self, obj: object, field_name: str, value: object
+    ) -> object:
+        if is_dataclass(obj):
+            valid_fields = {f.name for f in dataclass_fields(obj)}
+            if field_name not in valid_fields:
+                raise AttributeError(
+                    f"Settings field '{field_name}' does not exist on "
+                    f"{type(obj).__name__}"
+                )
+            return replace(obj, **{field_name: value})
+
+        if hasattr(obj, "model_copy") and callable(getattr(obj, "model_copy")):
+            return obj.model_copy(update={field_name: value})  # type: ignore[attr-defined]
+
+        if hasattr(obj, "copy") and callable(getattr(obj, "copy")):
+            try:
+                return obj.copy(update={field_name: value})  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        if hasattr(obj, field_name):
+            patched = deepcopy(obj)
+            setattr(patched, field_name, value)
+            return patched
+
+        raise TypeError(f"Cannot patch settings object of type {type(obj).__name__}")
+
     def process(self, loop: asyncio.AbstractEventLoop) -> None:
         main_func = None
         context = GraphContext(self.graph_address)
+        process_client = ProcessControlClient(self.graph_address)
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
+        settings_input_topics: dict[str, str] = {}
+        current_settings: dict[str, object] = {}
+        control_publishers: dict[str, Publisher] = {}
         self._shutdown_errors = False
+
+        async def process_request_handler(
+            request: ProcessControlRequest,
+        ) -> ProcessControlResponse:
+            if request.operation != ProcessControlOperation.UPDATE_SETTING_FIELD.value:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Unsupported process control operation: {request.operation}",
+                    error_code=ProcessControlErrorCode.UNSUPPORTED_OPERATION,
+                    process_id=process_client.process_id,
+                )
+
+            if request.payload is None:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error="Missing settings field update payload",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=process_client.process_id,
+                )
+
+            try:
+                update_obj = pickle.loads(request.payload)
+                if not isinstance(update_obj, SettingsFieldUpdateRequest):
+                    raise RuntimeError(
+                        "settings field update payload was not SettingsFieldUpdateRequest"
+                    )
+            except Exception as exc:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Invalid settings field update payload: {exc}",
+                    error_code=ProcessControlErrorCode.INVALID_RESPONSE,
+                    process_id=process_client.process_id,
+                )
+
+            unit_address = request.unit_address
+            input_topic = settings_input_topics.get(unit_address)
+            if input_topic is None:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=(
+                        f"Unit '{unit_address}' does not expose INPUT_SETTINGS; "
+                        "settings field update unsupported"
+                    ),
+                    error_code=ProcessControlErrorCode.UNSUPPORTED_OPERATION,
+                    process_id=process_client.process_id,
+                )
+
+            if unit_address not in current_settings:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=(
+                        f"No current settings value tracked for unit '{unit_address}'. "
+                        "Send a full settings object first via update_settings()."
+                    ),
+                    error_code=ProcessControlErrorCode.HANDLER_ERROR,
+                    process_id=process_client.process_id,
+                )
+
+            try:
+                patched = self._replace_settings_field(
+                    current_settings[unit_address],
+                    update_obj.field_path,
+                    update_obj.value,
+                )
+                control_pub = control_publishers.get(input_topic)
+                if control_pub is None:
+                    control_pub = await context.publisher(input_topic)
+                    control_publishers[input_topic] = control_pub
+                await control_pub.broadcast(patched)
+                current_settings[unit_address] = patched
+            except Exception as exc:
+                return ProcessControlResponse(
+                    request_id=request.request_id,
+                    ok=False,
+                    error=f"Failed to patch settings field: {exc}",
+                    error_code=ProcessControlErrorCode.HANDLER_ERROR,
+                    process_id=process_client.process_id,
+                )
+
+            result_value = self._settings_snapshot_value(patched)
+            return ProcessControlResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=pickle.dumps(result_value),
+                process_id=process_client.process_id,
+            )
+
+        process_client.set_request_handler(process_request_handler)
 
         try:
             self.pubs = dict()
@@ -259,6 +459,8 @@ class DefaultBackendProcess(BackendProcess):
                 main_func = None
 
             for unit in self.units:
+                if unit.SETTINGS is not None:
+                    current_settings[unit.address] = unit.SETTINGS
                 sub_callables: defaultdict[
                     str, set[Callable[..., Coroutine[Any, Any, None]]]
                 ] = defaultdict(set)
@@ -284,8 +486,32 @@ class DefaultBackendProcess(BackendProcess):
                             loop,
                         ).result()
                         task_name = f"SUBSCRIBER|{stream.address}"
+                        report_settings_update: (
+                            Callable[[object], Awaitable[None]] | None
+                        ) = None
+                        if stream.name == "INPUT_SETTINGS":
+                            component_address = unit.address
+                            settings_input_topics[component_address] = stream.address
+
+                            async def report_settings_update_cb(
+                                msg: object,
+                                *,
+                                _component_address: str = component_address,
+                            ) -> None:
+                                current_settings[_component_address] = msg
+                                value = self._settings_snapshot_value(msg)
+                                await process_client.report_settings_update(
+                                    component_address=_component_address,
+                                    value=value,
+                                )
+
+                            report_settings_update = report_settings_update_cb
+
                         coro_callables[task_name] = partial(
-                            handle_subscriber, sub, sub_callables[stream.address]
+                            handle_subscriber,
+                            sub,
+                            sub_callables[stream.address],
+                            on_message=report_settings_update,
                         )
 
                     elif isinstance(stream, OutputStream):
@@ -303,6 +529,11 @@ class DefaultBackendProcess(BackendProcess):
                             ),
                             loop=loop,
                         ).result()
+
+            asyncio.run_coroutine_threadsafe(
+                process_client.register([unit.address for unit in self.units]),
+                loop,
+            ).result()
 
         except asyncio.CancelledError:
             pass
@@ -408,6 +639,13 @@ class DefaultBackendProcess(BackendProcess):
                 except TimeoutError:
                     logger.warning("Timed out waiting for retry on context revert")
 
+            process_close_future = asyncio.run_coroutine_threadsafe(
+                process_client.close(),
+                loop=loop,
+            )
+            with suppress(Exception):
+                process_close_future.result()
+
             logger.debug(f"Remaining tasks in event loop = {asyncio.all_tasks(loop)}")
 
             if self.task_finished_ev is not None:
@@ -440,11 +678,12 @@ class DefaultBackendProcess(BackendProcess):
             await asyncio.sleep(0)
 
         async def perf_publish(stream: Stream, obj: Any) -> None:
-            start = time.perf_counter()
+            start = PROFILE_TIME()
             await publish(stream, obj)
-            stop = time.perf_counter()
+            stop = PROFILE_TIME()
             logger.info(
-                f"{task_address} send duration = " + f"{(stop - start) * 1e3:0.4f}ms"
+                f"{task_address} send duration = "
+                f"{((stop - start) / 1_000_000.0):0.4f}ms"
             )
 
         pub_fn = perf_publish if hasattr(task, TIMEIT_ATTR) else publish
@@ -488,8 +727,10 @@ class DefaultBackendProcess(BackendProcess):
             except Exception:
                 logger.error(f"Exception in Task: {task_address}")
                 logger.error(traceback.format_exc())
-                if self.term_ev.is_set():
-                    self._shutdown_errors = True
+                # Any task exception should mark shutdown as unclean so
+                # interrupt-driven teardown can return a non-zero exit code.
+                # Gating this on term_ev introduces timing-dependent behavior.
+                self._shutdown_errors = True
                 if strict_shutdown:
                     raise
 
@@ -497,7 +738,9 @@ class DefaultBackendProcess(BackendProcess):
 
 
 async def handle_subscriber(
-    sub: Subscriber, callables: set[Callable[..., Coroutine[Any, Any, None]]]
+    sub: Subscriber,
+    callables: set[Callable[..., Coroutine[Any, Any, None]]],
+    on_message: Callable[[Any], Awaitable[None]] | None = None,
 ):
     """
     Handle incoming messages from a subscriber and distribute to callables.
@@ -516,32 +759,47 @@ async def handle_subscriber(
     # Non-leaky subscribers use recv_zero_copy() to hold backpressure during
     # processing, which provides zero-copy performance but applies backpressure.
 
+    @asynccontextmanager
+    async def next_message() -> AsyncGenerator[Any, None]:
+        if sub.leaky:
+            msg = await sub.recv()
+            try:
+                yield msg
+            finally:
+                del msg
+            return
+
+        async with sub.recv_zero_copy() as msg:
+            yield msg
+
     while True:
         if not callables:
             sub.close()
             await sub.wait_closed()
             break
 
-        if sub.leaky:
-            msg = await sub.recv()
+        async with next_message() as msg:
             try:
+                if on_message is not None:
+                    try:
+                        await on_message(msg)
+                    except Exception as exc:
+                        logger.warning(
+                            f"Failed to report subscriber message metadata: {exc}"
+                        )
                 for callable in list(callables):
                     try:
-                        await callable(msg)
+                        span_start_ns = sub.begin_profile()
+                        try:
+                            await callable(msg)
+                        finally:
+                            sub.end_profile(
+                                span_start_ns, getattr(callable, "__name__", None)
+                            )
                     except (Complete, NormalTermination):
                         callables.remove(callable)
             finally:
                 del msg
-        else:
-            async with sub.recv_zero_copy() as msg:
-                try:
-                    for callable in list(callables):
-                        try:
-                            await callable(msg)
-                        except (Complete, NormalTermination):
-                            callables.remove(callable)
-                finally:
-                    del msg
 
         if len(callables) > 1:
             await asyncio.sleep(0)

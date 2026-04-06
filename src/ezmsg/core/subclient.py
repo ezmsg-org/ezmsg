@@ -9,6 +9,7 @@ from copy import deepcopy
 from .graphserver import GraphService
 from .channelmanager import CHANNELS
 from .messagechannel import NotificationQueue, LeakyQueue, Channel
+from .profiling import PROFILES, PROFILE_TIME
 
 from .netprotocol import (
     AddressType,
@@ -40,6 +41,7 @@ class Subscriber:
     _graph_address: AddressType | None
     _graph_task: asyncio.Task[None]
     _incoming: NotificationQueue
+    _profile: object
 
     # FIXME: This event allows Subscriber.create to block until
     # incoming initial connections (UPDATE) has completed. The
@@ -128,6 +130,8 @@ class Subscriber:
         self._graph_address = graph_address
 
         self._channels = dict()
+        self._active_msg_seq: int | None = None
+        self._active_trace_sampled = False
         if self.leaky:
             self._incoming = LeakyQueue(
                 1 if max_queue is None else max_queue, self._handle_dropped_notification
@@ -135,6 +139,7 @@ class Subscriber:
         else:
             self._incoming = asyncio.Queue()
         self._initialized = asyncio.Event()
+        self._profile = PROFILES.register_subscriber(self.id, self.topic)
 
     def _handle_dropped_notification(
         self, notification: typing.Tuple[UUID, int]
@@ -160,6 +165,7 @@ class Subscriber:
         and closes all shared memory contexts.
         """
         self._graph_task.cancel()
+        PROFILES.unregister_subscriber(self.id)
 
     async def wait_closed(self) -> None:
         """
@@ -295,5 +301,40 @@ class Subscriber:
                 break
             # Stale notification from an unregistered publisher — skip.
 
-        with self._channels[pub_id].get(msg_id, self.id) as msg:
-            yield msg
+        channel = self._channels[pub_id]
+        channel_kind = channel.channel_kind
+        self._active_msg_seq = msg_id
+        self._active_trace_sampled = self._profile.begin_message(channel_kind)
+        try:
+            trace_lease = self._profile._trace_lease_time_enabled
+            start_ns = PROFILE_TIME() if trace_lease else None
+            with channel.get(msg_id, self.id) as msg:
+                yield msg
+            lease_ns = None
+            if trace_lease and start_ns is not None:
+                lease_ns = PROFILE_TIME() - start_ns
+            self._profile.record_lease_time(
+                channel_kind,
+                lease_ns,
+                msg_seq=msg_id,
+                sampled=self._active_trace_sampled,
+            )
+        finally:
+            self._active_msg_seq = None
+            self._active_trace_sampled = False
+
+    def begin_profile(self) -> int:
+        if not self._profile._trace_user_span_enabled or not self._active_trace_sampled:
+            return 0
+        return PROFILE_TIME()
+
+    def end_profile(self, start_ns: int, label: str | None = None) -> None:
+        if start_ns <= 0:
+            return
+        end_ns = PROFILE_TIME()
+        self._profile.record_user_span(
+            end_ns - start_ns,
+            label,
+            msg_seq=self._active_msg_seq,
+            sampled=self._active_trace_sampled,
+        )

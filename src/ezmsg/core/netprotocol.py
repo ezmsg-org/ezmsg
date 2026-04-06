@@ -9,6 +9,7 @@ from uuid import UUID
 from dataclasses import field, dataclass
 from contextlib import asynccontextmanager
 from asyncio.base_events import Server
+from .graphmeta import GraphMetadata
 
 VERSION = b"1"
 UINT64_SIZE = 8
@@ -165,6 +166,28 @@ class ChannelInfo(ClientInfo):
     pub_id: UUID
 
 
+@dataclass
+class SessionInfo(ClientInfo):
+    """
+    Session-scoped control-plane client information.
+    """
+
+    edges: set[tuple[str, str]] = field(default_factory=set)
+    metadata: GraphMetadata | None = None
+
+
+@dataclass
+class ProcessInfo(ClientInfo):
+    """
+    Process-scoped control-plane client information.
+    """
+
+    pid: int | None = None
+    host: str | None = None
+    units: set[str] = field(default_factory=set)
+    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+
+
 def uint64_to_bytes(i: int) -> bytes:
     """
     Convert a 64-bit unsigned integer to bytes.
@@ -299,6 +322,30 @@ class Command(enum.Enum):
     CHANNEL = enum.auto()
     SHM_OK = enum.auto()
     SHM_ATTACH_FAILED = enum.auto()
+
+    # GraphContext Session Commands (control plane)
+    SESSION = enum.auto()
+    SESSION_CONNECT = enum.auto()
+    SESSION_DISCONNECT = enum.auto()
+    SESSION_CLEAR = enum.auto()
+    SESSION_REGISTER = enum.auto()
+    SESSION_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_SNAPSHOT = enum.auto()
+    SESSION_SETTINGS_EVENTS = enum.auto()
+    SESSION_SETTINGS_SUBSCRIBE = enum.auto()
+    SESSION_TOPOLOGY_SUBSCRIBE = enum.auto()
+    SESSION_PROFILING_SUBSCRIBE = enum.auto()
+    SESSION_PROCESS_REQUEST = enum.auto()
+
+    # Backend Process Control Commands
+    PROCESS = enum.auto()
+    PROCESS_REGISTER = enum.auto()
+    PROCESS_UPDATE_OWNERSHIP = enum.auto()
+    PROCESS_SETTINGS_UPDATE = enum.auto()
+    PROCESS_PROFILING_TRACE_UPDATE = enum.auto()
+    PROCESS_ROUTE_REQUEST = enum.auto()
+    PROCESS_ROUTE_RESPONSE = enum.auto()
+    ERROR = enum.auto()
 
 
 def create_socket(
