@@ -55,7 +55,6 @@ axisarray = [
 
 [project.scripts]
 ezmsg = "ezmsg.core.command:cmdline"
-ezmsg-perf = "ezmsg.util.perf.command:command"
 
 [project.optional-dependencies]
 axisarray = [
