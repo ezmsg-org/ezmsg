@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from ezmsg.core.command import build_parser
 
@@ -98,8 +99,8 @@ def test_perf_ab_subparser_accepts_manual_env_args():
 
     assert args.command == "perf"
     assert args.perf_command == "ab"
-    assert str(args.dir_a) == "/tmp/a"
-    assert str(args.dir_b) == "/tmp/b"
+    assert args.dir_a == Path("/tmp/a")
+    assert args.dir_b == Path("/tmp/b")
     assert args.env_mode == "existing"
     assert args.env == ["FOO=bar"]
     assert args.env_a == ["ONLY_A=1"]
