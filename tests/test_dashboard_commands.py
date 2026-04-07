@@ -96,6 +96,10 @@ async def test_handle_start_forwards_dashboard_flag(monkeypatch):
 
     monkeypatch.setattr("ezmsg.core.commands.start.subprocess.Popen", DummyPopen)
     monkeypatch.setattr(
+        "ezmsg.core.commands.start.require_dashboard_dependency",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
         "ezmsg.core.commands.start.GraphService.open_connection", fake_open_connection
     )
     monkeypatch.setattr(
@@ -133,6 +137,10 @@ async def test_handle_start_forwards_dashboard_port(monkeypatch):
         return None
 
     monkeypatch.setattr("ezmsg.core.commands.start.subprocess.Popen", DummyPopen)
+    monkeypatch.setattr(
+        "ezmsg.core.commands.start.require_dashboard_dependency",
+        lambda: object(),
+    )
     monkeypatch.setattr(
         "ezmsg.core.commands.start.GraphService.open_connection", fake_open_connection
     )
