@@ -79,8 +79,5 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-[tool.uv.sources]
-ezmsg-dashboard = { path = "../ezmsg-dashboard", editable = true }
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]
