@@ -95,4 +95,4 @@ These publications provide insights into the practical applications and impact o
  
 ## Financial Support
 
-`ezmsg` is supported by Johns Hopkins University (JHU), the JHU Applied Physics Laboratory (APL), and by the Wyss Center for Bio and Neuro Engineering.
+`ezmsg` is supported by Johns Hopkins University (JHU), the JHU Applied Physics Laboratory (APL), Blackrock Neurotech and by the Wyss Center for Bio and Neuro Engineering.
