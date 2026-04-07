@@ -145,9 +145,8 @@ def benchmark(
         )
 
     try:
-        communications = (
-            DEFAULT_COMMS if comms is None else [Communication(c) for c in comms]
-        )
+        communication_names = DEFAULT_COMMS if comms is None else list(comms)
+        communications = [Communication(c) for c in communication_names]
     except ValueError:
         ez.logger.error(
             f"Invalid test communications requested. Valid communications: {', '.join([c.value for c in Communication])}"
