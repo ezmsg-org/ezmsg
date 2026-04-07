@@ -52,9 +52,6 @@ docs = [
 axisarray = [
     "numpy>=2.2.6",
 ]
-perf = [
-  "xarray",
-]
 
 [project.scripts]
 ezmsg = "ezmsg.core.command:cmdline"
@@ -62,6 +59,12 @@ ezmsg = "ezmsg.core.command:cmdline"
 [project.optional-dependencies]
 axisarray = [
     "numpy>=2.2.6",
+]
+perf = [
+  "xarray>=2025.6.1",
+]
+dashboard = [
+  "ezmsg-dashboard; python_version >= '3.11'",
 ]
 
 [tool.pytest.ini_options]
@@ -75,6 +78,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv.sources]
+ezmsg-dashboard = { path = "../ezmsg-dashboard", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]

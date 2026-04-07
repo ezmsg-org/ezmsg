@@ -1,6 +1,7 @@
 import argparse
 
-from ..netprotocol import Address, GRAPHSERVER_PORT_DEFAULT
+from ..graphserver import GraphService
+from ..netprotocol import Address
 
 
 def add_address_argument(parser: argparse.ArgumentParser) -> None:
@@ -21,5 +22,5 @@ def add_compact_argument(parser: argparse.ArgumentParser) -> None:
 
 def graph_address_from_args(args: argparse.Namespace) -> Address:
     if args.address is None:
-        return Address("127.0.0.1", GRAPHSERVER_PORT_DEFAULT)
+        return GraphService.default_address()
     return Address.from_string(args.address)
