@@ -26,6 +26,7 @@ from .stream import (
     Topic,
     InputTopic,
     OutputTopic,
+    Relay,
     InputRelay,
     OutputRelay,
 )
@@ -42,6 +43,7 @@ from .graphmeta import (
     OutputRelayMetadata,
     OutputStreamMetadata,
     OutputTopicMetadata,
+    RelayMetadata,
     RelayMetadataType,
     StreamMetadataType,
     StreamMetadata,
@@ -157,7 +159,7 @@ class ExecutionContext:
     ) -> "ExecutionContext | None":
         graph_connections: list[tuple[str, str]] = []
         relay_endpoints_by_collection: dict[
-            str, list[InputRelay | OutputRelay]
+            str, list[Relay | InputRelay | OutputRelay]
         ] = {}
 
         for name, component in components.items():
@@ -192,7 +194,7 @@ class ExecutionContext:
             relays = [
                 endpoint
                 for endpoint in comp.streams.values()
-                if isinstance(endpoint, (InputRelay, OutputRelay))
+                if isinstance(endpoint, (Relay, InputRelay, OutputRelay))
             ]
             if relays:
                 relay_endpoints_by_collection[comp.address] = relays
@@ -252,7 +254,14 @@ class ExecutionContext:
                     rewritten_connections.append(
                         (binding.endpoint_topic, binding.relay_input_topic)
                     )
+                elif binding.kind == "output":
+                    rewritten_connections.append(
+                        (binding.relay_output_topic, binding.endpoint_topic)
+                    )
                 else:
+                    rewritten_connections.append(
+                        (binding.endpoint_topic, binding.relay_input_topic)
+                    )
                     rewritten_connections.append(
                         (binding.relay_output_topic, binding.endpoint_topic)
                     )
@@ -440,6 +449,24 @@ class GraphRunner:
                             name=stream_name,
                             address=stream.address,
                             msg_type=msg_type,
+                            host=stream.host,
+                            port=stream.port,
+                            num_buffers=stream.num_buffers,
+                            buf_size=stream.buf_size,
+                            force_tcp=stream.force_tcp,
+                            copy_on_forward=stream.copy_on_forward,
+                            relay_group=runtime.group,
+                            relay_input_topic=runtime.input_topic,
+                            relay_output_topic=runtime.output_topic,
+                        )
+                    elif isinstance(stream, Relay):
+                        runtime = _relay_runtime_info(stream)
+                        relay_entries[stream_name] = RelayMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                            leaky=stream.leaky,
+                            max_queue=stream.max_queue,
                             host=stream.host,
                             port=stream.port,
                             num_buffers=stream.num_buffers,

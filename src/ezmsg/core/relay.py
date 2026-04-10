@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .netprotocol import DEFAULT_SHM_SIZE
-from .stream import InputRelay, OutputRelay
+from .stream import Relay, InputRelay, OutputRelay
 
 _RELAY_GROUP = "__relays__"
 
@@ -16,7 +16,7 @@ class _RelayRuntimeInfo:
 
 @dataclass(frozen=True, slots=True)
 class _RelayRuntime:
-    kind: Literal["input", "output"]
+    kind: Literal["input", "output", "relay"]
     endpoint_topic: str
     collection_address: str
     relay_group: str
@@ -32,7 +32,7 @@ class _RelayRuntime:
     copy_on_forward: bool
 
 
-def _relay_runtime_info(endpoint: InputRelay | OutputRelay) -> _RelayRuntimeInfo:
+def _relay_runtime_info(endpoint: Relay | InputRelay | OutputRelay) -> _RelayRuntimeInfo:
     group = "/".join(endpoint.location + [_RELAY_GROUP, endpoint.name])
     return _RelayRuntimeInfo(
         group=group,
@@ -41,7 +41,7 @@ def _relay_runtime_info(endpoint: InputRelay | OutputRelay) -> _RelayRuntimeInfo
     )
 
 
-def _relay_runtime(endpoint: InputRelay | OutputRelay) -> _RelayRuntime:
+def _relay_runtime(endpoint: Relay | InputRelay | OutputRelay) -> _RelayRuntime:
     runtime = _relay_runtime_info(endpoint)
 
     if isinstance(endpoint, InputRelay):
@@ -62,15 +62,33 @@ def _relay_runtime(endpoint: InputRelay | OutputRelay) -> _RelayRuntime:
             copy_on_forward=endpoint.copy_on_forward,
         )
 
+    if isinstance(endpoint, OutputRelay):
+        return _RelayRuntime(
+            kind="output",
+            endpoint_topic=endpoint.address,
+            collection_address="/".join(endpoint.location),
+            relay_group=runtime.group,
+            relay_input_topic=runtime.input_topic,
+            relay_output_topic=runtime.output_topic,
+            leaky=False,
+            max_queue=None,
+            host=endpoint.host,
+            port=endpoint.port,
+            num_buffers=endpoint.num_buffers,
+            buf_size=endpoint.buf_size,
+            force_tcp=endpoint.force_tcp,
+            copy_on_forward=endpoint.copy_on_forward,
+        )
+
     return _RelayRuntime(
-        kind="output",
+        kind="relay",
         endpoint_topic=endpoint.address,
         collection_address="/".join(endpoint.location),
         relay_group=runtime.group,
         relay_input_topic=runtime.input_topic,
         relay_output_topic=runtime.output_topic,
-        leaky=False,
-        max_queue=None,
+        leaky=endpoint.leaky,
+        max_queue=endpoint.max_queue,
         host=endpoint.host,
         port=endpoint.port,
         num_buffers=endpoint.num_buffers,
