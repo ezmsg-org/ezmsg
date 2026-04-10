@@ -1,42 +1,80 @@
-from copy import deepcopy
-from collections.abc import AsyncGenerator
-from typing import Any
+from dataclasses import dataclass
+from typing import Literal
 
-from .settings import Settings
 from .netprotocol import DEFAULT_SHM_SIZE
-from .stream import InputStream, OutputStream
-from .unit import Unit, publisher, subscriber
+from .stream import InputRelay, OutputRelay
+
+_RELAY_GROUP = "__relays__"
 
 
-class _RelaySettings(Settings):
-    leaky: bool = False
-    max_queue: int | None = None
-    host: str | None = None
-    port: int | None = None
-    num_buffers: int = 32
-    buf_size: int = DEFAULT_SHM_SIZE
-    force_tcp: bool = False
-    copy_on_forward: bool = True
+@dataclass(frozen=True, slots=True)
+class _RelayRuntimeInfo:
+    group: str
+    input_topic: str
+    output_topic: str
 
 
-class _CollectionRelayUnit(Unit):
-    SETTINGS = _RelaySettings
+@dataclass(frozen=True, slots=True)
+class _RelayRuntime:
+    kind: Literal["input", "output"]
+    endpoint_topic: str
+    collection_address: str
+    relay_group: str
+    relay_input_topic: str
+    relay_output_topic: str
+    leaky: bool
+    max_queue: int | None
+    host: str | None
+    port: int | None
+    num_buffers: int
+    buf_size: int
+    force_tcp: bool
+    copy_on_forward: bool
 
-    INPUT = InputStream(Any)
-    OUTPUT = OutputStream(Any)
 
-    async def initialize(self) -> None:
-        self.INPUT.leaky = self.SETTINGS.leaky
-        self.INPUT.max_queue = self.SETTINGS.max_queue
-        self.OUTPUT.host = self.SETTINGS.host
-        self.OUTPUT.port = self.SETTINGS.port
-        self.OUTPUT.num_buffers = self.SETTINGS.num_buffers
-        self.OUTPUT.buf_size = self.SETTINGS.buf_size
-        self.OUTPUT.force_tcp = self.SETTINGS.force_tcp
+def _relay_runtime_info(endpoint: InputRelay | OutputRelay) -> _RelayRuntimeInfo:
+    group = "/".join(endpoint.location + [_RELAY_GROUP, endpoint.name])
+    return _RelayRuntimeInfo(
+        group=group,
+        input_topic=f"{group}/INPUT",
+        output_topic=f"{group}/OUTPUT",
+    )
 
-    @subscriber(INPUT)
-    @publisher(OUTPUT)
-    async def relay(self, msg: Any) -> AsyncGenerator:
-        if self.SETTINGS.copy_on_forward:
-            msg = deepcopy(msg)
-        yield self.OUTPUT, msg
+
+def _relay_runtime(endpoint: InputRelay | OutputRelay) -> _RelayRuntime:
+    runtime = _relay_runtime_info(endpoint)
+
+    if isinstance(endpoint, InputRelay):
+        return _RelayRuntime(
+            kind="input",
+            endpoint_topic=endpoint.address,
+            collection_address="/".join(endpoint.location),
+            relay_group=runtime.group,
+            relay_input_topic=runtime.input_topic,
+            relay_output_topic=runtime.output_topic,
+            leaky=endpoint.leaky,
+            max_queue=endpoint.max_queue,
+            host=None,
+            port=None,
+            num_buffers=32,
+            buf_size=DEFAULT_SHM_SIZE,
+            force_tcp=False,
+            copy_on_forward=endpoint.copy_on_forward,
+        )
+
+    return _RelayRuntime(
+        kind="output",
+        endpoint_topic=endpoint.address,
+        collection_address="/".join(endpoint.location),
+        relay_group=runtime.group,
+        relay_input_topic=runtime.input_topic,
+        relay_output_topic=runtime.output_topic,
+        leaky=False,
+        max_queue=None,
+        host=endpoint.host,
+        port=endpoint.port,
+        num_buffers=endpoint.num_buffers,
+        buf_size=endpoint.buf_size,
+        force_tcp=endpoint.force_tcp,
+        copy_on_forward=endpoint.copy_on_forward,
+    )

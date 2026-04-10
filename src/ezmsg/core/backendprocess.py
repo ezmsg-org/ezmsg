@@ -43,6 +43,7 @@ from .graphmeta import (
     SettingsFieldUpdateRequest,
     SettingsSnapshotValue,
 )
+from .relay import _RelayRuntime
 from .profiling import PROFILES, PROFILE_TIME
 from .processclient import ProcessControlClient
 from .pubclient import Publisher
@@ -166,6 +167,7 @@ class BackendProcess(Process):
     """
 
     units: list[Unit]
+    relays: list[_RelayRuntime]
     term_ev: EventType
     start_barrier: BarrierType
     stop_barrier: BarrierType
@@ -174,6 +176,7 @@ class BackendProcess(Process):
     def __init__(
         self,
         units: list[Unit],
+        relays: list[_RelayRuntime],
         term_ev: EventType,
         start_barrier: BarrierType,
         stop_barrier: BarrierType,
@@ -184,6 +187,8 @@ class BackendProcess(Process):
 
         :param units: List of Units to execute in this process.
         :type units: list[Unit]
+        :param relays: Relay subscriber/publisher pairs executed in this process.
+        :type relays: list[_RelayRuntime]
         :param term_ev: Event for coordinated termination.
         :type term_ev: EventType
         :param start_barrier: Barrier for synchronized startup.
@@ -197,6 +202,7 @@ class BackendProcess(Process):
         """
         super().__init__()
         self.units = units
+        self.relays = relays
         self.term_ev = term_ev
         self.start_barrier = start_barrier
         self.stop_barrier = stop_barrier
@@ -328,6 +334,9 @@ class DefaultBackendProcess(BackendProcess):
         context = GraphContext(self.graph_address)
         process_client = ProcessControlClient(self.graph_address)
         coro_callables: dict[str, Callable[[], Coroutine[Any, Any, None]]] = dict()
+        background_callables: dict[
+            str, Callable[[], Coroutine[Any, Any, None]]
+        ] = dict()
         settings_input_topics: dict[str, str] = {}
         current_settings: dict[str, object] = {}
         control_publishers: dict[str, Publisher] = {}
@@ -530,6 +539,46 @@ class DefaultBackendProcess(BackendProcess):
                             loop=loop,
                         ).result()
 
+            for relay in self.relays:
+                relay_pub = asyncio.run_coroutine_threadsafe(
+                    context.publisher(
+                        relay.relay_output_topic,
+                        host=relay.host,
+                        port=relay.port,
+                        num_buffers=relay.num_buffers,
+                        buf_size=relay.buf_size,
+                        start_paused=True,
+                        force_tcp=relay.force_tcp,
+                    ),
+                    loop=loop,
+                ).result()
+                self.pubs[relay.relay_output_topic] = relay_pub
+
+                relay_sub = asyncio.run_coroutine_threadsafe(
+                    context.subscriber(
+                        relay.relay_input_topic,
+                        leaky=relay.leaky,
+                        max_queue=relay.max_queue,
+                    ),
+                    loop,
+                ).result()
+
+                async def relay_message(
+                    msg: object,
+                    *,
+                    _relay: _RelayRuntime = relay,
+                ) -> None:
+                    payload = deepcopy(msg) if _relay.copy_on_forward else msg
+                    await self.pubs[_relay.relay_output_topic].broadcast(payload)
+                    await asyncio.sleep(0)
+
+                relay_message.__name__ = f"relay_{relay.endpoint_topic.replace('/', '_')}"
+                background_callables[f"RELAY|{relay.endpoint_topic}"] = partial(
+                    handle_subscriber,
+                    relay_sub,
+                    {relay_message},
+                )
+
             asyncio.run_coroutine_threadsafe(
                 process_client.register([unit.address for unit in self.units]),
                 loop,
@@ -562,8 +611,14 @@ class DefaultBackendProcess(BackendProcess):
                 asyncio.run_coroutine_threadsafe(coro_wrapper(coro()), loop)
                 for coro in coro_callables.values()
             ]
+            background_tasks = [
+                asyncio.run_coroutine_threadsafe(coro_wrapper(coro()), loop)
+                for coro in background_callables.values()
+            ]
+            tracked_tasks = complete_tasks + background_tasks
+            blocking_tasks = complete_tasks if complete_tasks else background_tasks
 
-            loop.run_in_executor(None, self.monitor_termination, complete_tasks, loop)
+            loop.run_in_executor(None, self.monitor_termination, tracked_tasks, loop)
 
             if main_func is not None:
                 unit, fn = main_func
@@ -578,12 +633,15 @@ class DefaultBackendProcess(BackendProcess):
             while True:
                 try:
                     _, not_done_set = concurrent.futures.wait(
-                        complete_tasks, timeout=1.0
+                        blocking_tasks, timeout=1.0
                     )
                     if len(not_done_set) == 0:
                         break
                 except TimeoutError:
                     pass
+
+            if complete_tasks and background_tasks:
+                self.term_ev.set()
 
         except threading.BrokenBarrierError:
             logger.info("Process exiting due to error on startup")
