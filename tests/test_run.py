@@ -129,3 +129,27 @@ def test_run_collection(passthrough_settings, num_messages):
             for line in lines:
                 results.append(json.loads(line))
         assert len(results) == num_messages
+
+
+def test_run_auto_start_with_explicit_address(unused_tcp_port):
+    # When ``graph_address`` is provided, GraphContext defaults to ``auto_start=False``
+    # and refuses to spawn a server. ``auto_start=True`` overrides that, which lets a
+    # parent process pick an ephemeral port and hand it to a child that owns the graph.
+    num_messages = 3
+    with get_test_fn() as test_filename:
+        comps = {
+            "SIMPLE_PUB": MessageGenerator(num_msgs=num_messages),
+            "SIMPLE_SUB": MessageReceiver(num_msgs=num_messages, output_fn=test_filename),
+        }
+        conns = ((comps["SIMPLE_PUB"].OUTPUT, comps["SIMPLE_SUB"].INPUT),)
+
+        ez.run(
+            components=comps,
+            connections=conns,
+            graph_address=("127.0.0.1", unused_tcp_port),
+            auto_start=True,
+        )
+
+        with open(test_filename, "r") as file:
+            results = [json.loads(line) for line in file.readlines()]
+        assert len(results) == num_messages

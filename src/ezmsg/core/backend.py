@@ -355,9 +355,10 @@ class GraphRunner:
         graph_address: AddressType | None = None,
         force_single_process: bool = False,
         profiler_log_name: str | None = None,
+        auto_start: bool | None = None,
         **components_kwargs: Component,
     ) -> None:
-            
+
         components = either_dict_or_kwargs(components, components_kwargs, "GraphRunner")
         if components is None:
             raise ValueError("Must supply at least one component to run")
@@ -370,6 +371,7 @@ class GraphRunner:
         self._graph_address = graph_address
         self._force_single_process = force_single_process
         self._profiler_log_name = profiler_log_name
+        self._auto_start = auto_start
 
         self._execution_context = None
         self._graph_context = None
@@ -696,7 +698,9 @@ class GraphRunner:
         try:
 
             async def create_graph_context() -> GraphContext:
-                return await GraphContext(self._graph_address).__aenter__()
+                return await GraphContext(
+                    self._graph_address, auto_start=self._auto_start
+                ).__aenter__()
 
             graph_context = asyncio.run_coroutine_threadsafe(
                 create_graph_context(), self._loop
@@ -918,6 +922,7 @@ def run(
     graph_address: AddressType | None = None,
     force_single_process: bool = False,
     profiler_log_name: str | None = None,
+    auto_start: bool | None = None,
     **components_kwargs: Component,
 ) -> None:
     """
@@ -948,6 +953,11 @@ def run(
     :type graph_address: AddressType | None
     :param force_single_process: Whether to force all components into a single process
     :type force_single_process: bool
+    :param auto_start: Whether to spawn a GraphServer if none is reachable at ``graph_address``.
+        If ``None`` (default), a server is auto-started only when no explicit ``graph_address``
+        is provided and no environment override is set. Pass ``True`` to force auto-start when
+        binding to a specific address (e.g. an ephemeral port chosen by the parent process).
+    :type auto_start: bool | None
     :param components_kwargs: Additional components specified as keyword arguments
     :type components_kwargs: Component
 
@@ -974,6 +984,7 @@ def run(
         graph_address=graph_address,
         force_single_process=force_single_process,
         profiler_log_name=profiler_log_name,
+        auto_start=auto_start,
     )
     
     runner.run_blocking()
