@@ -2,8 +2,9 @@ from collections.abc import Iterable
 from collections.abc import Collection as AbstractCollection
 import typing
 from copy import deepcopy
+import warnings
 
-from .stream import Stream
+from .stream import Stream, InputStream, OutputStream
 from .component import ComponentMeta, Component
 from .settings import Settings
 
@@ -34,6 +35,16 @@ class CollectionMeta(ComponentMeta):
             if isinstance(field_value, Component):
                 field_value._set_name(field_name)
                 cls.__components__[field_name] = field_value
+            elif isinstance(field_value, (InputStream, OutputStream)):
+                warnings.warn(
+                    f"{name}.{field_name} uses {type(field_value).__name__} as a "
+                    "Collection boundary endpoint. This behavior is deprecated and "
+                    "will change in a future release. Use InputTopic / OutputTopic "
+                    "for zero-overhead topic shortcuts, or InputRelay / OutputRelay "
+                    "for explicit boundary republishers.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
 
 
 class Collection(Component, metaclass=CollectionMeta):

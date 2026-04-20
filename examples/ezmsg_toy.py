@@ -24,20 +24,33 @@ class LFOSettings(ez.Settings):
     update_rate: float = 2.0  # Hz, update rate
 
 
+class LFOState(ez.State):
+    start_time: float
+    cur_settings: LFOSettings
+
+
 class LFO(ez.Unit):
     SETTINGS = LFOSettings
+    STATE = LFOState
 
     OUTPUT = ez.OutputStream(float)
 
-    async def initialize(self) -> None:
-        self.start_time = time.time()
+    INPUT_SETTINGS = ez.InputStream(LFOSettings)
 
+    async def initialize(self) -> None:
+        self.STATE.cur_settings = self.SETTINGS
+        self.STATE.start_time = time.time()
+
+    @ez.subscriber(INPUT_SETTINGS)
+    async def on_settings(self, msg: LFOSettings) -> None:
+        self.STATE.cur_settings = msg
+        
     @ez.publisher(OUTPUT)
     async def generate(self) -> AsyncGenerator:
         while True:
-            t = time.time() - self.start_time
-            yield self.OUTPUT, math.sin(2.0 * math.pi * self.SETTINGS.freq * t)
-            await asyncio.sleep(1.0 / self.SETTINGS.update_rate)
+            t = time.time() - self.STATE.start_time
+            yield self.OUTPUT, math.sin(2.0 * math.pi * self.STATE.cur_settings.freq * t)
+            await asyncio.sleep(1.0 / self.STATE.cur_settings.update_rate)
 
 
 # MESSAGE GENERATOR
@@ -45,17 +58,30 @@ class MessageGeneratorSettings(ez.Settings):
     message: str
 
 
+class MessageGeneratorState(ez.State):
+    cur_settings: MessageGeneratorSettings
+
+
 class MessageGenerator(ez.Unit):
     SETTINGS = MessageGeneratorSettings
+    STATE = MessageGeneratorState
 
     OUTPUT = ez.OutputStream(str)
+    INPUT_SETTINGS = ez.InputStream(MessageGeneratorSettings)
+
+    async def initialize(self) -> None:
+        self.STATE.cur_settings = self.SETTINGS
+
+    @ez.subscriber(INPUT_SETTINGS)
+    async def on_settings(self, msg: MessageGeneratorSettings) -> None:
+        self.STATE.cur_settings = msg
 
     @ez.publisher(OUTPUT)
     async def spawn_message(self) -> AsyncGenerator:
         while True:
             await asyncio.sleep(1.0)
-            ez.logger.info(f"Spawning {self.SETTINGS.message}")
-            yield self.OUTPUT, self.SETTINGS.message
+            ez.logger.info(f"Spawning {self.STATE.cur_settings.message}")
+            yield self.OUTPUT, self.STATE.cur_settings.message
 
     @ez.publisher(OUTPUT)
     async def spawn_once(self) -> AsyncGenerator:
@@ -123,8 +149,8 @@ class ModifierCollection(ez.Collection):
     """This collection will subscribe to messages
     and append the most recent LFO output"""
 
-    INPUT = ez.InputStream(str)
-    OUTPUT = ez.OutputStream(str)
+    INPUT = ez.InputTopic(str)
+    OUTPUT = ez.OutputTopic(str)
 
     SIN = LFO()
     # SIN2 = LFO()
@@ -152,6 +178,8 @@ class TestSystemSettings(ez.Settings):
 class TestSystem(ez.Collection):
     SETTINGS = TestSystemSettings
 
+    OUTPUT_PING = ez.OutputTopic(str)
+
     # Publishers
     PING = MessageGenerator()
     FOO = MessageGenerator()
@@ -173,6 +201,7 @@ class TestSystem(ez.Collection):
     # Define Connections
     def network(self) -> ez.NetworkDefinition:
         return (
+            (self.PING.OUTPUT, self.OUTPUT_PING),
             (self.PING.OUTPUT, self.PINGSUB1.INPUT),
             (self.PING.OUTPUT, self.MODIFIER_COLLECTION.INPUT),
             (self.MODIFIER_COLLECTION.OUTPUT, self.PINGSUB2.INPUT),
@@ -193,7 +222,7 @@ if __name__ == "__main__":
     ez.run(
         SYSTEM=system,
         connections=[
-            # Make PING.OUTPUT available on a topic ezmsg_attach.py
-            (system.PING.OUTPUT, "GLOBAL_PING_TOPIC"),
+            # Make a system output available on a topic ezmsg_attach.py
+            (system.OUTPUT_PING, "GLOBAL_PING_TOPIC"),
         ],
     )

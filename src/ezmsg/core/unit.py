@@ -2,7 +2,7 @@ import time
 import inspect
 import functools
 import warnings
-from .stream import InputStream, OutputStream
+from .stream import InputStream, OutputStream, Topic
 from .component import ComponentMeta, Component
 from .settings import Settings
 
@@ -55,6 +55,12 @@ class UnitMeta(ComponentMeta):
                     cls.__threads__[thread_name] = thread
 
         for field_name, field_value in fields.items():
+            if isinstance(field_value, Topic):
+                raise TypeError(
+                    f"{name}.{field_name} is a {type(field_value).__name__}. "
+                    "Units may only declare InputStream / OutputStream endpoints. "
+                    "Use Topic / Relay endpoints on Collections only."
+                )
             if callable(field_value):
                 if hasattr(field_value, TASK_ATTR):
                     cls.__tasks__[field_name] = field_value
@@ -274,11 +280,22 @@ def thread(func: Callable):
     Thread functions run concurrently with the main message processing and can be used
     for background tasks, monitoring, or other concurrent operations.
 
+    .. deprecated::
+       ``@thread`` is deprecated and will be removed in a future release.
+       Prefer explicit background work using ``loop.run_in_executor(...)`` or
+       explicit task management in ``initialize()``/``shutdown()``.
+
     :param func: The function to run as a background thread
     :type func: collections.abc.Callable
     :return: The decorated function
     :rtype: collections.abc.Callable
     """
+    warnings.warn(
+        "`@ez.thread` is deprecated and will be removed in a future release. "
+        "Prefer explicit background work via `loop.run_in_executor(...)`.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     setattr(func, THREAD_ATTR, True)
     return func
 

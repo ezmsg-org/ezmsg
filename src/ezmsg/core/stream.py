@@ -26,6 +26,110 @@ class Stream(Addressable):
         return f"Stream:{_addr}[{self.msg_type.__name__}]"
 
 
+class Topic(Stream):
+    """
+    Graph endpoint metadata for Collection boundaries and graph wiring.
+
+    Topics represent named DAG nodes only. Unlike InputStream / OutputStream,
+    they do not directly configure Subscriber / Publisher transport behavior.
+    """
+
+    def __repr__(self) -> str:
+        return f"Topic{super().__repr__()}()"
+
+
+class InputTopic(Topic):
+    """
+    Directional alias for a Collection input topic.
+    """
+
+    def __repr__(self) -> str:
+        return f"Input{super().__repr__()}"
+
+
+class OutputTopic(Topic):
+    """
+    Directional alias for a Collection output topic.
+    """
+
+    def __repr__(self) -> str:
+        return f"Output{super().__repr__()}"
+
+
+class InputRelay(InputTopic):
+    """
+    Collection input boundary that materializes an internal relay subscriber/publisher.
+
+    This enables subscriber-side behavior (e.g., leaky reception) on the boundary.
+    """
+
+    leaky: bool
+    max_queue: int | None
+    copy_on_forward: bool
+
+    def __init__(
+        self,
+        msg_type: Any,
+        leaky: bool = False,
+        max_queue: int | None = None,
+        copy_on_forward: bool = True,
+    ) -> None:
+        super().__init__(msg_type)
+        if max_queue is not None and max_queue <= 0:
+            raise ValueError("max_queue must be positive")
+        self.leaky = leaky
+        self.max_queue = max_queue
+        self.copy_on_forward = copy_on_forward
+
+    def __repr__(self) -> str:
+        base = f"InputRelay{Stream.__repr__(self)}"
+        return (
+            f"{base}(leaky={self.leaky}, max_queue={self.max_queue}, "
+            f"copy_on_forward={self.copy_on_forward})"
+        )
+
+
+class OutputRelay(OutputTopic):
+    """
+    Collection output boundary that materializes an internal relay subscriber/publisher.
+
+    This enables publisher-side behavior (e.g., custom transport buffer settings)
+    on the boundary.
+    """
+
+    host: str | None
+    port: int | None
+    num_buffers: int
+    buf_size: int
+    force_tcp: bool
+    copy_on_forward: bool
+
+    def __init__(
+        self,
+        msg_type: Any,
+        host: str | None = None,
+        port: int | None = None,
+        num_buffers: int = 32,
+        buf_size: int = DEFAULT_SHM_SIZE,
+        force_tcp: bool = False,
+        copy_on_forward: bool = True,
+    ) -> None:
+        super().__init__(msg_type)
+        self.host = host
+        self.port = port
+        self.num_buffers = num_buffers
+        self.buf_size = buf_size
+        self.force_tcp = force_tcp
+        self.copy_on_forward = copy_on_forward
+
+    def __repr__(self) -> str:
+        base = f"OutputRelay{Stream.__repr__(self)}"
+        return (
+            f"{base}(num_buffers={self.num_buffers}, force_tcp={self.force_tcp}, "
+            f"copy_on_forward={self.copy_on_forward})"
+        )
+
+
 class InputStream(Stream):
     """
     Can be added to any Component as a member variable. Methods may subscribe to it.
@@ -124,15 +228,20 @@ class OutputStream(Stream):
     :type num_buffers: int
     :param buf_size: Size of each message buffer in bytes
     :type buf_size: int
-    :param force_tcp: Whether to force TCP transport instead of shared memory
-    :type force_tcp: bool
+    :param force_tcp: Whether to force TCP transport instead of shared memory.
+        If None, inherit the process default from ``EZMSG_FORCE_TCP``.
+    :type force_tcp: bool | None
+    :param allow_local: Whether to allow the in-process fast path when available.
+        If None, inherit the process default from ``EZMSG_ALLOW_LOCAL``.
+    :type allow_local: bool | None
     """
 
     host: str | None
     port: int | None
     num_buffers: int
     buf_size: int
-    force_tcp: bool
+    force_tcp: bool | None
+    allow_local: bool | None
 
     def __init__(
         self,
@@ -141,7 +250,8 @@ class OutputStream(Stream):
         port: int | None = None,
         num_buffers: int = 32,
         buf_size: int = DEFAULT_SHM_SIZE,
-        force_tcp: bool = False,
+        force_tcp: bool | None = None,
+        allow_local: bool | None = None,
     ) -> None:
         super().__init__(msg_type)
         self.host = host
@@ -149,7 +259,11 @@ class OutputStream(Stream):
         self.num_buffers = num_buffers
         self.buf_size = buf_size
         self.force_tcp = force_tcp
+        self.allow_local = allow_local
 
     def __repr__(self) -> str:
         preamble = f"Output{super().__repr__()}"
-        return f"{preamble}({self.num_buffers=}, {self.force_tcp=})"
+        return (
+            f"{preamble}({self.num_buffers=}, {self.force_tcp=}, "
+            f"{self.allow_local=})"
+        )

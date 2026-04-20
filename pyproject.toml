@@ -1,6 +1,6 @@
 [project]
 name = "ezmsg"
-version = "3.8.0"
+version = "3.9.0"
 description = "A simple DAG-based computation model"
 authors = [
   { name = "Griffin Milsap", email = "griffin.milsap@gmail.com" },
@@ -55,11 +55,16 @@ axisarray = [
 
 [project.scripts]
 ezmsg = "ezmsg.core.command:cmdline"
-ezmsg-perf = "ezmsg.util.perf.command:command"
 
 [project.optional-dependencies]
 axisarray = [
     "numpy>=2.2.6",
+]
+perf = [
+  "xarray>=2025.6.1",
+]
+dashboard = [
+  "ezmsg-dashboard; python_version >= '3.11'",
 ]
 
 [tool.pytest.ini_options]

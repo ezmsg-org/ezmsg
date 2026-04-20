@@ -2,9 +2,12 @@ import asyncio
 from collections.abc import Callable, Mapping, Iterable
 from collections.abc import Collection as AbstractCollection
 import enum
+import inspect
 import logging
 import os
+import pickle
 import signal
+from dataclasses import dataclass
 from threading import BrokenBarrierError
 from multiprocessing import Event, Barrier
 from multiprocessing.synchronize import Event as EventType
@@ -16,8 +19,44 @@ from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
 from .collection import Collection, NetworkDefinition
 from .component import Component
-from .stream import Stream
-from .unit import Unit, PROCESS_ATTR
+from .stream import (
+    Stream,
+    InputStream,
+    OutputStream,
+    Topic,
+    InputTopic,
+    OutputTopic,
+    InputRelay,
+    OutputRelay,
+)
+from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
+from .settings import Settings
+from .graphmeta import (
+    CollectionMetadata,
+    ComponentMetadata,
+    ComponentMetadataType,
+    DynamicSettingsMetadata,
+    InputRelayMetadata,
+    InputStreamMetadata,
+    InputTopicMetadata,
+    OutputRelayMetadata,
+    OutputStreamMetadata,
+    OutputTopicMetadata,
+    RelayMetadataType,
+    StreamMetadataType,
+    StreamMetadata,
+    TopicMetadata,
+    TopicMetadataType,
+    TaskMetadata,
+    GraphMetadata,
+    UnitMetadata,
+)
+from .relay import _CollectionRelayUnit, _RelaySettings
+from .settingsmeta import (
+    settings_repr_value,
+    settings_schema_from_type,
+    settings_schema_from_value,
+)
 
 from .graphserver import GraphService
 from .graphcontext import GraphContext
@@ -31,6 +70,31 @@ from .backendprocess import (
 from .util import either_dict_or_kwargs
 
 logger = logging.getLogger("ezmsg")
+
+
+def crawl_components(
+    component: Component,
+    callback: Callable[[Component], None] | None = None,
+) -> list[Component]:
+    search: list[Component] = [component]
+    out: list[Component] = []
+    while len(search):
+        comp = search.pop()
+        out.append(comp)
+        search += list(comp.components.values())
+        if callback is not None:
+            callback(comp)
+    return out
+
+
+@dataclass
+class _RelayBinding:
+    kind: str  # "input" or "output"
+    endpoint_topic: str
+    relay_in_topic: str
+    relay_out_topic: str
+    endpoint: InputRelay | OutputRelay
+    relay_unit: _CollectionRelayUnit
 
 
 class ExecutionContext:
@@ -95,48 +159,140 @@ class ExecutionContext:
         start_participant: bool = False,
     ) -> "ExecutionContext | None":
         graph_connections: list[tuple[str, str]] = []
+        relay_bindings: dict[str, _RelayBinding] = {}
 
         for name, component in components.items():
             component._set_name(name)
             component._set_location([root_name] if root_name is not None else [])
 
+        def normalize_topic(endpoint: Stream | str | enum.Enum, where: str) -> str:
+            if isinstance(endpoint, Stream):
+                return endpoint.address
+            if isinstance(endpoint, enum.Enum):
+                return endpoint.name
+            if isinstance(endpoint, str):
+                return endpoint
+            raise TypeError(
+                f"Invalid endpoint type in {where}: {type(endpoint)}. "
+                "Expected Stream, str, or Enum."
+            )
+
         if connections is not None:
             for from_topic, to_topic in connections:
-                if isinstance(from_topic, Stream):
-                    from_topic = from_topic.address
-                if isinstance(to_topic, Stream):
-                    to_topic = to_topic.address
-                if isinstance(to_topic, enum.Enum):
-                    to_topic = to_topic.name
-                if isinstance(from_topic, enum.Enum):
-                    from_topic = from_topic.name
-                graph_connections.append((from_topic, to_topic))
+                graph_connections.append(
+                    (
+                        normalize_topic(from_topic, "connections"),
+                        normalize_topic(to_topic, "connections"),
+                    )
+                )
 
-        def crawl_components(
-            component: Component, callback: Callable[[Component], None]
-        ) -> None:
-            search: list[Component] = [component]
-            while len(search):
-                comp = search.pop()
-                search += list(comp.components.values())
-                callback(comp)
+        def input_relay_settings(relay: InputRelay) -> _RelaySettings:
+            return _RelaySettings(
+                leaky=relay.leaky,
+                max_queue=relay.max_queue,
+                copy_on_forward=relay.copy_on_forward,
+            )
 
+        def output_relay_settings(relay: OutputRelay) -> _RelaySettings:
+            return _RelaySettings(
+                host=relay.host,
+                port=relay.port,
+                num_buffers=relay.num_buffers,
+                buf_size=relay.buf_size,
+                force_tcp=relay.force_tcp,
+                copy_on_forward=relay.copy_on_forward,
+            )
+
+        def add_collection_relay_units(comp: Component) -> None:
+            if not isinstance(comp, Collection):
+                return
+
+            for endpoint_name, endpoint in comp.streams.items():
+                if isinstance(endpoint, InputRelay):
+                    relay_name = f"__relay_in_{endpoint_name}"
+                    if relay_name in comp.components:
+                        raise ValueError(
+                            f"{comp.address} already defines component '{relay_name}'."
+                        )
+
+                    relay_unit = _CollectionRelayUnit(input_relay_settings(endpoint))
+                    relay_unit._set_name(relay_name)
+                    relay_unit._set_location(comp.location + [comp.name])
+                    comp.components[relay_name] = relay_unit
+                    setattr(comp, relay_name, relay_unit)
+
+                    relay_bindings[endpoint.address] = _RelayBinding(
+                        kind="input",
+                        endpoint_topic=endpoint.address,
+                        relay_in_topic=relay_unit.INPUT.address,
+                        relay_out_topic=relay_unit.OUTPUT.address,
+                        endpoint=endpoint,
+                        relay_unit=relay_unit,
+                    )
+
+                elif isinstance(endpoint, OutputRelay):
+                    relay_name = f"__relay_out_{endpoint_name}"
+                    if relay_name in comp.components:
+                        raise ValueError(
+                            f"{comp.address} already defines component '{relay_name}'."
+                        )
+
+                    relay_unit = _CollectionRelayUnit(output_relay_settings(endpoint))
+                    relay_unit._set_name(relay_name)
+                    relay_unit._set_location(comp.location + [comp.name])
+                    comp.components[relay_name] = relay_unit
+                    setattr(comp, relay_name, relay_unit)
+
+                    relay_bindings[endpoint.address] = _RelayBinding(
+                        kind="output",
+                        endpoint_topic=endpoint.address,
+                        relay_in_topic=relay_unit.INPUT.address,
+                        relay_out_topic=relay_unit.OUTPUT.address,
+                        endpoint=endpoint,
+                        relay_unit=relay_unit,
+                    )
+
+        for component in components.values():
+            if isinstance(component, Collection):
+                crawl_components(component, add_collection_relay_units)
         def gather_edges(comp: Component):
             if isinstance(comp, Collection):
                 for from_stream, to_stream in comp.network():
-                    if isinstance(from_stream, Stream):
-                        from_stream = from_stream.address
-                    if isinstance(to_stream, Stream):
-                        to_stream = to_stream.address
-                    if isinstance(to_stream, enum.Enum):
-                        to_stream = to_stream.name
-                    if isinstance(from_stream, enum.Enum):
-                        from_stream = from_stream.name
-                    graph_connections.append((from_stream, to_stream))
+                    graph_connections.append(
+                        (
+                            normalize_topic(from_stream, f"{comp.address}.network"),
+                            normalize_topic(to_stream, f"{comp.address}.network"),
+                        )
+                    )
 
         for component in components.values():
             if isinstance(component, Collection):
                 crawl_components(component, gather_edges)
+
+        if relay_bindings:
+            rewritten_connections: list[tuple[str, str]] = []
+            for from_topic, to_topic in graph_connections:
+                to_binding = relay_bindings.get(to_topic, None)
+                if to_binding is not None and to_binding.kind == "output":
+                    to_topic = to_binding.relay_in_topic
+
+                from_binding = relay_bindings.get(from_topic, None)
+                if from_binding is not None and from_binding.kind == "input":
+                    from_topic = from_binding.relay_out_topic
+
+                rewritten_connections.append((from_topic, to_topic))
+
+            for binding in relay_bindings.values():
+                if binding.kind == "input":
+                    rewritten_connections.append(
+                        (binding.endpoint_topic, binding.relay_in_topic)
+                    )
+                else:
+                    rewritten_connections.append(
+                        (binding.relay_out_topic, binding.endpoint_topic)
+                    )
+
+            graph_connections = rewritten_connections
 
         processes = collect_processes(components.values(), process_components)
 
@@ -148,6 +304,14 @@ class ExecutionContext:
                         comp.configure()
 
                 crawl_components(component, configure_collections)
+
+        for binding in relay_bindings.values():
+            if isinstance(binding.endpoint, InputRelay):
+                binding.relay_unit.apply_settings(input_relay_settings(binding.endpoint))
+            elif isinstance(binding.endpoint, OutputRelay):
+                binding.relay_unit.apply_settings(
+                    output_relay_settings(binding.endpoint)
+                )
 
         if force_single_process:
             processes = [[u for pu in processes for u in pu]]
@@ -255,6 +419,206 @@ class GraphRunner:
     def running(self) -> bool:
         return self._started
 
+    def _type_name(self, tp: type) -> str:
+        return f"{tp.__module__}.{tp.__qualname__}"
+
+    def _stream_type_name(self, stream_type: object) -> str:
+        if inspect.isclass(stream_type):
+            return self._type_name(stream_type)
+        return repr(stream_type)
+
+    def _settings_repr(self, value: object) -> dict[str, object] | str:
+        return settings_repr_value(value)
+
+    def _settings_snapshot(self, value: object) -> tuple[bytes | None, dict[str, object] | str]:
+        try:
+            pickled = pickle.dumps(value)
+        except Exception as exc:
+            logger.warning(f"Could not pickle settings for metadata: {exc}")
+            pickled = None
+        return pickled, self._settings_repr(value)
+
+    def _component_metadata(self) -> GraphMetadata:
+        components: dict[str, ComponentMetadataType] = {}
+
+        for root in self._components.values():
+            for comp in crawl_components(root):
+                is_collection = isinstance(comp, Collection)
+                input_settings = comp.streams.get("INPUT_SETTINGS")
+                dynamic_settings = DynamicSettingsMetadata(
+                    enabled=isinstance(input_settings, InputStream),
+                    input_topic=(
+                        input_settings.address
+                        if isinstance(input_settings, InputStream)
+                        else None
+                    ),
+                    settings_type=(
+                        self._stream_type_name(input_settings.msg_type)
+                        if isinstance(input_settings, InputStream)
+                        else None
+                    ),
+                )
+
+                stream_entries: dict[str, StreamMetadataType] = {}
+                topic_entries: dict[str, TopicMetadataType] = {}
+                relay_entries: dict[str, RelayMetadataType] = {}
+                for stream_name, stream in comp.streams.items():
+                    msg_type = self._stream_type_name(stream.msg_type)
+                    if isinstance(stream, InputRelay):
+                        relay_entries[stream_name] = InputRelayMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                            leaky=stream.leaky,
+                            max_queue=stream.max_queue,
+                            copy_on_forward=stream.copy_on_forward,
+                        )
+                    elif isinstance(stream, OutputRelay):
+                        relay_entries[stream_name] = OutputRelayMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                            host=stream.host,
+                            port=stream.port,
+                            num_buffers=stream.num_buffers,
+                            buf_size=stream.buf_size,
+                            force_tcp=stream.force_tcp,
+                            copy_on_forward=stream.copy_on_forward,
+                        )
+                    elif isinstance(stream, InputTopic):
+                        topic_entries[stream_name] = InputTopicMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                        )
+                    elif isinstance(stream, OutputTopic):
+                        topic_entries[stream_name] = OutputTopicMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                        )
+                    elif isinstance(stream, Topic):
+                        topic_entries[stream_name] = TopicMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                        )
+                    elif isinstance(stream, InputStream):
+                        if is_collection:
+                            topic_entries[stream_name] = InputTopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = InputStreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                                leaky=stream.leaky,
+                                max_queue=stream.max_queue,
+                            )
+                    elif isinstance(stream, OutputStream):
+                        if is_collection:
+                            topic_entries[stream_name] = OutputTopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = OutputStreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                                host=stream.host,
+                                port=stream.port,
+                                num_buffers=stream.num_buffers,
+                                buf_size=stream.buf_size,
+                                force_tcp=stream.force_tcp,
+                            )
+                    else:
+                        if is_collection:
+                            topic_entries[stream_name] = TopicMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+                        else:
+                            stream_entries[stream_name] = StreamMetadata(
+                                name=stream_name,
+                                address=stream.address,
+                                msg_type=msg_type,
+                            )
+
+                task_entries: list[TaskMetadata] = []
+                for task_name, task in comp.tasks.items():
+                    task_entry = TaskMetadata(name=task_name)
+
+                    if hasattr(task, SUBSCRIBES_ATTR):
+                        sub_stream = getattr(task, SUBSCRIBES_ATTR)
+                        if hasattr(sub_stream, "name") and sub_stream.name in comp.streams:
+                            task_entry.subscribes = comp.streams[sub_stream.name].address
+
+                    if hasattr(task, PUBLISHES_ATTR):
+                        pub_streams = getattr(task, PUBLISHES_ATTR)
+                        task_entry.publishes = [
+                            comp.streams[stream.name].address
+                            for stream in pub_streams
+                            if hasattr(stream, "name") and stream.name in comp.streams
+                        ]
+
+                    task_entries.append(task_entry)
+
+                settings_type = getattr(comp.__class__, "__settings_type__", Settings)
+                settings_type_name = (
+                    self._type_name(settings_type)
+                    if inspect.isclass(settings_type)
+                    else repr(settings_type)
+                )
+                settings_schema = (
+                    settings_schema_from_value(comp.SETTINGS)
+                    if comp.SETTINGS is not None
+                    else settings_schema_from_type(settings_type)
+                )
+
+                component_common = dict(
+                    address=comp.address,
+                    name=comp.name,
+                    component_type=self._type_name(comp.__class__),
+                    settings_type=settings_type_name,
+                    initial_settings=self._settings_snapshot(comp.SETTINGS),
+                    dynamic_settings=dynamic_settings,
+                    settings_schema=settings_schema,
+                )
+
+                metadata_entry: ComponentMetadataType
+                if isinstance(comp, Collection):
+                    metadata_entry = CollectionMetadata(
+                        **component_common,
+                        topics=topic_entries,
+                        relays=relay_entries,
+                        children=sorted(
+                            child.address for child in comp.components.values()
+                        ),
+                    )
+                elif isinstance(comp, Unit):
+                    metadata_entry = UnitMetadata(
+                        **component_common,
+                        streams=stream_entries,
+                        tasks=sorted(task_entries, key=lambda task: task.name),
+                        main=comp.main.__name__ if comp.main is not None else None,
+                        threads=sorted(comp.threads.keys()),
+                    )
+                else:
+                    metadata_entry = ComponentMetadata(**component_common)
+                components[comp.address] = metadata_entry
+
+        return GraphMetadata(
+            schema_version=1,
+            root_name=self._root_name,
+            components={address: components[address] for address in sorted(components)},
+        )
+
     def start(self) -> None:
         if self._started:
             raise RuntimeError("GraphRunner is already running")
@@ -303,7 +667,6 @@ class GraphRunner:
             force_single_process=self._force_single_process, wait_for_ready=False
         ):
             return
-        self._started = True
         self._run_main_process()
 
     def _initialize(self, force_single_process: bool, wait_for_ready: bool) -> bool:
@@ -360,6 +723,15 @@ class GraphRunner:
 
             asyncio.run_coroutine_threadsafe(setup_graph(), self._loop).result()
 
+            metadata = self._component_metadata()
+
+            async def register_graph_metadata() -> None:
+                await graph_context.register_metadata(metadata)
+
+            asyncio.run_coroutine_threadsafe(
+                register_graph_metadata(), self._loop
+            ).result()
+
             if len(self._execution_context.processes) > 1:
                 logger.info(
                     f"Running in {len(self._execution_context.processes)} processes."
@@ -394,11 +766,12 @@ class GraphRunner:
         if self._execution_context is None or self._loop is None:
             return
         self._main_process = self._execution_context.processes[0]
-        self._start_processes(self._execution_context.processes[1:])
 
         interrupts = 0
         forced_sigint = False
         try:
+            self._start_processes(self._execution_context.processes[1:])
+            self._started = True
             self._main_process.process(self._loop)
             self._join_spawned_processes()
             logger.info("All processes exited normally")
