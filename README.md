@@ -1,4 +1,4 @@
-# <img src="https://raw.githubusercontent.com/iscoe/ezmsg/main/docs/source/logo.png" width="50"/> ezmsg
+# <img src="https://raw.githubusercontent.com/ezmsg-org/ezmsg/main/docs/source/_static/_images/ezmsg_logo.png" width="50" alt="ezmsg logo" /> ezmsg
 
 Messaging and Multiprocessing.
 
@@ -50,7 +50,7 @@ cd docs
 uv run make.bat html
 ```
 
-https://ezmsg.readthedocs.io/en/latest/
+https://www.ezmsg.org/
 
 `ezmsg` is very similar to [`labgraph`](https://www.github.com/facebookresearch/labgraph), so you might get a primer with their documentation and examples. Additionally, there are many examples provided in the examples/tests directories strewn throughout this repository.
 
@@ -76,8 +76,8 @@ Extensions can be managed manually as well. Here are some of the extensions we m
 - [ezmsg-sigproc](https://github.com/ezmsg-org/ezmsg-sigproc) -- Timeseries signal processing modules
 - [ezmsg-websocket](https://github.com/ezmsg-org/ezmsg-websocket) -- Websocket server and client nodes for `ezmsg` graphs
 - [ezmsg-zmq](https://github.com/ezmsg-org/ezmsg-zmq) -- ZeroMQ pub and sub nodes for `ezmsg` graphs
-- [ezmsg-panel](https://github.com/griffinmilsap/ezmsg-panel) -- Plotting tools for `ezmsg` that use [panel](https://github.com/holoviz/panel)
-- [ezmsg-blackrock](https://github.com/griffinmilsap/ezmsg-blackrock) -- Interface for Blackrock Cerebus ecosystem (incl. Neuroport) using `pycbsdk`
+- [ezmsg-panel](https://github.com/ezmsg-org/ezmsg-panel) -- Plotting tools for `ezmsg` that use [panel](https://github.com/holoviz/panel)
+- [ezmsg-blackrock](https://github.com/ezmsg-org/ezmsg-blackrock) -- Interface for Blackrock Cerebus ecosystem (incl. Neuroport) using `pycbsdk`
 - [ezmsg-lsl](https://github.com/ezmsg-org/ezmsg-lsl) -- Source unit for LSL Inlet and sink unit for LSL Outlet
 - [ezmsg-unicorn](https://github.com/griffinmilsap/ezmsg-unicorn) -- g.tec Unicorn Hybrid Black integration for `ezmsg`
 - [ezmsg-gadget](https://github.com/griffinmilsap/ezmsg-gadget) -- USB-gadget with HID control integration for Raspberry Pi (Zero/W/2W, 4, CM4)
