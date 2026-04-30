@@ -150,7 +150,7 @@ class ModifierCollection(ez.Collection):
     and append the most recent LFO output"""
 
     INPUT = ez.InputTopic(str)
-    OUTPUT = ez.OutputTopic(str)
+    OUTPUT = ez.OutputRelay(str)
 
     SIN = LFO()
     # SIN2 = LFO()
