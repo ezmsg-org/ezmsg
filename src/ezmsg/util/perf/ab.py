@@ -540,6 +540,7 @@ def perf_ab(
     transports: list[str],
     apis: list[str],
     num_buffers: int,
+    trace: bool,
     seed: int,
     json_out: Path | None,
     keep_worktrees: bool,
@@ -627,6 +628,7 @@ def perf_ab(
                     apis=apis,
                     num_buffers=num_buffers,
                     quiet=quiet,
+                    trace=trace,
                 ),
                 "B": lambda path: build_hotpath_command(
                     python_path_b,
@@ -638,6 +640,7 @@ def perf_ab(
                     apis=apis,
                     num_buffers=num_buffers,
                     quiet=quiet,
+                    trace=trace,
                 ),
             }
             tree_by_label = {"A": tree_a, "B": tree_b}
@@ -780,6 +783,11 @@ def setup_ab_cmdline(subparsers: argparse._SubParsersAction) -> None:
         help="publisher buffers (default = 1)",
     )
     p_ab.add_argument(
+        "--trace",
+        action="store_true",
+        help="enable dashboard-style trace profiling in child hot-path runs",
+    )
+    p_ab.add_argument(
         "--seed",
         type=int,
         default=DEFAULT_PAIR_SEED,
@@ -822,6 +830,7 @@ def setup_ab_cmdline(subparsers: argparse._SubParsersAction) -> None:
             transports=ns.transports,
             apis=ns.apis,
             num_buffers=ns.num_buffers,
+            trace=ns.trace,
             seed=ns.seed,
             json_out=ns.json_out,
             keep_worktrees=ns.keep_worktrees,
