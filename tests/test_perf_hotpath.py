@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 
 from ezmsg.core.graphcontext import GraphContext
