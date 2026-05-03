@@ -19,6 +19,8 @@ from uuid import uuid4
 import ezmsg.core as ez
 
 from ezmsg.core.graphserver import GraphServer
+from ezmsg.core.graphmeta import ProfilingTraceControl
+from ezmsg.core.processclient import ProcessControlClient
 
 from .util import coef_var, median_of_means, stable_perf
 
@@ -28,6 +30,8 @@ TransportName = Literal["local", "shm", "tcp"]
 DEFAULT_APIS: tuple[ApiName, ...] = ("async",)
 DEFAULT_TRANSPORTS: tuple[TransportName, ...] = ("local", "shm", "tcp")
 DEFAULT_PAYLOAD_SIZES = (64, 4096)
+DEFAULT_TRACE_METRICS = ["publish_delta_ns", "lease_time_ns", "user_span_ns"]
+TRACE_UNIT_ADDRESS = "EZMSG/PERF/HOTPATH"
 
 
 def _supports_same_process_transport_selection() -> bool:
@@ -64,12 +68,13 @@ class HotPathCase:
     transport: TransportName
     payload_size: int
     num_buffers: int
+    trace: bool = False
 
     @property
     def case_id(self) -> str:
         return (
             f"{self.api}/{self.transport}/payload={self.payload_size}"
-            f"/buffers={self.num_buffers}"
+            f"/buffers={self.num_buffers}/trace={str(self.trace).lower()}"
         )
 
 
@@ -124,6 +129,7 @@ def build_cases(
     transports: list[str],
     payload_sizes: list[int],
     num_buffers: int,
+    trace: bool = False,
 ) -> list[HotPathCase]:
     cases = [
         HotPathCase(
@@ -131,6 +137,7 @@ def build_cases(
             transport=transport,  # type: ignore[arg-type]
             payload_size=payload_size,
             num_buffers=num_buffers,
+            trace=trace,
         )
         for api in apis
         for transport in transports
@@ -169,18 +176,36 @@ async def _async_roundtrip(
     payload = bytes(case.payload_size)
 
     async with ez.GraphContext(graph_address, auto_start=False) as ctx:
+        process = ProcessControlClient(graph_address)
+        await process.connect()
+        process._trace_push_interval_s = 60.0
         pub = await ctx.publisher(topic, **_publisher_transport_kwargs(case, graph_address[0]))
         sub = await ctx.subscriber(topic)
+        try:
+            if case.trace:
+                await process.register([TRACE_UNIT_ADDRESS])
+                await ctx.process_set_profiling_trace(
+                    TRACE_UNIT_ADDRESS,
+                    ProfilingTraceControl(
+                        enabled=True,
+                        sample_mod=1,
+                        publisher_topics=[topic],
+                        subscriber_topics=[topic],
+                        metrics=DEFAULT_TRACE_METRICS,
+                    ),
+                )
 
-        for _ in range(warmup):
-            await pub.broadcast(payload)
-            await sub.recv()
+            for _ in range(warmup):
+                await pub.broadcast(payload)
+                await sub.recv()
 
-        start = time.perf_counter()
-        for _ in range(count):
-            await pub.broadcast(payload)
-            await sub.recv()
-        return time.perf_counter() - start
+            start = time.perf_counter()
+            for _ in range(count):
+                await pub.broadcast(payload)
+                await sub.recv()
+            return time.perf_counter() - start
+        finally:
+            await process.close()
 
 
 def _sync_roundtrip(
@@ -194,18 +219,38 @@ def _sync_roundtrip(
     payload = bytes(case.payload_size)
 
     with ez.sync.init(graph_address, auto_start=False) as ctx:
+        process = ProcessControlClient(graph_address)
+        asyncio.run(process.connect())
+        process._trace_push_interval_s = 60.0
         pub = ctx.create_publisher(topic, **_publisher_transport_kwargs(case, graph_address[0]))
         sub = ctx.create_subscription(topic)
+        try:
+            if case.trace:
+                asyncio.run(process.register([TRACE_UNIT_ADDRESS]))
+                asyncio.run(
+                    ctx._graph_context.process_set_profiling_trace(
+                        TRACE_UNIT_ADDRESS,
+                        ProfilingTraceControl(
+                            enabled=True,
+                            sample_mod=1,
+                            publisher_topics=[topic],
+                            subscriber_topics=[topic],
+                            metrics=DEFAULT_TRACE_METRICS,
+                        ),
+                    )
+                )
 
-        for _ in range(warmup):
-            pub.publish(payload)
-            sub.recv()
+            for _ in range(warmup):
+                pub.publish(payload)
+                sub.recv()
 
-        start = time.perf_counter()
-        for _ in range(count):
-            pub.publish(payload)
-            sub.recv()
-        return time.perf_counter() - start
+            start = time.perf_counter()
+            for _ in range(count):
+                pub.publish(payload)
+                sub.recv()
+            return time.perf_counter() - start
+        finally:
+            asyncio.run(process.close())
 
 
 def run_hotpath_case(
@@ -254,11 +299,12 @@ def run_hotpath_suite(
     transports: list[str],
     payload_sizes: list[int],
     num_buffers: int,
+    trace: bool,
     seed: int,
     quiet: bool,
 ) -> HotPathSuiteResult:
     rng = random.Random(seed)
-    cases = build_cases(apis, transports, payload_sizes, num_buffers)
+    cases = build_cases(apis, transports, payload_sizes, num_buffers, trace=trace)
     rng.shuffle(cases)
 
     graph_server = GraphServer()
@@ -311,6 +357,7 @@ def perf_hotpath(
     transports: list[str],
     payload_sizes: list[int],
     num_buffers: int,
+    trace: bool,
     seed: int,
     json_out: Path | None,
     quiet: bool,
@@ -323,6 +370,7 @@ def perf_hotpath(
         transports=transports,
         payload_sizes=payload_sizes,
         num_buffers=num_buffers,
+        trace=trace,
         seed=seed,
         quiet=quiet,
     )
@@ -330,7 +378,7 @@ def perf_hotpath(
     print("Hot-path roundtrip benchmark")
     print(
         f"count={count}, warmup={warmup}, samples={samples}, "
-        f"payload_sizes={payload_sizes}, transports={transports}, apis={apis}"
+        f"payload_sizes={payload_sizes}, transports={transports}, apis={apis}, trace={trace}"
     )
     for case_result in result.results:
         print(_format_case_result(case_result))
@@ -391,6 +439,11 @@ def setup_hotpath_cmdline(subparsers: argparse._SubParsersAction) -> None:
         help="publisher buffers (default = 1)",
     )
     p_hotpath.add_argument(
+        "--trace",
+        action="store_true",
+        help="enable publisher trace bookkeeping during the benchmark",
+    )
+    p_hotpath.add_argument(
         "--seed",
         type=int,
         default=0,
@@ -416,6 +469,7 @@ def setup_hotpath_cmdline(subparsers: argparse._SubParsersAction) -> None:
             transports=ns.transports,
             payload_sizes=ns.payload_sizes,
             num_buffers=ns.num_buffers,
+            trace=ns.trace,
             seed=ns.seed,
             json_out=ns.json_out,
             quiet=ns.quiet,
