@@ -83,6 +83,7 @@ def build_hotpath_command(
     apis: list[str],
     num_buffers: int,
     quiet: bool,
+    trace: bool = False,
 ) -> list[str]:
     cmd = [
         str(python),
@@ -104,6 +105,8 @@ def build_hotpath_command(
         *apis,
         *_hotpath_json_arg(output_path),
     ]
+    if trace:
+        cmd.append("--trace")
     if quiet:
         cmd.append("--quiet")
     return cmd

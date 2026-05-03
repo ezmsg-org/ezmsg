@@ -28,12 +28,14 @@ def test_build_hotpath_command_contains_expected_args(tmp_path):
         apis=["async", "sync"],
         num_buffers=2,
         quiet=True,
+        trace=True,
     )
 
     assert cmd[:3] == ["/tmp/shared-python", "-m", "ezmsg.util.perf.hotpath"]
     assert "--count" in cmd
     assert "--payload-sizes" in cmd
     assert "--quiet" in cmd
+    assert "--trace" in cmd
 
 
 def test_parse_env_assignments_merges_repeatable_values():
