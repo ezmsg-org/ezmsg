@@ -565,7 +565,35 @@ class Publisher:
                             f"Publisher {self.id}: Channel {channel.id} connection fail"
                         )
 
-        self._profile.record_publish(self._backpressure.pressure, msg_seq=self._msg_id)
+        profile = self._profile
+        inflight = self._backpressure.pressure
+        profile.messages_published_total += 1
+        profile.inflight_messages_current = inflight
+
+        if profile._trace_publish_delta_enabled:
+            sample_mod = profile.trace_sample_mod
+            sampled = True
+            if sample_mod != 1:
+                profile._trace_counter += 1
+                sampled = (profile._trace_counter % sample_mod) == 0
+            if sampled:
+                now_ns = PROFILE_TIME()
+                last_publish_ts_ns = profile._last_publish_ts_ns
+                publish_delta_ns = (
+                    0 if last_publish_ts_ns is None else now_ns - last_publish_ts_ns
+                )
+                profile._last_publish_ts_ns = now_ns
+                profile.trace_samples.append(
+                    (
+                        now_ns,
+                        profile.endpoint_id,
+                        profile.topic,
+                        "publish_delta_ns",
+                        float(publish_delta_ns),
+                        None,
+                        self._msg_id,
+                    )
+                )
         self._msg_id += 1
 
     def _should_use_local_fast_path(self) -> bool:
