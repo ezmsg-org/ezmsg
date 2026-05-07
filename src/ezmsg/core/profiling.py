@@ -3,6 +3,7 @@ import socket
 import time
 import heapq
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, TypeAlias
 from uuid import UUID
@@ -31,85 +32,6 @@ TraceRecord: TypeAlias = tuple[
     ProfileChannelType | None,
     int | None,
 ]
-
-
-@dataclass
-class TraceRingBuffer:
-    maxlen: int
-    _timestamps_ns: list[int | None] = field(init=False)
-    _endpoint_ids: list[str | None] = field(init=False)
-    _topics: list[str | None] = field(init=False)
-    _metrics: list[str | None] = field(init=False)
-    _values: list[float | None] = field(init=False)
-    _channel_kinds: list[ProfileChannelType | None] = field(init=False)
-    _sample_seqs: list[int | None] = field(init=False)
-    _head: int = field(default=0, init=False)
-    _size: int = field(default=0, init=False)
-
-    def __post_init__(self) -> None:
-        cap = max(1, int(self.maxlen))
-        self.maxlen = cap
-        self._timestamps_ns = [None] * cap
-        self._endpoint_ids = [None] * cap
-        self._topics = [None] * cap
-        self._metrics = [None] * cap
-        self._values = [None] * cap
-        self._channel_kinds = [None] * cap
-        self._sample_seqs = [None] * cap
-
-    def __bool__(self) -> bool:
-        return self._size > 0
-
-    def clear(self) -> None:
-        self._head = 0
-        self._size = 0
-
-    def append(self, record: TraceRecord) -> None:
-        idx = (self._head + self._size) % self.maxlen
-        if self._size == self.maxlen:
-            idx = self._head
-            self._head = (self._head + 1) % self.maxlen
-        else:
-            self._size += 1
-        ts, endpoint_id, topic, metric, value, channel_kind, sample_seq = record
-        self._timestamps_ns[idx] = ts
-        self._endpoint_ids[idx] = endpoint_id
-        self._topics[idx] = topic
-        self._metrics[idx] = metric
-        self._values[idx] = value
-        self._channel_kinds[idx] = channel_kind
-        self._sample_seqs[idx] = sample_seq
-
-    def peek(self) -> TraceRecord:
-        if self._size == 0:
-            raise IndexError('peek from empty TraceRingBuffer')
-        idx = self._head
-        return (
-            self._timestamps_ns[idx],
-            self._endpoint_ids[idx],
-            self._topics[idx],
-            self._metrics[idx],
-            self._values[idx],
-            self._channel_kinds[idx],
-            self._sample_seqs[idx],
-        )
-
-    def popleft(self) -> TraceRecord:
-        if self._size == 0:
-            raise IndexError('popleft from empty TraceRingBuffer')
-        idx = self._head
-        record = (
-            self._timestamps_ns[idx],
-            self._endpoint_ids[idx],
-            self._topics[idx],
-            self._metrics[idx],
-            self._values[idx],
-            self._channel_kinds[idx],
-            self._sample_seqs[idx],
-        )
-        self._head = (self._head + 1) % self.maxlen
-        self._size -= 1
-        return record
 
 
 def _endpoint_id(topic: str, id: UUID) -> str:
@@ -144,8 +66,8 @@ class _PublisherMetrics:
     _trace_counter: int = 0
     _trace_publish_delta_enabled: bool = False
     _trace_backpressure_wait_enabled: bool = False
-    trace_samples: TraceRingBuffer = field(
-        default_factory=lambda: TraceRingBuffer(TRACE_MAX_SAMPLES)
+    trace_samples: deque[TraceRecord] = field(
+        default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
 
     def record_publish(self, inflight: int, msg_seq: int | None = None) -> None:
@@ -237,8 +159,8 @@ class _SubscriberMetrics:
     _trace_counter: int = 0
     _trace_lease_time_enabled: bool = False
     _trace_user_span_enabled: bool = False
-    trace_samples: TraceRingBuffer = field(
-        default_factory=lambda: TraceRingBuffer(TRACE_MAX_SAMPLES)
+    trace_samples: deque[TraceRecord] = field(
+        default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
 
     def begin_message(self, channel_kind: ProfileChannelType) -> bool:
@@ -436,7 +358,7 @@ class ProfileRegistry:
         samples: list[ProfilingTraceSample] = []
         limit = max(1, int(max_samples))
 
-        queues: list[TraceRingBuffer] = []
+        queues: list[deque[TraceRecord]] = []
         for metric in self._publishers.values():
             if metric.trace_samples:
                 queues.append(metric.trace_samples)
@@ -451,7 +373,7 @@ class ProfileRegistry:
         elif len(queues) > 1:
             heap: list[tuple[float, int, int]] = []
             for idx, queue in enumerate(queues):
-                sample = queue.peek()
+                sample = queue[0]
                 seq = sample[6] if sample[6] is not None else -1
                 heapq.heappush(heap, (float(sample[0]), seq, idx))
 
@@ -463,7 +385,7 @@ class ProfileRegistry:
                 sample = queue.popleft()
                 samples.append(_trace_sample_from_record(sample))
                 if queue:
-                    nxt = queue.peek()
+                    nxt = queue[0]
                     nxt_seq = nxt[6] if nxt[6] is not None else -1
                     heapq.heappush(heap, (float(nxt[0]), nxt_seq, queue_idx))
 
