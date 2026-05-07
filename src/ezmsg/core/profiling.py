@@ -76,9 +76,11 @@ class _PublisherMetrics:
 
         if not self._trace_publish_delta_enabled:
             return
-        self._trace_counter += 1
-        if self._trace_counter % max(1, self.trace_sample_mod) != 0:
-            return
+        sample_mod = self.trace_sample_mod
+        if sample_mod != 1:
+            self._trace_counter += 1
+            if self._trace_counter % sample_mod != 0:
+                return
 
         now_ns = PROFILE_TIME()
         publish_delta_ns = (
@@ -170,8 +172,12 @@ class _SubscriberMetrics:
         if not (self._trace_lease_time_enabled or self._trace_user_span_enabled):
             return False
 
+        sample_mod = self.trace_sample_mod
+        if sample_mod == 1:
+            return True
+
         self._trace_counter += 1
-        return self._trace_counter % max(1, self.trace_sample_mod) == 0
+        return self._trace_counter % sample_mod == 0
 
     def record_receive(
         self,
