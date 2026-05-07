@@ -304,37 +304,34 @@ class Subscriber:
         channel = self._channels[pub_id]
         channel_kind = channel.channel_kind
         self._active_msg_seq = msg_id
-        self._active_trace_sampled = self._profile.begin_message(channel_kind)
+        sampled, trace_lease, trace_user_span = self._profile.trace_receive_state(
+            channel_kind
+        )
+        self._active_trace_sampled = sampled
         try:
-            trace_lease = self._profile._trace_lease_time_enabled
             start_ns = PROFILE_TIME() if trace_lease else None
             with channel.get(msg_id, self.id) as msg:
                 yield msg
-            lease_ns = None
-            if trace_lease and start_ns is not None:
-                lease_ns = PROFILE_TIME() - start_ns
-            self._profile.record_lease_time(
-                channel_kind,
-                lease_ns,
-                msg_seq=msg_id,
-                sampled=self._active_trace_sampled,
-            )
+            if trace_lease and sampled and start_ns is not None:
+                self._profile.append_lease_time(
+                    channel_kind,
+                    PROFILE_TIME() - start_ns,
+                    msg_seq=msg_id,
+                )
         finally:
             self._active_msg_seq = None
             self._active_trace_sampled = False
 
     def begin_profile(self) -> int:
-        if not self._profile._trace_user_span_enabled or not self._active_trace_sampled:
+        if not self._active_trace_sampled:
             return 0
         return PROFILE_TIME()
 
     def end_profile(self, start_ns: int, label: str | None = None) -> None:
         if start_ns <= 0:
             return
-        end_ns = PROFILE_TIME()
-        self._profile.record_user_span(
-            end_ns - start_ns,
+        self._profile.append_user_span(
+            PROFILE_TIME() - start_ns,
             label,
             msg_seq=self._active_msg_seq,
-            sampled=self._active_trace_sampled,
         )

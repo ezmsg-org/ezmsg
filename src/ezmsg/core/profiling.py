@@ -165,19 +165,27 @@ class _SubscriberMetrics:
         default_factory=lambda: deque(maxlen=TRACE_MAX_SAMPLES)
     )
 
-    def begin_message(self, channel_kind: ProfileChannelType) -> bool:
+    def trace_receive_state(
+        self, channel_kind: ProfileChannelType
+    ) -> tuple[bool, bool, bool]:
         self.messages_received_total += 1
         self.channel_kind_last = channel_kind
 
-        if not (self._trace_lease_time_enabled or self._trace_user_span_enabled):
-            return False
+        trace_lease = self._trace_lease_time_enabled
+        trace_user_span = self._trace_user_span_enabled
+        if not (trace_lease or trace_user_span):
+            return False, trace_lease, trace_user_span
 
         sample_mod = self.trace_sample_mod
         if sample_mod == 1:
-            return True
+            return True, trace_lease, trace_user_span
 
         self._trace_counter += 1
-        return self._trace_counter % sample_mod == 0
+        return (self._trace_counter % sample_mod == 0), trace_lease, trace_user_span
+
+    def begin_message(self, channel_kind: ProfileChannelType) -> bool:
+        sampled, _trace_lease, _trace_user_span = self.trace_receive_state(channel_kind)
+        return sampled
 
     def record_receive(
         self,
@@ -217,6 +225,25 @@ class _SubscriberMetrics:
             )
         )
 
+    def append_lease_time(
+        self,
+        channel_kind: ProfileChannelType,
+        lease_ns: int,
+        msg_seq: int | None = None,
+    ) -> None:
+        now_ns = PROFILE_TIME()
+        self.trace_samples.append(
+            (
+                now_ns,
+                self.endpoint_id,
+                self.topic,
+                "lease_time_ns",
+                float(lease_ns),
+                channel_kind,
+                msg_seq,
+            )
+        )
+
     def record_user_span(
         self,
         span_ns: int,
@@ -228,6 +255,25 @@ class _SubscriberMetrics:
         if not self._trace_user_span_enabled or not sampled:
             return
 
+        now_ns = PROFILE_TIME()
+        self.trace_samples.append(
+            (
+                now_ns,
+                self.endpoint_id,
+                self.topic if label is None else f"{self.topic}:{label}",
+                "user_span_ns",
+                float(span_ns),
+                self.channel_kind_last,
+                msg_seq,
+            )
+        )
+
+    def append_user_span(
+        self,
+        span_ns: int,
+        label: str | None,
+        msg_seq: int | None = None,
+    ) -> None:
         now_ns = PROFILE_TIME()
         self.trace_samples.append(
             (
