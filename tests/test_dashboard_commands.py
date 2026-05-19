@@ -106,7 +106,7 @@ async def test_handle_start_forwards_dashboard_flag(monkeypatch):
         "ezmsg.core.commands.start.close_stream_writer", fake_close_stream_writer
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
     await handle_start(args)
 
     assert popen_calls == [
@@ -148,7 +148,7 @@ async def test_handle_start_forwards_dashboard_port(monkeypatch):
         "ezmsg.core.commands.start.close_stream_writer", fake_close_stream_writer
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=28123)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=28123, log_file=None)
     await handle_start(args)
 
     assert popen_calls == [
@@ -171,7 +171,7 @@ async def test_handle_start_warns_when_dashboard_dependency_missing(monkeypatch,
         lambda: (_ for _ in ()).throw(DashboardDependencyError(DASHBOARD_INSTALL_HINT)),
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
 
     with caplog.at_level("WARNING"):
         await handle_start(args)
@@ -198,8 +198,9 @@ async def test_handle_serve_warns_when_dashboard_dependency_missing(monkeypatch,
             DashboardDependencyError(DASHBOARD_INSTALL_HINT)
         ),
     )
+    monkeypatch.setenv("EZMSG_LOG_FILE", "/tmp/ezmsg-serve-test.log")
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
 
     with caplog.at_level("WARNING"):
         await handle_serve(args)
