@@ -91,19 +91,36 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
     def _adjust_thread_count(self) -> None:
         if self._broken:
             return
+        idle_semaphore = getattr(self, "_idle_semaphore", None)
+        if idle_semaphore is not None and idle_semaphore.acquire(timeout=0):
+            return
+
+        def weakref_cb(_, q=self._work_queue):
+            q.put(None)
+
         num_threads = len(self._threads)
         if num_threads >= self._max_workers:
             return
         thread_name = f"{self._thread_name_prefix or 'ThreadPool'}_{num_threads}"
-        thread = threading.Thread(
-            name=thread_name,
-            target=_worker,
-            args=(
-                weakref.ref(self),
+
+        if hasattr(self, "_create_worker_context"):
+            thread_args = (
+                weakref.ref(self, weakref_cb),
+                self._create_worker_context(),
+                self._work_queue,
+            )
+        else:
+            thread_args = (
+                weakref.ref(self, weakref_cb),
                 self._work_queue,
                 self._initializer,
                 self._initargs,
-            ),
+            )
+
+        thread = threading.Thread(
+            name=thread_name,
+            target=_worker,
+            args=thread_args,
         )
         thread.daemon = True
         thread.start()

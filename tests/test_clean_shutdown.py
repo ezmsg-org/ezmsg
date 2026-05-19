@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from ezmsg.core.backendprocess import _DaemonThreadPoolExecutor
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = Path(__file__).with_name("shutdown_runner.py")
@@ -207,6 +209,16 @@ def test_shutdown_exception_on_cancel():
 
 def test_shutdown_ignore_cancel():
     _run_shutdown_case("ignore_cancel", signals=2)
+
+
+def test_daemon_thread_pool_executor_submit() -> None:
+    executor = _DaemonThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(lambda: 42)
+        assert future.result(timeout=1.0) == 42
+        assert executor.active_count() == 0
+    finally:
+        executor.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("case", ["complete", "normalterm", "normalterm_thread"])

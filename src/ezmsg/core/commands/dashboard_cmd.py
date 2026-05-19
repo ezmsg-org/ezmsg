@@ -36,7 +36,7 @@ def _setup_dashboard_fallback(subparsers: argparse._SubParsersAction) -> None:
 def setup_dashboard_cmdline(subparsers: argparse._SubParsersAction) -> None:
     try:
         from ezmsg.dashboard.server import setup_dashboard_cmdline as setup_optional_dashboard
-    except ImportError:
+    except Exception:
         _setup_dashboard_fallback(subparsers)
         return
 
