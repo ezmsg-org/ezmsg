@@ -3,7 +3,13 @@ import asyncio
 import logging
 
 from ..graphserver import GraphService
-from .common import add_address_argument, graph_address_from_args
+from .common import (
+    add_address_argument,
+    add_log_file_argument,
+    configure_log_file,
+    graph_address_from_args,
+    resolve_log_file,
+)
 from .dashboard import (
     DashboardDependencyError,
     add_dashboard_argument,
@@ -15,9 +21,11 @@ logger = logging.getLogger("ezmsg")
 
 async def handle_serve(args: argparse.Namespace) -> None:
     graph_address = graph_address_from_args(args)
+    log_path = configure_log_file(resolve_log_file(args, graph_address))
     graph_service = GraphService(graph_address)
 
     logger.info(f"GraphServer Address: {graph_address}")
+    logger.info(f"GraphServer Log File: {log_path}")
     graph_server = graph_service.create_server()
     dashboard_server = None
 
@@ -43,5 +51,6 @@ async def handle_serve(args: argparse.Namespace) -> None:
 def setup_serve_cmdline(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("serve")
     add_address_argument(parser)
+    add_log_file_argument(parser)
     add_dashboard_argument(parser)
     parser.set_defaults(_handler=handle_serve)

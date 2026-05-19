@@ -1,8 +1,11 @@
 import pytest
 import argparse
+import asyncio
+import sys
 from pathlib import Path
 
 from ezmsg.core.command import build_parser, cmdline
+from ezmsg.core.commands.start import handle_start
 
 
 def test_mermaid_subparser_accepts_mermaid_specific_args():
@@ -140,6 +143,15 @@ def test_start_subparser_accepts_dashboard_flag():
     assert args.dashboard is True
 
 
+def test_serve_subparser_accepts_log_file():
+    parser = build_parser()
+
+    args = parser.parse_args(["serve", "--log-file", "/tmp/ezmsg.log"])
+
+    assert args.command == "serve"
+    assert args.log_file == "/tmp/ezmsg.log"
+
+
 def test_serve_subparser_accepts_dashboard_port():
     parser = build_parser()
 
@@ -222,3 +234,54 @@ def test_dashboard_subcommand_warns_when_optional_dependency_missing(monkeypatch
         args._handler(args)
 
     assert "pip install ezmsg-dashboard" in caplog.text
+
+
+def test_start_passes_log_file_to_serve(monkeypatch):
+    commands = []
+
+    class DummyPopen:
+        pid = 123
+
+        def __init__(self, cmd):
+            commands.append(cmd)
+
+    class DummyWriter:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    class DummyGraphService:
+        async def open_connection(self):
+            return object(), DummyWriter()
+
+    async def noop_close_stream_writer(writer):
+        return None
+
+    monkeypatch.setattr("ezmsg.core.commands.start.subprocess.Popen", DummyPopen)
+    monkeypatch.setattr(
+        "ezmsg.core.commands.start.GraphService", lambda address: DummyGraphService()
+    )
+    monkeypatch.setattr(
+        "ezmsg.core.commands.start.close_stream_writer", noop_close_stream_writer
+    )
+
+    args = argparse.Namespace(
+        address="127.0.0.1:25978",
+        dashboard=None,
+        log_file="/tmp/ezmsg.log",
+    )
+
+    asyncio.run(handle_start(args))
+
+    assert commands == [
+        [
+            sys.executable,
+            "-m",
+            "ezmsg.core",
+            "serve",
+            "--address=127.0.0.1:25978",
+            "--log-file=/tmp/ezmsg.log",
+        ]
+    ]
