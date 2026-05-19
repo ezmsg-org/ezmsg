@@ -67,7 +67,7 @@ from .backendprocess import (
     new_threaded_event_loop,
 )
 
-from .util import either_dict_or_kwargs
+from .util import either_dict_or_kwargs, elevated_fd_limit
 
 logger = logging.getLogger("ezmsg")
 
@@ -626,23 +626,24 @@ class GraphRunner:
             raise RuntimeError("GraphRunner cannot be restarted")
         if self._force_single_process:
             raise ValueError("force_single_process is only supported with run_blocking")
-        if not self._initialize(force_single_process=False, wait_for_ready=True):
-            return
+        with elevated_fd_limit():
+            if not self._initialize(force_single_process=False, wait_for_ready=True):
+                return
 
-        self._start_processes(self.processes)
+            self._start_processes(self.processes)
 
-        if self._start_participant and self._execution_context is not None:
-            try:
-                self._execution_context.start_barrier.wait()
-            except BrokenBarrierError as err:
-                self._execution_context.term_ev.set()
-                self._join_spawned_processes()
-                self._cleanup()
-                self._stopped = True
-                raise GraphRunnerStartError(
-                    "GraphRunner failed to start. One or more processes exited before "
-                    "reaching the start barrier; check logs for earlier exceptions."
-                ) from err
+            if self._start_participant and self._execution_context is not None:
+                try:
+                    self._execution_context.start_barrier.wait()
+                except BrokenBarrierError as err:
+                    self._execution_context.term_ev.set()
+                    self._join_spawned_processes()
+                    self._cleanup()
+                    self._stopped = True
+                    raise GraphRunnerStartError(
+                        "GraphRunner failed to start. One or more processes exited before "
+                        "reaching the start barrier; check logs for earlier exceptions."
+                    ) from err
         self._started = True
         if self._stopped:
             self._started = False
@@ -663,11 +664,12 @@ class GraphRunner:
             raise RuntimeError("GraphRunner is already running")
         if self._stopped:
             raise RuntimeError("GraphRunner cannot be restarted")
-        if not self._initialize(
-            force_single_process=self._force_single_process, wait_for_ready=False
-        ):
-            return
-        self._run_main_process()
+        with elevated_fd_limit():
+            if not self._initialize(
+                force_single_process=self._force_single_process, wait_for_ready=False
+            ):
+                return
+            self._run_main_process()
 
     def _initialize(self, force_single_process: bool, wait_for_ready: bool) -> bool:
         os.environ["EZMSG_PROFILER"] = self._profiler_log_name or "ezprofiler.log"

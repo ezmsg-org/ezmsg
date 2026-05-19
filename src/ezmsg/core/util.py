@@ -1,5 +1,19 @@
+import contextlib
+import logging
+import os
 from collections.abc import Mapping
 import typing
+
+
+logger = logging.getLogger("ezmsg")
+
+EZMSG_FD_LIMIT_ENV = "EZMSG_FD_LIMIT"
+EZMSG_FD_LIMIT_DEFAULT = 100_000
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 
 
 T = typing.TypeVar("T")
@@ -56,3 +70,57 @@ def either_dict_or_kwargs(
             f"cannot specify both keyword and positional arguments to .{func_name}"
         )
     return pos_kwargs
+
+
+def _configured_fd_limit() -> int:
+    value = os.environ.get(EZMSG_FD_LIMIT_ENV, str(EZMSG_FD_LIMIT_DEFAULT))
+    try:
+        limit = int(value)
+    except ValueError:
+        logger.warning(
+            f"Invalid {EZMSG_FD_LIMIT_ENV}={value!r}; using default {EZMSG_FD_LIMIT_DEFAULT}"
+        )
+        return EZMSG_FD_LIMIT_DEFAULT
+    return max(1, limit)
+
+
+def _fd_limit_supported() -> bool:
+    return resource is not None and hasattr(resource, "RLIMIT_NOFILE")
+
+
+@contextlib.contextmanager
+def elevated_fd_limit(limit: int | None = None):
+    if not _fd_limit_supported():
+        yield
+        return
+
+    assert resource is not None
+    target = _configured_fd_limit() if limit is None else max(1, limit)
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    desired_limit = min(target, hard_limit)
+
+    if desired_limit <= soft_limit:
+        yield
+        return
+
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (desired_limit, hard_limit))
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            f"Unable to raise RLIMIT_NOFILE from {soft_limit} to {desired_limit}: {exc}"
+        )
+        yield
+        return
+
+    logger.info(
+        f"Raised RLIMIT_NOFILE soft limit from {soft_limit} to {desired_limit}"
+    )
+    try:
+        yield
+    finally:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft_limit, hard_limit))
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                f"Unable to restore RLIMIT_NOFILE soft limit to {soft_limit}: {exc}"
+            )
