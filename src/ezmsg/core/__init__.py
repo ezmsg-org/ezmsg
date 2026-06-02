@@ -75,14 +75,11 @@ from .collection import Collection as System  # deprecated, backward compatibili
 
 import os
 import logging
-from .logconfig import create_ezmsg_log_formatter
+from .logconfig import create_ezmsg_stderr_handler, create_ezmsg_stdout_handler
 
 logger = logging.getLogger("ezmsg")
-handler = logging.StreamHandler()
-formatter = create_ezmsg_log_formatter()
-
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+logger.addHandler(create_ezmsg_stdout_handler())
+logger.addHandler(create_ezmsg_stderr_handler())
 
 LOGLEVEL = os.environ.get("EZMSG_LOGLEVEL", "INFO").upper()
 logger.setLevel(LOGLEVEL)
