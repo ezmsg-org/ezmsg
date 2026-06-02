@@ -16,6 +16,7 @@ from ezmsg.core.commands.dashboard import (
 from ezmsg.core.commands.start import handle_start
 from ezmsg.core.commands.serve import handle_serve
 from ezmsg.core.commands.common import graph_address_from_args
+from ezmsg.core.logconfig import EZMSG_LOG_DATE_FORMAT, EZMSG_LOG_FORMAT
 from ezmsg.core.netprotocol import Address
 
 
@@ -243,6 +244,8 @@ async def test_handle_serve_closes_created_log_file_handler(monkeypatch, tmp_pat
     await handle_serve(args)
 
     assert len(handlers_during_join) == 1
+    assert handlers_during_join[0].formatter._style._fmt == EZMSG_LOG_FORMAT
+    assert handlers_during_join[0].formatter.datefmt == EZMSG_LOG_DATE_FORMAT
     assert handlers_during_join[0] not in logging.getLogger("ezmsg").handlers
     assert handlers_during_join[0].stream is None
     assert log_file_handlers_for(log_path) == []

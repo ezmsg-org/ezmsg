@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..graphserver import GraphService
+from ..logconfig import create_ezmsg_log_formatter
 from ..netprotocol import Address
 
 
@@ -74,17 +75,8 @@ def _configure_managed_log_file(log_file: Path) -> tuple[Path, logging.FileHandl
     ):
         return log_path, None
 
-    formatter = next(
-        (
-            handler.formatter
-            for handler in logger.handlers
-            if handler.formatter is not None
-        ),
-        None,
-    )
     handler = logging.FileHandler(log_path, encoding="utf-8")
-    if formatter is not None:
-        handler.setFormatter(formatter)
+    handler.setFormatter(create_ezmsg_log_formatter())
     logger.addHandler(handler)
 
     return log_path, handler

@@ -75,14 +75,11 @@ from .collection import Collection as System  # deprecated, backward compatibili
 
 import os
 import logging
+from .logconfig import create_ezmsg_log_formatter
 
 logger = logging.getLogger("ezmsg")
 handler = logging.StreamHandler()
-formatter = logging.Formatter(
-    "%(asctime)s.%(msecs)03d - pid: %(process)d - %(threadName)s "
-    + "- %(levelname)s - %(funcName)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+formatter = create_ezmsg_log_formatter()
 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
