@@ -1,4 +1,6 @@
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import logging
 import os
 from datetime import datetime
@@ -60,27 +62,47 @@ def resolve_log_file(args: argparse.Namespace, address: Address) -> Path:
     return log_dir / f"{timestamp}.log"
 
 
-def configure_log_file(log_file: Path) -> Path:
+def _configure_managed_log_file(log_file: Path) -> tuple[Path, logging.FileHandler | None]:
     log_path = log_file.expanduser().resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger("ezmsg")
-    if not any(
+    if any(
         isinstance(handler, logging.FileHandler)
         and getattr(handler, "baseFilename", None) == str(log_path)
         for handler in logger.handlers
     ):
-        formatter = next(
-            (
-                handler.formatter
-                for handler in logger.handlers
-                if handler.formatter is not None
-            ),
-            None,
-        )
-        handler = logging.FileHandler(log_path, encoding="utf-8")
-        if formatter is not None:
-            handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        return log_path, None
+
+    formatter = next(
+        (
+            handler.formatter
+            for handler in logger.handlers
+            if handler.formatter is not None
+        ),
+        None,
+    )
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    if formatter is not None:
+        handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return log_path, handler
+
+
+def configure_log_file(log_file: Path) -> Path:
+    log_path, _ = _configure_managed_log_file(log_file)
 
     return log_path
+
+
+@contextmanager
+def managed_log_file(log_file: Path) -> Iterator[Path]:
+    log_path, handler = _configure_managed_log_file(log_file)
+    try:
+        yield log_path
+    finally:
+        if handler is not None:
+            logger = logging.getLogger("ezmsg")
+            logger.removeHandler(handler)
+            handler.close()
