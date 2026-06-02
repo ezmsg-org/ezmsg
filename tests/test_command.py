@@ -4,7 +4,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from ezmsg.core.command import build_parser, cmdline
+from ezmsg.core.command import build_parser, cmdline, run_command
+from ezmsg.core.netprotocol import Address
 from ezmsg.core.commands.start import handle_start
 
 
@@ -234,6 +235,26 @@ def test_dashboard_subcommand_warns_when_optional_dependency_missing(monkeypatch
         args._handler(args)
 
     assert "pip install ezmsg-dashboard" in caplog.text
+
+
+def test_run_command_passes_log_file_to_handler(monkeypatch):
+    captured_args = []
+
+    async def fake_handle_start(args):
+        captured_args.append(args)
+
+    monkeypatch.setattr("ezmsg.core.command.handle_start", fake_handle_start)
+
+    asyncio.run(
+        run_command(
+            "start",
+            Address("127.0.0.1", 25978),
+            log_file="/tmp/ezmsg.log",
+        )
+    )
+
+    assert len(captured_args) == 1
+    assert captured_args[0].log_file == "/tmp/ezmsg.log"
 
 
 def test_start_passes_log_file_to_serve(monkeypatch):
