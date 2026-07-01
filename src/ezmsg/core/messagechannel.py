@@ -4,7 +4,7 @@ import typing
 import logging
 
 from uuid import UUID
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal
@@ -24,10 +24,6 @@ from .netprotocol import (
 from .graphmeta import ProfileChannelType
 
 logger = logging.getLogger("ezmsg")
-
-
-class ChannelError(RuntimeError):
-    """Raised when a channel cannot safely process publisher traffic."""
 
 
 class LeakyQueue(asyncio.Queue[typing.Tuple[UUID, int]]):
@@ -270,38 +266,34 @@ class Channel:
                     channel_kind = ProfileChannelType.SHM
                     shm_name = await read_str(reader)
 
-                    if self.shm is None or self.shm.name != shm_name:
-                        await self._reattach_shm(shm_name)
+                    if self.shm is not None and self.shm.name != shm_name:
+                        shm_entries = self.cache.keys()
+                        self.cache.clear()
+                        self.shm.close()
+                        await self.shm.wait_closed()
 
-                    if self.shm is None:
-                        raise ChannelError(
-                            f"channel {self.id} has no SHM attached for {shm_name}"
-                        )
+                        try:
+                            self.shm = await GraphService(
+                                self._graph_address
+                            ).attach_shm(shm_name)
+                        except ValueError:
+                            logger.info(
+                                "Invalid SHM received from publisher; may be dead"
+                            )
+                            raise
 
-                    try:
-                        shm_buf = self.shm[buf_idx]
-                    except BufferError as exc:
-                        raise ChannelError(
-                            f"channel {self.id} lost SHM {shm_name} while reading {msg_id=}"
-                        ) from exc
+                        for id in shm_entries:
+                            self.cache.put_from_mem(self.shm[id % self.num_buffers])
 
-                    if MessageMarshal.msg_id(shm_buf) != msg_id:
-                        raise ChannelError(
-                            f"channel {self.id} saw mismatched SHM contents in {shm_name}: "
-                            f"expected {msg_id}, got {MessageMarshal.msg_id(shm_buf)}"
-                        )
-
-                    self.cache.put_from_mem(shm_buf)
+                    assert self.shm is not None
+                    assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg_id
+                    self.cache.put_from_mem(self.shm[buf_idx])
 
                 elif msg == Command.TX_TCP.value:
                     channel_kind = ProfileChannelType.TCP
                     buf_size = await read_int(reader)
                     obj_bytes = await reader.readexactly(buf_size)
-                    if MessageMarshal.msg_id(obj_bytes) != msg_id:
-                        raise ChannelError(
-                            f"channel {self.id} saw mismatched TCP contents: "
-                            f"expected {msg_id}, got {MessageMarshal.msg_id(obj_bytes)}"
-                        )
+                    assert MessageMarshal.msg_id(obj_bytes) == msg_id
                     self.cache.put_from_mem(memoryview(obj_bytes).toreadonly())
 
                 else:
@@ -316,12 +308,6 @@ class Channel:
 
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
-        except (ChannelError, FileNotFoundError):
-            logger.exception(
-                "Publisher connection failed for channel %s from publisher %s",
-                self.id,
-                self.pub_id,
-            )
 
         finally:
             self.cache.clear()
@@ -331,43 +317,6 @@ class Channel:
             await close_stream_writer(self._pub_writer)
 
             logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
-
-    async def _reattach_shm(self, shm_name: str) -> None:
-        cached_msg_ids = self.cache.keys()
-        self.cache.clear()
-
-        prior_shm = self.shm
-        self.shm = None
-        if prior_shm is not None:
-            prior_shm.close()
-            await prior_shm.wait_closed()
-
-        try:
-            self.shm = await GraphService(self._graph_address).attach_shm(shm_name)
-        except (ValueError, FileNotFoundError) as exc:
-            raise ChannelError(
-                f"channel {self.id} failed to attach SHM {shm_name}"
-            ) from exc
-
-        for cached_msg_id in cached_msg_ids:
-            cached_buf_idx = cached_msg_id % self.num_buffers
-            try:
-                cached_mem = self.shm[cached_buf_idx]
-            except BufferError as exc:
-                raise ChannelError(
-                    f"channel {self.id} lost SHM {shm_name} while restoring cache"
-                ) from exc
-
-            if MessageMarshal.msg_id(cached_mem) != cached_msg_id:
-                logger.warning(
-                    "Dropping stale cached message %s during SHM switch to %s on channel %s",
-                    cached_msg_id,
-                    shm_name,
-                    self.id,
-                )
-                continue
-
-            self.cache.put_from_mem(cached_mem)
 
     def _set_channel_kind(self, kind: ProfileChannelType) -> None:
         if self._channel_kind == ProfileChannelType.UNKNOWN:
