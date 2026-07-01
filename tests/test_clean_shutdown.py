@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = Path(__file__).with_name("shutdown_runner.py")
 EXAMPLE_RUNNER = Path(__file__).with_name("clean_shutdown_examples_runner.py")
+SHM_RACE_RUNNER = Path(__file__).with_name("shm_resize_race_runner.py")
 
 
 def _run_process(
@@ -187,6 +188,19 @@ def _run_example_case(
     )
 
 
+def _run_shm_resize_race_case(*, timeout: float = 1.0) -> None:
+    env = os.environ.copy()
+    env.pop("EZMSG_STRICT_SHUTDOWN", None)
+    _run_process(
+        [sys.executable, "-u", str(SHM_RACE_RUNNER)],
+        env=env,
+        signals=0,
+        ready_token="READY",
+        timeout=timeout,
+        allowed_returncodes={0},
+    )
+
+
 def _sigint_returncodes() -> set[int]:
     if os.name == "nt":
         return {1, 3221225786}
@@ -223,3 +237,7 @@ def test_infinite_requires_sigint(start_method: str) -> None:
         signals=1,
         allowed_returncodes={0},
     )
+
+
+def test_shm_resize_race_repro_completes() -> None:
+    _run_shm_resize_race_case(timeout=10.0)
