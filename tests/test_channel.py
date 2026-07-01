@@ -1,12 +1,14 @@
 import asyncio
 from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 
-from ezmsg.core.messagechannel import Channel
+from ezmsg.core.messagechannel import Channel, ChannelError
 from ezmsg.core.messagecache import CacheMiss
 from ezmsg.core.netprotocol import Command, uint64_to_bytes
 from ezmsg.core.backpressure import Backpressure
+from ezmsg.core.messagemarshal import MessageMarshal
 
 
 class DummyWriter:
@@ -91,3 +93,70 @@ def test_channel_put_local_requires_local_backpressure():
     channel = Channel(uuid4(), uuid4(), 1, None, None, Channel._SENTINEL)
     with pytest.raises(ValueError):
         channel.put_local(1, "no pub")
+
+
+class FakeSHM:
+    def __init__(self, name: str, buffers: dict[int, memoryview] | None = None):
+        self.name = name
+        self._buffers = buffers or {}
+        self.closed = False
+        self.waited = False
+
+    def __getitem__(self, idx: int) -> memoryview:
+        return self._buffers[idx]
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        self.waited = True
+
+
+def _marshal_message(msg_id: int, obj: object) -> memoryview:
+    with MessageMarshal.serialize(msg_id, obj) as (size, header, buffers):
+        raw = bytearray(size + 1)
+        mem = memoryview(raw)
+        MessageMarshal._write(mem, header, buffers)
+        return mem.toreadonly()
+
+
+@pytest.mark.asyncio
+async def test_channel_reattach_shm_drops_stale_cached_messages():
+    old_shm = FakeSHM("old")
+    channel = Channel(uuid4(), uuid4(), 2, old_shm, ("127.0.0.1", 0), Channel._SENTINEL)
+
+    channel.cache.put_local("cached", 1)
+    new_shm = FakeSHM("new", {1: _marshal_message(3, "fresh")})
+
+    class FakeGraphService:
+        def __init__(self, address):
+            self.address = address
+
+        async def attach_shm(self, shm_name: str):
+            assert shm_name == "new"
+            return new_shm
+
+    with patch("ezmsg.core.messagechannel.GraphService", FakeGraphService):
+        await channel._reattach_shm("new")
+
+    assert channel.shm is new_shm
+    assert old_shm.closed is True
+    assert old_shm.waited is True
+    with pytest.raises(CacheMiss):
+        _ = channel.cache[1]
+
+
+@pytest.mark.asyncio
+async def test_channel_reattach_shm_wraps_missing_segment():
+    channel = Channel(uuid4(), uuid4(), 2, None, ("127.0.0.1", 0), Channel._SENTINEL)
+
+    class FakeGraphService:
+        def __init__(self, address):
+            self.address = address
+
+        async def attach_shm(self, shm_name: str):
+            raise FileNotFoundError(shm_name)
+
+    with patch("ezmsg.core.messagechannel.GraphService", FakeGraphService):
+        with pytest.raises(ChannelError):
+            await channel._reattach_shm("missing")
