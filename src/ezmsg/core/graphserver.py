@@ -62,6 +62,7 @@ from .netprotocol import (
     DEFAULT_HOST,
 )
 from .shm import SHMContext, SHMInfo
+from .util import elevated_fd_limit
 
 logger = logging.getLogger("ezmsg")
 PERSISTENT_EDGE_OWNER = None
@@ -1801,7 +1802,8 @@ class GraphService:
 
     def create_server(self) -> GraphServer:
         server = GraphServer(name="GraphServer")
-        server.start(self._address)
+        with elevated_fd_limit():
+            server.start(self._address)
         self._address = server.address
         return server
 
