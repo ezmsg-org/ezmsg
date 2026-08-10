@@ -266,11 +266,16 @@ class Channel:
                     channel_kind = ProfileChannelType.SHM
                     shm_name = await read_str(reader)
 
-                    if self.shm is not None and self.shm.name != shm_name:
-                        shm_entries = self.cache.keys()
+                    if self.shm is None or self.shm.name != shm_name:
+                        preserved_cache = self._snapshot_cached_messages()
                         self.cache.clear()
-                        self.shm.close()
-                        await self.shm.wait_closed()
+                        for preserved_msg in preserved_cache:
+                            self.cache.put_from_mem(preserved_msg)
+
+                        if self.shm is not None:
+                            old_shm = self.shm
+                            old_shm.close()
+                            await old_shm.wait_closed()
 
                         try:
                             self.shm = await GraphService(
@@ -284,19 +289,6 @@ class Channel:
                                 self.pub_id,
                             )
                             self.shm = None
-
-                        if self.shm is not None:
-                            for id in shm_entries:
-                                shm_buf = self.shm[id % self.num_buffers]
-                                # A carried-over slot may not have survived the
-                                # grow/copy; msg_id() raises UninitializedMemory
-                                # on an uninitialized slot. Skip it rather than
-                                # let that escape and kill the channel task.
-                                try:
-                                    if MessageMarshal.msg_id(shm_buf) == id:
-                                        self.cache.put_from_mem(shm_buf)
-                                except UninitializedMemory:
-                                    pass
 
                     if self.shm is None:
                         logger.warning(
@@ -348,6 +340,13 @@ class Channel:
 
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
+        except Exception:
+            logger.exception(
+                "Channel %s publisher connection crashed for pub %s",
+                self.id,
+                self.pub_id,
+            )
+            raise
 
         finally:
             self.cache.clear()
@@ -434,6 +433,21 @@ class Channel:
         :type client_id: UUID
         """
         self._release_backpressure(msg_id, client_id)
+
+    def _snapshot_cached_messages(self) -> list[memoryview]:
+        if self.shm is None:
+            return []
+
+        preserved: list[memoryview] = []
+        for msg_id in self.cache.keys():
+            shm_buf = self.shm[msg_id % self.num_buffers]
+            try:
+                if MessageMarshal.msg_id(shm_buf) == msg_id:
+                    preserved.append(memoryview(bytes(shm_buf)).toreadonly())
+            except UninitializedMemory:
+                pass
+
+        return preserved
 
     def _release_backpressure(self, msg_id: int, client_id: UUID) -> None:
         """
