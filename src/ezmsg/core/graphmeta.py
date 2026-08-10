@@ -62,6 +62,24 @@ class InputRelayMetadata(InputTopicMetadata):
     leaky: bool = False
     max_queue: int | None = None
     copy_on_forward: bool = True
+    relay_group: str | None = None
+    relay_input_topic: str | None = None
+    relay_output_topic: str | None = None
+
+
+@dataclass
+class RelayMetadata(TopicMetadata):
+    leaky: bool = False
+    max_queue: int | None = None
+    host: str | None = None
+    port: int | None = None
+    num_buffers: int | None = None
+    buf_size: int | None = None
+    force_tcp: bool | None = None
+    copy_on_forward: bool = True
+    relay_group: str | None = None
+    relay_input_topic: str | None = None
+    relay_output_topic: str | None = None
 
 
 @dataclass
@@ -72,9 +90,12 @@ class OutputRelayMetadata(OutputTopicMetadata):
     buf_size: int | None = None
     force_tcp: bool | None = None
     copy_on_forward: bool = True
+    relay_group: str | None = None
+    relay_input_topic: str | None = None
+    relay_output_topic: str | None = None
 
 
-RelayMetadataType: TypeAlias = InputRelayMetadata | OutputRelayMetadata
+RelayMetadataType: TypeAlias = RelayMetadata | InputRelayMetadata | OutputRelayMetadata
 
 
 @dataclass

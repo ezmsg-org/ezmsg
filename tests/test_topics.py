@@ -7,9 +7,18 @@ from ezmsg.core.graphmeta import (
     CollectionMetadata,
     InputRelayMetadata,
     InputStreamMetadata,
+    RelayMetadata,
+    OutputRelayMetadata,
     OutputStreamMetadata,
     OutputTopicMetadata,
     UnitMetadata,
+)
+from ez_test_utils import (
+    MessageGenerator,
+    MessageGeneratorSettings,
+    MessageReceiver,
+    MessageReceiverSettings,
+    get_test_fn,
 )
 
 
@@ -19,6 +28,7 @@ from ezmsg.core.graphmeta import (
         lambda: ez.Topic(int),
         lambda: ez.InputTopic(int),
         lambda: ez.OutputTopic(int),
+        lambda: ez.Relay(int),
         lambda: ez.InputRelay(int),
         lambda: ez.OutputRelay(int),
     ],
@@ -76,6 +86,29 @@ class _RelayOutputPassthrough(ez.Collection):
         return ((self.IN, self.OUT),)
 
 
+class _RelayPassthrough(ez.Collection):
+    IN = ez.InputTopic(int)
+    MID = ez.Relay(
+        int,
+        leaky=True,
+        max_queue=5,
+        num_buffers=12,
+        force_tcp=True,
+        copy_on_forward=False,
+    )
+    OUT = ez.OutputTopic(int)
+
+    def configure(self) -> None:
+        self.MID.max_queue = 9
+        self.MID.num_buffers = 6
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.IN, self.MID),
+            (self.MID, self.OUT),
+        )
+
+
 class _TopicSystem(ez.Collection):
     SOURCE = _Source()
     PASSTHROUGH = _TopicPassthrough()
@@ -112,6 +145,68 @@ class _OutputRelaySystem(ez.Collection):
         )
 
 
+class _RelaySystem(ez.Collection):
+    SOURCE = _Source()
+    PASSTHROUGH = _RelayPassthrough()
+    SINK = _Sink()
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.SOURCE.OUTPUT, self.PASSTHROUGH.IN),
+            (self.PASSTHROUGH.OUT, self.SINK.INPUT),
+        )
+
+
+class _RuntimeInputRelaySystem(ez.Collection):
+    SOURCE = MessageGenerator()
+    PASSTHROUGH = _RelayInputPassthrough()
+    SINK = MessageReceiver()
+
+    def configure(self) -> None:
+        self.SOURCE.apply_settings(MessageGeneratorSettings(num_msgs=3))
+        self.SINK.apply_settings(MessageReceiverSettings(num_msgs=3, output_fn=str(self.SETTINGS.output_fn)))
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.SOURCE.OUTPUT, self.PASSTHROUGH.IN),
+            (self.PASSTHROUGH.OUT, self.SINK.INPUT),
+        )
+
+
+class _RuntimeOutputRelaySystem(ez.Collection):
+    SOURCE = MessageGenerator()
+    PASSTHROUGH = _RelayOutputPassthrough()
+    SINK = MessageReceiver()
+
+    def configure(self) -> None:
+        self.SOURCE.apply_settings(MessageGeneratorSettings(num_msgs=3))
+        self.SINK.apply_settings(MessageReceiverSettings(num_msgs=3, output_fn=str(self.SETTINGS.output_fn)))
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.SOURCE.OUTPUT, self.PASSTHROUGH.IN),
+            (self.PASSTHROUGH.OUT, self.SINK.INPUT),
+        )
+
+
+class _RuntimeRelaySystem(ez.Collection):
+    SOURCE = MessageGenerator()
+    PASSTHROUGH = _RelayPassthrough()
+    SINK = MessageReceiver()
+
+    def configure(self) -> None:
+        self.SOURCE.apply_settings(MessageGeneratorSettings(num_msgs=3))
+        self.SINK.apply_settings(
+            MessageReceiverSettings(num_msgs=3, output_fn=str(self.SETTINGS.output_fn))
+        )
+
+    def network(self) -> ez.NetworkDefinition:
+        return (
+            (self.SOURCE.OUTPUT, self.PASSTHROUGH.IN),
+            (self.PASSTHROUGH.OUT, self.SINK.INPUT),
+        )
+
+
 def test_input_output_topics_behave_as_shortcuts():
     system = _TopicSystem()
     ctx = ExecutionContext.setup({"SYSTEM": system})
@@ -126,21 +221,25 @@ def test_input_relay_rewrites_edges_and_syncs_settings():
     ctx = ExecutionContext.setup({"SYSTEM": system})
     assert ctx is not None
 
-    relay = system.PASSTHROUGH.components["__relay_in_IN"]
     source = system.SOURCE.OUTPUT.address
     endpoint_in = system.PASSTHROUGH.IN.address
     endpoint_out = system.PASSTHROUGH.OUT.address
     sink = system.SINK.INPUT.address
+    relay_input = f"{system.PASSTHROUGH.address}/__relays__/IN/INPUT"
+    relay_output = f"{system.PASSTHROUGH.address}/__relays__/IN/OUTPUT"
 
     assert (source, endpoint_in) in ctx.connections
-    assert (endpoint_in, relay.INPUT.address) in ctx.connections
-    assert (relay.OUTPUT.address, endpoint_out) in ctx.connections
+    assert (endpoint_in, relay_input) in ctx.connections
+    assert (relay_output, endpoint_out) in ctx.connections
     assert (endpoint_out, sink) in ctx.connections
     assert (endpoint_in, endpoint_out) not in ctx.connections
 
-    assert relay.SETTINGS.leaky is True
-    assert relay.SETTINGS.max_queue == 7
-    assert relay.SETTINGS.copy_on_forward is True
+    assert "__relay_in_IN" not in system.PASSTHROUGH.components
+    relay = ctx._process_specs[0].relays[0]
+    assert relay.kind == "input"
+    assert relay.leaky is True
+    assert relay.max_queue == 7
+    assert relay.copy_on_forward is True
 
 
 def test_output_relay_rewrites_edges_and_syncs_settings():
@@ -148,20 +247,53 @@ def test_output_relay_rewrites_edges_and_syncs_settings():
     ctx = ExecutionContext.setup({"SYSTEM": system})
     assert ctx is not None
 
-    relay = system.PASSTHROUGH.components["__relay_out_OUT"]
     source = system.SOURCE.OUTPUT.address
     endpoint_in = system.PASSTHROUGH.IN.address
     endpoint_out = system.PASSTHROUGH.OUT.address
     sink = system.SINK.INPUT.address
+    relay_input = f"{system.PASSTHROUGH.address}/__relays__/OUT/INPUT"
+    relay_output = f"{system.PASSTHROUGH.address}/__relays__/OUT/OUTPUT"
 
     assert (source, endpoint_in) in ctx.connections
-    assert (endpoint_in, relay.INPUT.address) in ctx.connections
-    assert (relay.OUTPUT.address, endpoint_out) in ctx.connections
+    assert (endpoint_in, relay_input) in ctx.connections
+    assert (relay_output, endpoint_out) in ctx.connections
     assert (endpoint_out, sink) in ctx.connections
 
-    assert relay.SETTINGS.num_buffers == 8
-    assert relay.SETTINGS.force_tcp is True
-    assert relay.SETTINGS.copy_on_forward is False
+    assert "__relay_out_OUT" not in system.PASSTHROUGH.components
+    relay = ctx._process_specs[0].relays[0]
+    assert relay.kind == "output"
+    assert relay.num_buffers == 8
+    assert relay.force_tcp is True
+    assert relay.copy_on_forward is False
+
+
+def test_neutral_relay_adds_bridge_edges_without_directional_rewrite():
+    system = _RelaySystem()
+    ctx = ExecutionContext.setup({"SYSTEM": system})
+    assert ctx is not None
+
+    source = system.SOURCE.OUTPUT.address
+    endpoint_in = system.PASSTHROUGH.IN.address
+    endpoint_mid = system.PASSTHROUGH.MID.address
+    endpoint_out = system.PASSTHROUGH.OUT.address
+    sink = system.SINK.INPUT.address
+    relay_input = f"{system.PASSTHROUGH.address}/__relays__/MID/INPUT"
+    relay_output = f"{system.PASSTHROUGH.address}/__relays__/MID/OUTPUT"
+
+    assert (source, endpoint_in) in ctx.connections
+    assert (endpoint_in, endpoint_mid) in ctx.connections
+    assert (endpoint_mid, endpoint_out) in ctx.connections
+    assert (endpoint_out, sink) in ctx.connections
+    assert (endpoint_mid, relay_input) in ctx.connections
+    assert (relay_output, endpoint_mid) in ctx.connections
+
+    relay = ctx._process_specs[0].relays[0]
+    assert relay.kind == "relay"
+    assert relay.leaky is True
+    assert relay.max_queue == 9
+    assert relay.num_buffers == 6
+    assert relay.force_tcp is True
+    assert relay.copy_on_forward is False
 
 
 def test_metadata_separates_collection_topics_relays_and_unit_streams():
@@ -178,8 +310,30 @@ def test_metadata_separates_collection_topics_relays_and_unit_streams():
     assert isinstance(passthrough_meta.relays["IN"], InputRelayMetadata)
     assert passthrough_meta.relays["IN"].leaky is True
     assert passthrough_meta.relays["IN"].max_queue == 7
+    assert passthrough_meta.relays["IN"].relay_group == "SYSTEM/PASSTHROUGH/__relays__/IN"
+    assert passthrough_meta.relays["IN"].relay_input_topic == "SYSTEM/PASSTHROUGH/__relays__/IN/INPUT"
+    assert passthrough_meta.relays["IN"].relay_output_topic == "SYSTEM/PASSTHROUGH/__relays__/IN/OUTPUT"
     assert "OUT" in passthrough_meta.topics
     assert isinstance(passthrough_meta.topics["OUT"], OutputTopicMetadata)
+    assert passthrough_meta.children == []
+
+    output_system = _OutputRelaySystem()
+    assert ExecutionContext.setup({"SYSTEM": output_system}) is not None
+    output_metadata = ez.GraphRunner(components={"SYSTEM": output_system})._component_metadata()
+    output_passthrough_meta = output_metadata.components[output_system.PASSTHROUGH.address]
+    assert isinstance(output_passthrough_meta, CollectionMetadata)
+    assert isinstance(output_passthrough_meta.relays["OUT"], OutputRelayMetadata)
+    assert output_passthrough_meta.relays["OUT"].relay_group == "SYSTEM/PASSTHROUGH/__relays__/OUT"
+
+    relay_system = _RelaySystem()
+    assert ExecutionContext.setup({"SYSTEM": relay_system}) is not None
+    relay_metadata = ez.GraphRunner(components={"SYSTEM": relay_system})._component_metadata()
+    relay_passthrough_meta = relay_metadata.components[relay_system.PASSTHROUGH.address]
+    assert isinstance(relay_passthrough_meta, CollectionMetadata)
+    assert isinstance(relay_passthrough_meta.relays["MID"], RelayMetadata)
+    assert relay_passthrough_meta.relays["MID"].leaky is True
+    assert relay_passthrough_meta.relays["MID"].num_buffers == 6
+    assert relay_passthrough_meta.relays["MID"].relay_group == "SYSTEM/PASSTHROUGH/__relays__/MID"
 
     source_meta = metadata.components[system.SOURCE.address]
     sink_meta = metadata.components[system.SINK.address]
@@ -187,3 +341,25 @@ def test_metadata_separates_collection_topics_relays_and_unit_streams():
     assert isinstance(source_meta.streams["OUTPUT"], OutputStreamMetadata)
     assert isinstance(sink_meta, UnitMetadata)
     assert isinstance(sink_meta.streams["INPUT"], InputStreamMetadata)
+
+
+@pytest.mark.parametrize(
+    "system_type",
+    [_RuntimeInputRelaySystem, _RuntimeOutputRelaySystem, _RuntimeRelaySystem],
+)
+def test_relays_forward_messages_at_runtime(system_type):
+    with get_test_fn() as output_fn:
+        class RuntimeRelaySettings(ez.Settings):
+            output_fn: str
+
+        class RuntimeRelaySystem(system_type):
+            SETTINGS = RuntimeRelaySettings
+
+        ez.run(
+            SYSTEM=RuntimeRelaySystem(
+                RuntimeRelaySettings(output_fn=str(output_fn))
+            )
+        )
+
+        with open(output_fn, "r") as stream:
+            assert len(stream.readlines()) == 3

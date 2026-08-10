@@ -40,7 +40,7 @@ class CollectionMeta(ComponentMeta):
                     f"{name}.{field_name} uses {type(field_value).__name__} as a "
                     "Collection boundary endpoint. This behavior is deprecated and "
                     "will change in a future release. Use InputTopic / OutputTopic "
-                    "for zero-overhead topic shortcuts, or InputRelay / OutputRelay "
+                    "for zero-overhead topic shortcuts, or Relay / InputRelay / OutputRelay "
                     "for explicit boundary republishers.",
                     FutureWarning,
                     stacklevel=2,

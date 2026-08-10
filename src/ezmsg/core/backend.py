@@ -26,6 +26,7 @@ from .stream import (
     Topic,
     InputTopic,
     OutputTopic,
+    Relay,
     InputRelay,
     OutputRelay,
 )
@@ -42,6 +43,7 @@ from .graphmeta import (
     OutputRelayMetadata,
     OutputStreamMetadata,
     OutputTopicMetadata,
+    RelayMetadata,
     RelayMetadataType,
     StreamMetadataType,
     StreamMetadata,
@@ -51,7 +53,7 @@ from .graphmeta import (
     GraphMetadata,
     UnitMetadata,
 )
-from .relay import _CollectionRelayUnit, _RelaySettings
+from .relay import _RelayRuntime, _relay_runtime, _relay_runtime_info
 from .settingsmeta import (
     settings_repr_value,
     settings_schema_from_type,
@@ -88,17 +90,13 @@ def crawl_components(
 
 
 @dataclass
-class _RelayBinding:
-    kind: str  # "input" or "output"
-    endpoint_topic: str
-    relay_in_topic: str
-    relay_out_topic: str
-    endpoint: InputRelay | OutputRelay
-    relay_unit: _CollectionRelayUnit
+class _ProcessSpec:
+    units: list[Unit]
+    relays: list[_RelayRuntime]
 
 
 class ExecutionContext:
-    _process_units: list[list[Unit]]
+    _process_specs: list[_ProcessSpec]
     _processes: list[BackendProcess] | None
 
     term_ev: EventType
@@ -107,19 +105,19 @@ class ExecutionContext:
 
     def __init__(
         self,
-        process_units: list[list[Unit]],
+        process_specs: list[_ProcessSpec],
         connections: list[tuple[str, str]] = [],
         start_participant: bool = False,
     ) -> None:
         self.connections = connections
-        self._process_units = process_units
+        self._process_specs = process_specs
         self._processes = None
 
         self.term_ev = Event()
         self.start_barrier = Barrier(
-            len(process_units) + (1 if start_participant else 0)
+            len(process_specs) + (1 if start_participant else 0)
         )
-        self.stop_barrier = Barrier(len(process_units))
+        self.stop_barrier = Barrier(len(process_specs))
 
     def create_processes(
         self,
@@ -128,13 +126,14 @@ class ExecutionContext:
     ) -> None:
         self._processes = [
             backend_process(
-                process_units,
+                process_spec.units,
+                process_spec.relays,
                 self.term_ev,
                 self.start_barrier,
                 self.stop_barrier,
                 graph_address,
             )
-            for process_units in self._process_units
+            for process_spec in self._process_specs
         ]
 
     @property
@@ -146,7 +145,7 @@ class ExecutionContext:
 
     @property
     def process_count(self) -> int:
-        return len(self._process_units)
+        return len(self._process_specs)
 
     @classmethod
     def setup(
@@ -159,7 +158,9 @@ class ExecutionContext:
         start_participant: bool = False,
     ) -> "ExecutionContext | None":
         graph_connections: list[tuple[str, str]] = []
-        relay_bindings: dict[str, _RelayBinding] = {}
+        relay_endpoints_by_collection: dict[
+            str, list[Relay | InputRelay | OutputRelay]
+        ] = {}
 
         for name, component in components.items():
             component._set_name(name)
@@ -186,75 +187,22 @@ class ExecutionContext:
                     )
                 )
 
-        def input_relay_settings(relay: InputRelay) -> _RelaySettings:
-            return _RelaySettings(
-                leaky=relay.leaky,
-                max_queue=relay.max_queue,
-                copy_on_forward=relay.copy_on_forward,
-            )
-
-        def output_relay_settings(relay: OutputRelay) -> _RelaySettings:
-            return _RelaySettings(
-                host=relay.host,
-                port=relay.port,
-                num_buffers=relay.num_buffers,
-                buf_size=relay.buf_size,
-                force_tcp=relay.force_tcp,
-                copy_on_forward=relay.copy_on_forward,
-            )
-
-        def add_collection_relay_units(comp: Component) -> None:
+        def gather_relays(comp: Component) -> None:
             if not isinstance(comp, Collection):
                 return
 
-            for endpoint_name, endpoint in comp.streams.items():
-                if isinstance(endpoint, InputRelay):
-                    relay_name = f"__relay_in_{endpoint_name}"
-                    if relay_name in comp.components:
-                        raise ValueError(
-                            f"{comp.address} already defines component '{relay_name}'."
-                        )
-
-                    relay_unit = _CollectionRelayUnit(input_relay_settings(endpoint))
-                    relay_unit._set_name(relay_name)
-                    relay_unit._set_location(comp.location + [comp.name])
-                    comp.components[relay_name] = relay_unit
-                    setattr(comp, relay_name, relay_unit)
-
-                    relay_bindings[endpoint.address] = _RelayBinding(
-                        kind="input",
-                        endpoint_topic=endpoint.address,
-                        relay_in_topic=relay_unit.INPUT.address,
-                        relay_out_topic=relay_unit.OUTPUT.address,
-                        endpoint=endpoint,
-                        relay_unit=relay_unit,
-                    )
-
-                elif isinstance(endpoint, OutputRelay):
-                    relay_name = f"__relay_out_{endpoint_name}"
-                    if relay_name in comp.components:
-                        raise ValueError(
-                            f"{comp.address} already defines component '{relay_name}'."
-                        )
-
-                    relay_unit = _CollectionRelayUnit(output_relay_settings(endpoint))
-                    relay_unit._set_name(relay_name)
-                    relay_unit._set_location(comp.location + [comp.name])
-                    comp.components[relay_name] = relay_unit
-                    setattr(comp, relay_name, relay_unit)
-
-                    relay_bindings[endpoint.address] = _RelayBinding(
-                        kind="output",
-                        endpoint_topic=endpoint.address,
-                        relay_in_topic=relay_unit.INPUT.address,
-                        relay_out_topic=relay_unit.OUTPUT.address,
-                        endpoint=endpoint,
-                        relay_unit=relay_unit,
-                    )
+            relays = [
+                endpoint
+                for endpoint in comp.streams.values()
+                if isinstance(endpoint, (Relay, InputRelay, OutputRelay))
+            ]
+            if relays:
+                relay_endpoints_by_collection[comp.address] = relays
 
         for component in components.values():
             if isinstance(component, Collection):
-                crawl_components(component, add_collection_relay_units)
+                crawl_components(component, gather_relays)
+
         def gather_edges(comp: Component):
             if isinstance(comp, Collection):
                 for from_stream, to_stream in comp.network():
@@ -269,33 +217,6 @@ class ExecutionContext:
             if isinstance(component, Collection):
                 crawl_components(component, gather_edges)
 
-        if relay_bindings:
-            rewritten_connections: list[tuple[str, str]] = []
-            for from_topic, to_topic in graph_connections:
-                to_binding = relay_bindings.get(to_topic, None)
-                if to_binding is not None and to_binding.kind == "output":
-                    to_topic = to_binding.relay_in_topic
-
-                from_binding = relay_bindings.get(from_topic, None)
-                if from_binding is not None and from_binding.kind == "input":
-                    from_topic = from_binding.relay_out_topic
-
-                rewritten_connections.append((from_topic, to_topic))
-
-            for binding in relay_bindings.values():
-                if binding.kind == "input":
-                    rewritten_connections.append(
-                        (binding.endpoint_topic, binding.relay_in_topic)
-                    )
-                else:
-                    rewritten_connections.append(
-                        (binding.relay_out_topic, binding.endpoint_topic)
-                    )
-
-            graph_connections = rewritten_connections
-
-        processes = collect_processes(components.values(), process_components)
-
         for component in components.values():
             if isinstance(component, Collection):
 
@@ -305,16 +226,61 @@ class ExecutionContext:
 
                 crawl_components(component, configure_collections)
 
-        for binding in relay_bindings.values():
-            if isinstance(binding.endpoint, InputRelay):
-                binding.relay_unit.apply_settings(input_relay_settings(binding.endpoint))
-            elif isinstance(binding.endpoint, OutputRelay):
-                binding.relay_unit.apply_settings(
-                    output_relay_settings(binding.endpoint)
-                )
+        relay_specs_by_collection = {
+            collection_address: [_relay_runtime(endpoint) for endpoint in endpoints]
+            for collection_address, endpoints in relay_endpoints_by_collection.items()
+        }
+        relay_bindings = {
+            relay.endpoint_topic: relay
+            for relays in relay_specs_by_collection.values()
+            for relay in relays
+        }
+
+        if relay_bindings:
+            rewritten_connections: list[tuple[str, str]] = []
+            for from_topic, to_topic in graph_connections:
+                to_binding = relay_bindings.get(to_topic, None)
+                if to_binding is not None and to_binding.kind == "output":
+                    to_topic = to_binding.relay_input_topic
+
+                from_binding = relay_bindings.get(from_topic, None)
+                if from_binding is not None and from_binding.kind == "input":
+                    from_topic = from_binding.relay_output_topic
+
+                rewritten_connections.append((from_topic, to_topic))
+
+            for binding in relay_bindings.values():
+                if binding.kind == "input":
+                    rewritten_connections.append(
+                        (binding.endpoint_topic, binding.relay_input_topic)
+                    )
+                elif binding.kind == "output":
+                    rewritten_connections.append(
+                        (binding.relay_output_topic, binding.endpoint_topic)
+                    )
+                else:
+                    rewritten_connections.append(
+                        (binding.endpoint_topic, binding.relay_input_topic)
+                    )
+                    rewritten_connections.append(
+                        (binding.relay_output_topic, binding.endpoint_topic)
+                    )
+
+            graph_connections = rewritten_connections
+
+        processes = collect_processes(
+            components.values(),
+            process_components,
+            relay_specs_by_collection,
+        )
 
         if force_single_process:
-            processes = [[u for pu in processes for u in pu]]
+            processes = [
+                _ProcessSpec(
+                    units=[unit for process in processes for unit in process.units],
+                    relays=[relay for process in processes for relay in process.relays],
+                )
+            ]
 
         if not processes:
             return None
@@ -465,6 +431,7 @@ class GraphRunner:
                 for stream_name, stream in comp.streams.items():
                     msg_type = self._stream_type_name(stream.msg_type)
                     if isinstance(stream, InputRelay):
+                        runtime = _relay_runtime_info(stream)
                         relay_entries[stream_name] = InputRelayMetadata(
                             name=stream_name,
                             address=stream.address,
@@ -472,8 +439,12 @@ class GraphRunner:
                             leaky=stream.leaky,
                             max_queue=stream.max_queue,
                             copy_on_forward=stream.copy_on_forward,
+                            relay_group=runtime.group,
+                            relay_input_topic=runtime.input_topic,
+                            relay_output_topic=runtime.output_topic,
                         )
                     elif isinstance(stream, OutputRelay):
+                        runtime = _relay_runtime_info(stream)
                         relay_entries[stream_name] = OutputRelayMetadata(
                             name=stream_name,
                             address=stream.address,
@@ -484,6 +455,27 @@ class GraphRunner:
                             buf_size=stream.buf_size,
                             force_tcp=stream.force_tcp,
                             copy_on_forward=stream.copy_on_forward,
+                            relay_group=runtime.group,
+                            relay_input_topic=runtime.input_topic,
+                            relay_output_topic=runtime.output_topic,
+                        )
+                    elif isinstance(stream, Relay):
+                        runtime = _relay_runtime_info(stream)
+                        relay_entries[stream_name] = RelayMetadata(
+                            name=stream_name,
+                            address=stream.address,
+                            msg_type=msg_type,
+                            leaky=stream.leaky,
+                            max_queue=stream.max_queue,
+                            host=stream.host,
+                            port=stream.port,
+                            num_buffers=stream.num_buffers,
+                            buf_size=stream.buf_size,
+                            force_tcp=stream.force_tcp,
+                            copy_on_forward=stream.copy_on_forward,
+                            relay_group=runtime.group,
+                            relay_input_topic=runtime.input_topic,
+                            relay_output_topic=runtime.output_topic,
                         )
                     elif isinstance(stream, InputTopic):
                         topic_entries[stream_name] = InputTopicMetadata(
@@ -984,51 +976,60 @@ def run(
 def collect_processes(
     collection: Collection | Iterable[Component],
     process_components: AbstractCollection[Component] | None = None,
-) -> list[list[Unit]]:
-    if isinstance(collection, Collection):
-        process_units, units = _collect_processes(
-            collection._components.values(), collection.process_components()
-        )
+    relay_specs_by_collection: Mapping[str, list[_RelayRuntime]] | None = None,
+) -> list[_ProcessSpec]:
+    process_specs, units, relays = _collect_processes(
+        [collection] if isinstance(collection, Collection) else collection,
+        process_components if process_components is not None else tuple(),
+        relay_specs_by_collection if relay_specs_by_collection is not None else {},
+    )
 
-    else:
-        process_units, units = _collect_processes(
-            collection,
-            process_components if process_components is not None else tuple(),
-        )
+    if units or relays:
+        process_specs = [_ProcessSpec(units=units, relays=relays)] + process_specs
 
-    if len(units):
-        process_units = [units] + process_units
-
-    return process_units
+    return process_specs
 
 
 def _collect_processes(
-    comps: Iterable[Component], process_components: AbstractCollection[Component]
-) -> tuple[list[list[Unit]], list[Unit]]:
-    process_units: list[list[Unit]] = []
+    comps: Iterable[Component],
+    process_components: AbstractCollection[Component],
+    relay_specs_by_collection: Mapping[str, list[_RelayRuntime]],
+) -> tuple[list[_ProcessSpec], list[Unit], list[_RelayRuntime]]:
+    process_specs: list[_ProcessSpec] = []
     units: list[Unit] = []
+    relays: list[_RelayRuntime] = []
 
     for comp in comps:
         if isinstance(comp, Collection):
-            r_process_units, r_units = _collect_processes(
-                comp.components.values(), comp.process_components()
+            r_process_specs, r_units, r_relays = _collect_processes(
+                comp.components.values(),
+                comp.process_components(),
+                relay_specs_by_collection,
             )
+            collection_relays = list(relay_specs_by_collection.get(comp.address, []))
 
-            process_units = process_units + r_process_units
+            process_specs = process_specs + r_process_specs
             if comp in process_components:
-                if len(r_units) > 0:
-                    process_units = process_units + [r_units]
+                if r_units or r_relays or collection_relays:
+                    process_specs = process_specs + [
+                        _ProcessSpec(
+                            units=r_units,
+                            relays=r_relays + collection_relays,
+                        )
+                    ]
             else:
-                if len(r_units) > 0:
+                if r_units:
                     units = units + r_units
+                if r_relays or collection_relays:
+                    relays = relays + r_relays + collection_relays
 
         elif isinstance(comp, Unit):
             if comp in process_components:
-                process_units.append([comp])
+                process_specs.append(_ProcessSpec(units=[comp], relays=[]))
             else:
                 if hasattr(comp, PROCESS_ATTR):
-                    process_units.append([comp])
+                    process_specs.append(_ProcessSpec(units=[comp], relays=[]))
                 else:
                     units.append(comp)
 
-    return process_units, units
+    return process_specs, units, relays
