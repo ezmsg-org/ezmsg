@@ -7,7 +7,7 @@ from uuid import UUID
 from contextlib import contextmanager, suppress
 
 from .shm import SHMContext
-from .messagemarshal import MessageMarshal
+from .messagemarshal import MessageMarshal, UninitializedMemory
 from .backpressure import Backpressure
 from .messagecache import MessageCache, CacheMiss
 from .graphserver import GraphService
@@ -288,8 +288,15 @@ class Channel:
                         if self.shm is not None:
                             for id in shm_entries:
                                 shm_buf = self.shm[id % self.num_buffers]
-                                if MessageMarshal.msg_id(shm_buf) == id:
-                                    self.cache.put_from_mem(shm_buf)
+                                # A carried-over slot may not have survived the
+                                # grow/copy; msg_id() raises UninitializedMemory
+                                # on an uninitialized slot. Skip it rather than
+                                # let that escape and kill the channel task.
+                                try:
+                                    if MessageMarshal.msg_id(shm_buf) == id:
+                                        self.cache.put_from_mem(shm_buf)
+                                except UninitializedMemory:
+                                    pass
 
                     if self.shm is None:
                         logger.warning(
@@ -302,7 +309,15 @@ class Channel:
                         continue
 
                     shm_buf = self.shm[buf_idx]
-                    if MessageMarshal.msg_id(shm_buf) != msg_id:
+                    # The slot for this msg_id may be uninitialized after a
+                    # mid-stream resize; msg_id() raises UninitializedMemory in
+                    # that case. Treat it as a mismatch (drop + release) instead
+                    # of letting it escape and silently kill the channel task.
+                    try:
+                        slot_msg_id = MessageMarshal.msg_id(shm_buf)
+                    except UninitializedMemory:
+                        slot_msg_id = None
+                    if slot_msg_id != msg_id:
                         logger.warning(
                             "Channel %s skipping stale SHM contents for message %s from publisher %s; will use next valid SHM generation",
                             self.id,
