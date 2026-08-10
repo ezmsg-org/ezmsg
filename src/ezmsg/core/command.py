@@ -107,8 +107,7 @@ async def run_command(
         host="127.0.0.1",
         port=8000,
         open_browser=False,
-        log_level="info",
-        log_file=log_file,
+        log_level="info"
     )
     result = handlers[cmd](args)
     if inspect.isawaitable(result):
