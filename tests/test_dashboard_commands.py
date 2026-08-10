@@ -1,4 +1,5 @@
 import argparse
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -15,8 +16,17 @@ from ezmsg.core.commands.dashboard import (
 from ezmsg.core.commands.start import handle_start
 from ezmsg.core.commands.serve import handle_serve
 from ezmsg.core.commands.common import graph_address_from_args
+from ezmsg.core.logconfig import EZMSG_LOG_DATE_FORMAT, EZMSG_LOG_FORMAT
 from ezmsg.core.netprotocol import Address
-from ezmsg.core.graphserver import GraphService
+
+
+def log_file_handlers_for(log_path):
+    return [
+        handler
+        for handler in logging.getLogger("ezmsg").handlers
+        if isinstance(handler, logging.FileHandler)
+        and getattr(handler, "baseFilename", None) == str(log_path)
+    ]
 
 
 def test_dashboard_address_defaults_to_graph_port_plus_one():
@@ -106,7 +116,7 @@ async def test_handle_start_forwards_dashboard_flag(monkeypatch):
         "ezmsg.core.commands.start.close_stream_writer", fake_close_stream_writer
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
     await handle_start(args)
 
     assert popen_calls == [
@@ -148,7 +158,7 @@ async def test_handle_start_forwards_dashboard_port(monkeypatch):
         "ezmsg.core.commands.start.close_stream_writer", fake_close_stream_writer
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=28123)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=28123, log_file=None)
     await handle_start(args)
 
     assert popen_calls == [
@@ -171,7 +181,7 @@ async def test_handle_start_warns_when_dashboard_dependency_missing(monkeypatch,
         lambda: (_ for _ in ()).throw(DashboardDependencyError(DASHBOARD_INSTALL_HINT)),
     )
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
 
     with caplog.at_level("WARNING"):
         await handle_start(args)
@@ -198,10 +208,82 @@ async def test_handle_serve_warns_when_dashboard_dependency_missing(monkeypatch,
             DashboardDependencyError(DASHBOARD_INSTALL_HINT)
         ),
     )
+    monkeypatch.setenv("EZMSG_LOG_FILE", "/tmp/ezmsg-serve-test.log")
 
-    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True)
+    args = argparse.Namespace(address="127.0.0.1:25978", dashboard=True, log_file=None)
 
     with caplog.at_level("WARNING"):
         await handle_serve(args)
 
     assert "pip install ezmsg-dashboard" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_serve_closes_created_log_file_handler(monkeypatch, tmp_path):
+    log_path = (tmp_path / "ezmsg-serve.log").resolve()
+    handlers_during_join = []
+
+    class DummyGraphServer:
+        def join(self):
+            handlers_during_join.extend(log_file_handlers_for(log_path))
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(
+        "ezmsg.core.commands.serve.GraphService.create_server",
+        lambda self: DummyGraphServer(),
+    )
+
+    args = argparse.Namespace(
+        address="127.0.0.1:25978",
+        dashboard=None,
+        log_file=str(log_path),
+    )
+
+    await handle_serve(args)
+
+    assert len(handlers_during_join) == 1
+    assert handlers_during_join[0].formatter._style._fmt == EZMSG_LOG_FORMAT
+    assert handlers_during_join[0].formatter.datefmt == EZMSG_LOG_DATE_FORMAT
+    assert handlers_during_join[0] not in logging.getLogger("ezmsg").handlers
+    assert handlers_during_join[0].stream is None
+    assert log_file_handlers_for(log_path) == []
+
+
+@pytest.mark.asyncio
+async def test_handle_serve_leaves_existing_log_file_handler(monkeypatch, tmp_path):
+    log_path = (tmp_path / "ezmsg-serve.log").resolve()
+    logger = logging.getLogger("ezmsg")
+    existing_handler = logging.FileHandler(log_path, encoding="utf-8")
+    handlers_during_join = []
+
+    class DummyGraphServer:
+        def join(self):
+            handlers_during_join.extend(log_file_handlers_for(log_path))
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(
+        "ezmsg.core.commands.serve.GraphService.create_server",
+        lambda self: DummyGraphServer(),
+    )
+
+    logger.addHandler(existing_handler)
+    try:
+        args = argparse.Namespace(
+            address="127.0.0.1:25978",
+            dashboard=None,
+            log_file=str(log_path),
+        )
+
+        await handle_serve(args)
+
+        assert handlers_during_join == [existing_handler]
+        assert existing_handler in logger.handlers
+        assert existing_handler.stream is not None
+    finally:
+        if existing_handler in logger.handlers:
+            logger.removeHandler(existing_handler)
+        existing_handler.close()

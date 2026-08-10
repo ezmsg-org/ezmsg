@@ -6,7 +6,7 @@ import sys
 
 from ..graphserver import GraphService
 from ..netprotocol import close_stream_writer
-from .common import add_address_argument, graph_address_from_args
+from .common import add_address_argument, add_log_file_argument, graph_address_from_args
 from .dashboard import (
     DashboardDependencyError,
     add_dashboard_argument,
@@ -20,6 +20,8 @@ async def handle_start(args: argparse.Namespace) -> None:
     graph_address = graph_address_from_args(args)
     graph_service = GraphService(graph_address)
     cmd = [sys.executable, "-m", "ezmsg.core", "serve", f"--address={graph_address}"]
+    if args.log_file is not None:
+        cmd.append(f"--log-file={args.log_file}")
     if args.dashboard is not None:
         try:
             require_dashboard_dependency()
@@ -46,5 +48,6 @@ async def handle_start(args: argparse.Namespace) -> None:
 def setup_start_cmdline(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("start")
     add_address_argument(parser)
+    add_log_file_argument(parser)
     add_dashboard_argument(parser)
     parser.set_defaults(_handler=handle_start)

@@ -77,6 +77,7 @@ async def run_command(
     compact: int | None = None,
     nobrowser: bool = False,
     dashboard: int | bool | None = None,
+    log_file: str | None = None,
 ) -> None:
     handlers = {
         "dashboard": None,
@@ -102,10 +103,11 @@ async def run_command(
         compact=compact,
         nobrowser=nobrowser,
         dashboard=dashboard,
+        log_file=log_file,
         host="127.0.0.1",
         port=8000,
         open_browser=False,
-        log_level="info",
+        log_level="info"
     )
     result = handlers[cmd](args)
     if inspect.isawaitable(result):
