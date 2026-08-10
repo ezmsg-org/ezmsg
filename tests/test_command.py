@@ -4,8 +4,9 @@ import asyncio
 import sys
 from pathlib import Path
 
-from ezmsg.core.command import build_parser, cmdline
+from ezmsg.core.command import build_parser, cmdline, run_command
 from ezmsg.core.commands.start import handle_start
+from ezmsg.core.netprotocol import Address
 
 
 def test_mermaid_subparser_accepts_mermaid_specific_args():
@@ -285,3 +286,25 @@ def test_start_passes_log_file_to_serve(monkeypatch):
             "--log-file=/tmp/ezmsg.log",
         ]
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_command_passes_log_file_to_start(monkeypatch):
+    captured = {}
+
+    async def fake_handle_start(args):
+        captured["log_file"] = args.log_file
+        captured["address"] = args.address
+
+    monkeypatch.setattr("ezmsg.core.command.handle_start", fake_handle_start)
+
+    await run_command(
+        "start",
+        graph_address=Address("127.0.0.1", 25978),
+        log_file="/tmp/ezmsg.log",
+    )
+
+    assert captured == {
+        "log_file": "/tmp/ezmsg.log",
+        "address": "127.0.0.1:25978",
+    }
