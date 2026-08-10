@@ -7,9 +7,9 @@ from uuid import UUID
 from contextlib import contextmanager, suppress
 
 from .shm import SHMContext
-from .messagemarshal import MessageMarshal
+from .messagemarshal import MessageMarshal, UninitializedMemory
 from .backpressure import Backpressure
-from .messagecache import MessageCache
+from .messagecache import MessageCache, CacheMiss
 from .graphserver import GraphService
 from .netprotocol import (
     Command,
@@ -266,28 +266,60 @@ class Channel:
                     channel_kind = ProfileChannelType.SHM
                     shm_name = await read_str(reader)
 
-                    if self.shm is not None and self.shm.name != shm_name:
-                        shm_entries = self.cache.keys()
+                    if self.shm is None or self.shm.name != shm_name:
+                        preserved_cache = self._snapshot_cached_messages()
                         self.cache.clear()
-                        self.shm.close()
-                        await self.shm.wait_closed()
+                        for preserved_msg in preserved_cache:
+                            self.cache.put_from_mem(preserved_msg)
+
+                        if self.shm is not None:
+                            old_shm = self.shm
+                            old_shm.close()
+                            await old_shm.wait_closed()
 
                         try:
                             self.shm = await GraphService(
                                 self._graph_address
                             ).attach_shm(shm_name)
                         except ValueError:
-                            logger.info(
-                                "Invalid SHM received from publisher; may be dead"
+                            logger.warning(
+                                "Channel %s received stale SHM %s for publisher %s; waiting for next valid SHM",
+                                self.id,
+                                shm_name,
+                                self.pub_id,
                             )
-                            raise
+                            self.shm = None
 
-                        for id in shm_entries:
-                            self.cache.put_from_mem(self.shm[id % self.num_buffers])
+                    if self.shm is None:
+                        logger.warning(
+                            "Channel %s dropping message %s from publisher %s because its SHM generation is stale",
+                            self.id,
+                            msg_id,
+                            self.pub_id,
+                        )
+                        self._release_backpressure(msg_id, self.id)
+                        continue
 
-                    assert self.shm is not None
-                    assert MessageMarshal.msg_id(self.shm[buf_idx]) == msg_id
-                    self.cache.put_from_mem(self.shm[buf_idx])
+                    shm_buf = self.shm[buf_idx]
+                    # The slot for this msg_id may be uninitialized after a
+                    # mid-stream resize; msg_id() raises UninitializedMemory in
+                    # that case. Treat it as a mismatch (drop + release) instead
+                    # of letting it escape and silently kill the channel task.
+                    try:
+                        slot_msg_id = MessageMarshal.msg_id(shm_buf)
+                    except UninitializedMemory:
+                        slot_msg_id = None
+                    if slot_msg_id != msg_id:
+                        logger.warning(
+                            "Channel %s skipping stale SHM contents for message %s from publisher %s; will use next valid SHM generation",
+                            self.id,
+                            msg_id,
+                            self.pub_id,
+                        )
+                        self._release_backpressure(msg_id, self.id)
+                        continue
+
+                    self.cache.put_from_mem(shm_buf)
 
                 elif msg == Command.TX_TCP.value:
                     channel_kind = ProfileChannelType.TCP
@@ -308,6 +340,13 @@ class Channel:
 
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
+        except Exception:
+            logger.exception(
+                "Channel %s publisher connection crashed for pub %s",
+                self.id,
+                self.pub_id,
+            )
+            raise
 
         finally:
             self.cache.clear()
@@ -395,6 +434,21 @@ class Channel:
         """
         self._release_backpressure(msg_id, client_id)
 
+    def _snapshot_cached_messages(self) -> list[memoryview]:
+        if self.shm is None:
+            return []
+
+        preserved: list[memoryview] = []
+        for msg_id in self.cache.keys():
+            shm_buf = self.shm[msg_id % self.num_buffers]
+            try:
+                if MessageMarshal.msg_id(shm_buf) == msg_id:
+                    preserved.append(memoryview(bytes(shm_buf)).toreadonly())
+            except UninitializedMemory:
+                pass
+
+        return preserved
+
     def _release_backpressure(self, msg_id: int, client_id: UUID) -> None:
         """
         Internal method to release backpressure for a message.
@@ -407,7 +461,15 @@ class Channel:
         buf_idx = msg_id % self.num_buffers
         self.backpressure.free(client_id, buf_idx)
         if self.backpressure.buffers[buf_idx].is_empty:
-            self.cache.release(msg_id)
+            try:
+                self.cache.release(msg_id)
+            except CacheMiss:
+                logger.debug(
+                    "Channel %s observed cache miss while releasing msg_id=%s from publisher %s; continuing backpressure release",
+                    self.id,
+                    msg_id,
+                    self.pub_id,
+                )
 
             # If pub is in same process as this channel, avoid TCP
             if self._local_backpressure is not None:
