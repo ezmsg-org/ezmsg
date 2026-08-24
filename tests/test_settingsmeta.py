@@ -41,7 +41,13 @@ class Rate(enum.IntEnum):
     FAST = 5
 
 
-class Mode(enum.StrEnum):
+class Mode(str, enum.Enum):
+    """A str-mixin enum, spelled the pre-3.11 way so this runs on 3.10.
+
+    ``enum.StrEnum`` is 3.11+, but it is this mixin that matters here: members
+    are instances of ``str`` either way.
+    """
+
     IDLE = "idle"
     BUSY = "busy"
 
@@ -88,8 +94,19 @@ def test_sanitize_unwraps_mixin_enums():
 
 def test_sanitize_unwraps_enums_in_containers():
     assert _sanitize([Rate.SLOW, Mode.IDLE]) == [1, "idle"]
-    assert _sanitize({Rate.SLOW: Mode.IDLE}) == {"1": "idle"}
     assert _sanitize(NestedSettings()) == {"rate": 1, "modes": ["idle"]}
+
+
+def test_sanitize_renders_enum_keys_by_value():
+    """Enum mapping keys must render the same on every supported interpreter.
+
+    ``str()`` of an IntEnum member changed in 3.11 -- ``'Rate.SLOW'`` before,
+    ``'1'` after -- so keying by ``str(key)`` alone makes the payload depend on
+    the Python version the graph happens to run under.
+    """
+    assert _sanitize({Rate.SLOW: Mode.IDLE}) == {"1": "idle"}
+    assert _sanitize({Mode.BUSY: 1}) == {"busy": 1}
+    assert _sanitize({Plain.X: 1}) == {"x": 1}
 
 
 def test_structured_value_is_wire_safe():
