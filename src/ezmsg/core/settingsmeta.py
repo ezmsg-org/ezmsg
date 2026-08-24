@@ -23,7 +23,10 @@ def _sanitize(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Mapping):
-        return {str(key): _sanitize(val) for key, val in value.items()}
+        # Sanitize keys too, so an enum key renders as its value rather than
+        # through str(), whose output for an IntEnum changed in 3.11 -- the same
+        # settings would otherwise key differently per interpreter version.
+        return {str(_sanitize(key)): _sanitize(val) for key, val in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_sanitize(val) for val in value]
     if is_dataclass(value):
