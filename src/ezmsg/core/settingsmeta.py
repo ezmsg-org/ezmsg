@@ -2,10 +2,123 @@ from __future__ import annotations
 
 from dataclasses import MISSING, asdict, fields as dataclass_fields, is_dataclass
 import enum
+import types
+import typing
 from collections.abc import Mapping
-from typing import Any, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from .graphmeta import SettingsFieldMetadata, SettingsSchemaMetadata
+
+# Soft dependency (the `schema` extra): with pydantic installed, settings
+# metadata carries a standard JSON Schema and dynamic settings field updates
+# are validated/coerced in the owning process; without it, schema fields are
+# None and updates apply raw, exactly as before.
+try:
+    from pydantic import TypeAdapter as _TypeAdapter
+except ImportError:  # pragma: no cover — exercised via the stubbed tests
+    _TypeAdapter = None
+
+
+class SettingsCoercionError(ValueError):
+    """A dynamic settings field update refused by the settings type.
+
+    Raised only when pydantic is installed AND resolved the field's
+    annotation AND rejected the value — never for gaps in coverage, which
+    fall back to applying the value raw.
+    """
+
+
+def settings_json_schema(settings_type: object) -> dict[str, Any] | None:
+    """Standard JSON Schema for a settings type, or None. Never raises.
+
+    None means pydantic is not installed, or it cannot model this type (an
+    arbitrary-typed field, an exotic annotation); consumers treat that as
+    "no schema" and keep whatever behavior they had.
+    """
+    if _TypeAdapter is None or not isinstance(settings_type, type):
+        return None
+    try:
+        schema = _TypeAdapter(settings_type).json_schema(mode="validation")
+    except Exception:
+        return None
+    return schema if isinstance(schema, dict) else None
+
+
+def _unwrap_annotation(annotation: Any) -> Any:
+    """Peel Annotated and single-member-Optional wrappers for shape checks.
+
+    Only used to decide how to DESCEND a dotted field path; the full
+    (wrapped) annotation is what gets validated against, so metadata like
+    pydantic Field constraints is never lost.
+    """
+    while True:
+        if get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+            continue
+        origin = get_origin(annotation)
+        if origin in (typing.Union, types.UnionType):
+            non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+            if len(non_none) == 1:
+                annotation = non_none[0]
+                continue
+        return annotation
+
+
+def _annotation_at_path(settings_type: type, field_path: str) -> Any | None:
+    """The annotation a dotted settings field path addresses, or None.
+
+    Walks dataclass/pydantic-model fields by name and str-keyed mappings by
+    value type — the same shapes ``_replace_settings_field`` patches. None
+    (unknown field, unresolvable hints, an unsupported container in the
+    middle of the path) means "no annotation available", not an error.
+    """
+    current: Any = settings_type
+    for segment in str(field_path).split("."):
+        base = _unwrap_annotation(current)
+        if is_dataclass(base) or hasattr(base, "model_fields"):
+            try:
+                hints = get_type_hints(base, include_extras=True)
+            except Exception:
+                return None
+            if segment not in hints:
+                return None
+            current = hints[segment]
+            continue
+        if get_origin(base) is dict or (isinstance(get_origin(base), type) and issubclass(get_origin(base), Mapping)):
+            args = get_args(base)
+            if len(args) != 2:
+                return None
+            current = args[1]
+            continue
+        return None
+    return current
+
+
+def coerce_settings_field_value(settings_type: object, field_path: str, value: Any) -> Any:
+    """Validate/coerce one dynamic settings field update against its annotation.
+
+    The authoritative reconstruction point: this runs in the process that
+    owns the unit, the one place the settings class and everything it
+    references (enums included) is importable. Returns the coerced value;
+    returns ``value`` unchanged when pydantic is absent or the annotation
+    cannot be resolved/modelled (raw behavior, as before this existed); and
+    raises :class:`SettingsCoercionError` when pydantic refuses the value —
+    a refusal the process control response reports back to the caller
+    instead of publishing a value the settings type cannot hold.
+    """
+    if _TypeAdapter is None or not isinstance(settings_type, type):
+        return value
+    annotation = _annotation_at_path(settings_type, field_path)
+    if annotation is None:
+        return value
+    try:
+        adapter = _TypeAdapter(annotation)
+    except Exception:
+        return value
+    try:
+        return adapter.validate_python(value)
+    except Exception as exc:
+        raise SettingsCoercionError(f"Invalid value for settings field '{field_path}': {exc}") from None
 
 
 def _type_name(tp: object) -> str:
@@ -34,6 +147,18 @@ def _sanitize(value: Any) -> Any:
 def settings_structured_value(value: object) -> dict[str, Any] | None:
     if value is None:
         return None
+
+    # Pydantic's JSON-mode dump first: it round-trips exactly what the
+    # type's JSON Schema describes (enums by value, tuples as arrays, paths
+    # and datetimes as strings). A type pydantic cannot model fails at
+    # adapter construction and falls through to the legacy renderings.
+    if _TypeAdapter is not None:
+        try:
+            dumped = _TypeAdapter(type(value)).dump_python(value, mode="json")
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
 
     if is_dataclass(value):
         try:
@@ -138,6 +263,8 @@ def settings_schema_from_type(settings_type: object) -> SettingsSchemaMetadata |
     if not isinstance(settings_type, type):
         return None
 
+    json_schema = settings_json_schema(settings_type)
+
     if is_dataclass(settings_type):
         fields: list[SettingsFieldMetadata] = []
         for f in dataclass_fields(settings_type):
@@ -187,6 +314,7 @@ def settings_schema_from_type(settings_type: object) -> SettingsSchemaMetadata |
             provider="dataclass",
             settings_type=_type_name(settings_type),
             fields=fields,
+            json_schema=json_schema,
         )
 
     if hasattr(settings_type, "model_fields"):
@@ -227,6 +355,7 @@ def settings_schema_from_type(settings_type: object) -> SettingsSchemaMetadata |
                 provider="pydantic",
                 settings_type=_type_name(settings_type),
                 fields=fields,
+                json_schema=json_schema,
             )
 
     if hasattr(settings_type, "__fields__"):
@@ -260,6 +389,7 @@ def settings_schema_from_type(settings_type: object) -> SettingsSchemaMetadata |
                 provider="pydantic",
                 settings_type=_type_name(settings_type),
                 fields=fields,
+                json_schema=json_schema,
             )
 
     param_ns = getattr(settings_type, "param", None)
@@ -317,6 +447,7 @@ def settings_schema_from_type(settings_type: object) -> SettingsSchemaMetadata |
                 provider="param",
                 settings_type=_type_name(settings_type),
                 fields=fields,
+                json_schema=json_schema,
             )
 
     return None

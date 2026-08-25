@@ -50,6 +50,7 @@ from .pubclient import Publisher
 from .subclient import Subscriber
 from .netprotocol import AddressType
 from .settingsmeta import (
+    coerce_settings_field_value,
     settings_repr_value,
     settings_schema_from_value,
     settings_structured_value,
@@ -422,10 +423,23 @@ class DefaultBackendProcess(BackendProcess):
                 )
 
             try:
+                # Authoritative validation/coercion: this process is the one
+                # place the settings class (and everything it references,
+                # enums included) is importable, so a value is checked against
+                # the field's annotation HERE rather than trusting callers to
+                # pre-cast. With the `schema` extra absent, or for annotations
+                # pydantic cannot resolve, the value applies raw as before; a
+                # refused value fails the request instead of publishing a
+                # value the settings type cannot hold.
+                coerced_value = coerce_settings_field_value(
+                    type(current_settings[unit_address]),
+                    update_obj.field_path,
+                    update_obj.value,
+                )
                 patched = self._replace_settings_field(
                     current_settings[unit_address],
                     update_obj.field_path,
-                    update_obj.value,
+                    coerced_value,
                 )
                 control_pub = control_publishers.get(input_topic)
                 if control_pub is None:
