@@ -1,12 +1,10 @@
-import pytest
 import asyncio
-import ezmsg.core as ez
-
-from ezmsg.core.graphserver import GraphService
-
+from collections.abc import AsyncGenerator
 from multiprocessing import Process
 
-from collections.abc import AsyncGenerator
+import pytest
+
+import ezmsg.core as ez
 
 
 class TransmitReceiveSettings(ez.Settings):
@@ -105,12 +103,18 @@ class AttachEchoProcess(AttachTestProcess):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="canonical port isn't always available")
 async def test_attach():
-    graph_service = GraphService(address=GraphService.default_address())
-    graph_server = graph_service.create_server()
+    """Independent processes attach to one already-running default server.
 
-    async with ez.GraphContext(graph_service):
+    Previously skipped as "canonical port isn't always available": the test
+    needed the shared default port, which anything on the machine could
+    occupy. The hermetic conftest pins the default to a session-private
+    address and runs a server there for every test, so attaching — from
+    this process and from the spawned children, which inherit the pinned
+    environment — is reliable. The conftest's server IS the attach target;
+    the test no longer creates its own.
+    """
+    async with ez.GraphContext():
         settings = TransmitReceiveSettings()
 
         txrx_process = TransmitReceiveProcess(settings)
@@ -121,14 +125,3 @@ async def test_attach():
 
         echo_process.join()
         txrx_process.join()
-
-    graph_server.stop()
-
-
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_attach())
-    finally:
-        loop.close()
