@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from multiprocessing import Process
+from pathlib import Path
 
 import pytest
 
@@ -73,6 +74,8 @@ class AttachTestProcess(Process):
 TX_TOPIC = "TX"
 RX_TOPIC = "RX"
 ACK_TOPIC = "ACK"
+PROCESS_TIMEOUT = 30.0
+PROCESS_CLEANUP_TIMEOUT = 5.0
 
 
 class TransmitReceiveProcess(AttachTestProcess):
@@ -102,8 +105,46 @@ class AttachEchoProcess(AttachTestProcess):
             )
 
 
+async def wait_for_processes(processes: list[Process]) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + PROCESS_TIMEOUT
+    remaining = list(processes)
+
+    while remaining:
+        for process in list(remaining):
+            if process.is_alive():
+                continue
+            process.join()
+            assert process.exitcode == 0, (
+                f"{process.name} exited with status {process.exitcode}"
+            )
+            remaining.remove(process)
+
+        if not remaining:
+            return
+        if loop.time() >= deadline:
+            names = ", ".join(process.name for process in remaining)
+            raise AssertionError(
+                f"Processes did not exit within {PROCESS_TIMEOUT}s: {names}"
+            )
+
+        await asyncio.sleep(0.05)
+
+
+async def close_process(process: Process) -> None:
+    if process.is_alive():
+        process.terminate()
+        await asyncio.to_thread(process.join, PROCESS_CLEANUP_TIMEOUT)
+    if process.is_alive():
+        process.kill()
+        await asyncio.to_thread(process.join, PROCESS_CLEANUP_TIMEOUT)
+
+    assert not process.is_alive(), f"Could not stop {process.name}"
+    process.close()
+
+
 @pytest.mark.asyncio
-async def test_attach():
+async def test_attach(monkeypatch: pytest.MonkeyPatch):
     """Independent processes attach to one already-running default server.
 
     Previously skipped as "canonical port isn't always available": the test
@@ -114,14 +155,22 @@ async def test_attach():
     environment — is reliable. The conftest's server IS the attach target;
     the test no longer creates its own.
     """
+    # pytest's importlib mode does not put the repository root on sys.path.
+    # Spawned processes need it there to unpickle these test process classes.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+
     async with ez.GraphContext():
         settings = TransmitReceiveSettings()
-
         txrx_process = TransmitReceiveProcess(settings)
-        txrx_process.start()
-
         echo_process = AttachEchoProcess(settings)
-        echo_process.start()
+        started_processes: list[Process] = []
 
-        echo_process.join()
-        txrx_process.join()
+        try:
+            for process in (txrx_process, echo_process):
+                process.start()
+                started_processes.append(process)
+
+            await wait_for_processes(started_processes)
+        finally:
+            for process in started_processes:
+                await close_process(process)
