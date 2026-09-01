@@ -698,16 +698,17 @@ class GraphRunner:
             self._graph_context = graph_context
             self._graph_server_spawned = graph_context._graph_server is not None
 
+            address = graph_context.graph_address
+            if address is None:
+                address = GraphService.default_address()
+
             if graph_context._graph_server is None:
-                address = graph_context.graph_address
-                if address is None:
-                    address = GraphService.default_address()
                 logger.info(f"Connected to GraphServer @ {address}")
             else:
-                logger.info(f"Spawned GraphServer @ {graph_context.graph_address}")
+                logger.info(f"Spawned GraphServer @ {address}")
 
             self._execution_context.create_processes(
-                graph_address=graph_context.graph_address,
+                graph_address=address,
                 backend_process=self._backend_process,
             )
 
