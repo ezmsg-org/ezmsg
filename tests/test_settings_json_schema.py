@@ -75,7 +75,7 @@ class TestSchemaAttachment:
         assert settings_json_schema(UnmodelableSettings) is None
 
     def test_without_pydantic_schema_is_none(self, monkeypatch):
-        monkeypatch.setattr(settingsmeta, "_TypeAdapter", None)
+        monkeypatch.setattr(settingsmeta, "_TYPE_ADAPTER", None)
         assert settings_json_schema(DemoSettings) is None
         meta = settings_schema_from_type(DemoSettings)
         assert meta is not None and meta.json_schema is None
@@ -99,7 +99,7 @@ class TestStructuredValue:
         assert structured is not None and set(structured) == {"handle"}
 
     def test_falls_back_without_pydantic(self, monkeypatch):
-        monkeypatch.setattr(settingsmeta, "_TypeAdapter", None)
+        monkeypatch.setattr(settingsmeta, "_TYPE_ADAPTER", None)
         structured = settings_structured_value(DemoSettings(flavor=Flavor.MINT))
         assert structured is not None and structured["flavor"] == "mint"
 
@@ -140,5 +140,5 @@ class TestFieldCoercion:
         assert coerce_settings_field_value(UnmodelableSettings, "handle", "x") == "x"
 
     def test_without_pydantic_everything_passes_raw(self, monkeypatch):
-        monkeypatch.setattr(settingsmeta, "_TypeAdapter", None)
+        monkeypatch.setattr(settingsmeta, "_TYPE_ADAPTER", None)
         assert coerce_settings_field_value(DemoSettings, "gain", "loud") == "loud"

@@ -14,10 +14,27 @@ from .graphmeta import SettingsFieldMetadata, SettingsSchemaMetadata
 # metadata carries a standard JSON Schema and dynamic settings field updates
 # are validated/coerced in the owning process; without it, schema fields are
 # None and updates apply raw, exactly as before.
-try:
-    from pydantic import TypeAdapter as _TypeAdapter
-except ImportError:  # pragma: no cover — exercised via the stubbed tests
-    _TypeAdapter = None
+#
+# Resolved on first use rather than at import. This module is reached by a
+# plain ``import ezmsg.core``, so importing pydantic here would charge every
+# ezmsg process ~200 ms and ~5 MB — including every spawned backend process,
+# which on spawn platforms re-imports from scratch — whether or not it ever
+# describes or coerces a setting. Deferring it means only the process that
+# builds graph metadata, and processes that actually handle settings, pay.
+_UNRESOLVED = object()
+_TYPE_ADAPTER: Any = _UNRESOLVED
+
+
+def _type_adapter() -> Any:
+    """``pydantic.TypeAdapter`` if it can be imported, else None (cached)."""
+    global _TYPE_ADAPTER
+    if _TYPE_ADAPTER is _UNRESOLVED:
+        try:
+            from pydantic import TypeAdapter
+        except ImportError:  # pragma: no cover — exercised via the stubbed tests
+            TypeAdapter = None
+        _TYPE_ADAPTER = TypeAdapter
+    return _TYPE_ADAPTER
 
 
 class SettingsCoercionError(ValueError):
@@ -36,10 +53,11 @@ def settings_json_schema(settings_type: object) -> dict[str, Any] | None:
     arbitrary-typed field, an exotic annotation); consumers treat that as
     "no schema" and keep whatever behavior they had.
     """
-    if _TypeAdapter is None or not isinstance(settings_type, type):
+    type_adapter = _type_adapter()
+    if type_adapter is None or not isinstance(settings_type, type):
         return None
     try:
-        schema = _TypeAdapter(settings_type).json_schema(mode="validation")
+        schema = type_adapter(settings_type).json_schema(mode="validation")
     except Exception:
         return None
     return schema if isinstance(schema, dict) else None
@@ -107,13 +125,14 @@ def coerce_settings_field_value(settings_type: object, field_path: str, value: A
     a refusal the process control response reports back to the caller
     instead of publishing a value the settings type cannot hold.
     """
-    if _TypeAdapter is None or not isinstance(settings_type, type):
+    type_adapter = _type_adapter()
+    if type_adapter is None or not isinstance(settings_type, type):
         return value
     annotation = _annotation_at_path(settings_type, field_path)
     if annotation is None:
         return value
     try:
-        adapter = _TypeAdapter(annotation)
+        adapter = type_adapter(annotation)
     except Exception:
         return value
     try:
@@ -153,9 +172,10 @@ def settings_structured_value(value: object) -> dict[str, Any] | None:
     # type's JSON Schema describes (enums by value, tuples as arrays, paths
     # and datetimes as strings). A type pydantic cannot model fails at
     # adapter construction and falls through to the legacy renderings.
-    if _TypeAdapter is not None:
+    type_adapter = _type_adapter()
+    if type_adapter is not None:
         try:
-            dumped = _TypeAdapter(type(value)).dump_python(value, mode="json")
+            dumped = type_adapter(type(value)).dump_python(value, mode="json")
             if isinstance(dumped, dict):
                 return dumped
         except Exception:
