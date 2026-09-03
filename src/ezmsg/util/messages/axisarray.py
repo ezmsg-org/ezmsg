@@ -6,6 +6,7 @@ from array_api_compat import get_namespace, is_cupy_array, is_numpy_array, is_to
 import math
 import typing
 import warnings
+import zlib
 
 import ezmsg.core as ez
 
@@ -117,6 +118,10 @@ class LinearAxis(AxisBase):
         return cls(unit="s", gain=1.0 / fs, offset=offset)
 
 
+# Distinguishes "no fingerprint cached yet" from "cached, and it is None".
+_UNSET = object()
+
+
 @dataclass
 class ArrayWithNamedDims:
     """
@@ -185,6 +190,77 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         :rtype: typing.Any | npt.NDArray
         """
         return self.data[x]
+
+    @property
+    def fingerprint(self) -> tuple | None:
+        """
+        A small, hashable stand-in for this axis's *contents*.
+
+        Two axes with equal fingerprints hold equal coordinate values; two axes
+        with different fingerprints do not. It is derived from the data rather
+        than assigned, so there is no counter for a producer to forget to bump —
+        building a new axis is what changes it.
+
+        This exists because a downstream operation that resolves coordinate
+        *values* into something it then caches — channel labels into array
+        indices, or into output labels — cannot key that cache on shape alone.
+        A source that renames, reorders or swaps channels without changing how
+        many it sends would otherwise keep getting the previous answer, emitting
+        one channel's samples under another channel's label. Comparing the
+        arrays outright is O(bytes) on every message and in every consumer;
+        comparing fingerprints is a tuple compare.
+
+        Computed on first access and cached on the instance, so the cost is paid
+        once per axis object rather than once per consumer per message. The
+        cached value is part of ``__dict__``, so it survives pickling and
+        arrives already computed on the far side of a process boundary.
+
+        ``None`` when the contents cannot be digested (a non-numpy backing
+        array, or an object dtype holding values with no string form). Callers
+        must treat ``None`` as "unknown" and fall back to comparing the data —
+        never as a value that compares equal to another ``None``.
+
+        .. warning::
+           Assumes the axis is not mutated after construction. Both
+           ``ax.data = other`` and ``ax.data[0] = "X"`` leave a stale
+           fingerprint. Messages fan out to several branches of a graph, so
+           mutating one in place is already unsafe; this makes it a requirement.
+           Build a new axis (e.g. via :func:`replace`) instead.
+
+        :return: Hashable content digest, or None if one cannot be computed
+        :rtype: tuple | None
+        """
+        # _UNSET, not None: a successfully computed fingerprint may itself be
+        # None, and that result has to be cached too -- recomputing it means
+        # re-raising out of ascontiguousarray on every access.
+        cached = self.__dict__.get("_fingerprint", _UNSET)
+        if cached is _UNSET:
+            cached = self.__dict__["_fingerprint"] = self._compute_fingerprint()
+        return cached
+
+    def _compute_fingerprint(self) -> tuple | None:
+        """Digest the coordinate values, or None if they cannot be digested."""
+        try:
+            data = np.ascontiguousarray(self.data)
+        except (TypeError, ValueError):
+            # A device-resident or otherwise non-numpy backing array. Refusing
+            # to guess is the safe answer; the caller falls back to comparing.
+            return None
+        if data.dtype.hasobject:
+            # An object array's buffer is pointers, so checksumming it directly
+            # would make two equal axes disagree. Widen to a real dtype first.
+            try:
+                data = np.ascontiguousarray(data.astype("U"))
+            except (TypeError, ValueError):
+                return None
+        # crc32 rather than hash(data.tobytes()) because the copy is not the
+        # bottleneck: on a 256-channel struct axis the copy runs at ~94 GB/s and
+        # CPython's siphash over the result at ~5.5 GB/s, while crc32 reads the
+        # array's buffer directly at ~29 GB/s.
+        #
+        # dtype goes in as the object, not str(dtype): numpy builds a structured
+        # dtype's repr field by field, which costs ~10x the checksum it annotates.
+        return (self.unit, tuple(self.dims), data.dtype, data.shape, zlib.crc32(data))
 
 
 @dataclass(eq=False)

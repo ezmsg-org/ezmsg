@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from ezmsg.util.messages.axisarray import (
     AxisArray,
+    CoordinateAxis,
+    replace,
     shape2d,
     slice_along_axis,
     sliding_win_oneaxis,
@@ -350,8 +352,8 @@ def test_sliding_win_oneaxis_generic(nwin: int, axis: int, step: int):
 @pytest.mark.parametrize(
     "shape,axis,nwin,step",
     [
-        ((100, 64), 0, 50, 1),       # (time, channels) — typical EEG window
-        ((1000, 32), 0, 256, 64),     # large time axis with step
+        ((100, 64), 0, 50, 1),  # (time, channels) — typical EEG window
+        ((1000, 32), 0, 256, 64),  # large time axis with step
         ((8, 1000, 16), 1, 100, 10),  # middle axis
     ],
     ids=["100x64_win50", "1000x32_win256_step64", "8x1000x16_win100_step10"],
@@ -414,3 +416,136 @@ def test_to_xr_dataarray():
     assert np.allclose(
         quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6])
     )
+
+
+class TestCoordinateAxisFingerprint:
+    """``CoordinateAxis.fingerprint`` is derived from the contents, not assigned.
+
+    It exists so a consumer that caches something resolved from coordinate
+    *values* can notice those values changing under a fixed shape, without
+    paying an O(bytes) comparison per consumer per message.
+    """
+
+    @staticmethod
+    def _axis(labels, **kwargs):
+        return CoordinateAxis(data=np.array(labels), dims=["ch"], **kwargs)
+
+    def test_equal_contents_agree(self):
+        """Two separately built but equal axes must agree, or every consumer
+        would reset on a source that rebuilds its axis per message."""
+        assert (
+            self._axis(["A", "B", "C"]).fingerprint
+            == self._axis(["A", "B", "C"]).fingerprint
+        )
+
+    def test_different_contents_differ(self):
+        assert (
+            self._axis(["A", "B", "C"]).fingerprint
+            != self._axis(["X", "Y", "Z"]).fingerprint
+        )
+
+    def test_reorder_is_detected(self):
+        assert (
+            self._axis(["A", "B", "C"]).fingerprint
+            != self._axis(["B", "A", "C"]).fingerprint
+        )
+
+    def test_unit_and_dims_are_included(self):
+        assert (
+            self._axis(["A", "B"]).fingerprint
+            != self._axis(["A", "B"], unit="label").fingerprint
+        )
+        square = np.array([["A", "B"], ["C", "D"]])
+        one = CoordinateAxis(data=square, dims=["ch", "x"])
+        two = CoordinateAxis(data=square, dims=["ch", "y"])
+        assert one.fingerprint != two.fingerprint
+
+    def test_dtype_change_alone_is_detected(self):
+        wide = CoordinateAxis(data=np.array([1, 2], dtype=np.int64), dims=["ch"])
+        narrow = CoordinateAxis(data=np.array([1, 2], dtype=np.int32), dims=["ch"])
+        assert wide.fingerprint != narrow.fingerprint
+
+    def test_structured_dtype(self):
+        dt = np.dtype([("label", "U8"), ("bank", "U2")])
+        first = np.array([("e1", "A"), ("e2", "B")], dtype=dt)
+        same = np.array([("e1", "A"), ("e2", "B")], dtype=dt)
+        other = np.array([("e1", "A"), ("e2", "C")], dtype=dt)
+        assert (
+            CoordinateAxis(data=first, dims=["ch"]).fingerprint
+            == CoordinateAxis(data=same, dims=["ch"]).fingerprint
+        )
+        assert (
+            CoordinateAxis(data=first, dims=["ch"]).fingerprint
+            != CoordinateAxis(data=other, dims=["ch"]).fingerprint
+        )
+
+    def test_object_dtype_is_content_based(self):
+        """An object array's buffer holds pointers, so digesting it directly
+        would make two equal axes disagree and reset consumers every message."""
+        one = CoordinateAxis(data=np.array(["c1", "c2"], dtype=object), dims=["ch"])
+        two = CoordinateAxis(
+            data=np.array(["".join(("c", str(i))) for i in (1, 2)], dtype=object),
+            dims=["ch"],
+        )
+        assert one.fingerprint == two.fingerprint
+        three = CoordinateAxis(data=np.array(["c1", "c9"], dtype=object), dims=["ch"])
+        assert one.fingerprint != three.fingerprint
+
+    def test_non_contiguous_data(self):
+        """A strided view has no C-contiguous buffer; the digest must gather."""
+        strided = np.array(["a", "X", "b", "X", "c", "X"])[::2]
+        assert not strided.flags["C_CONTIGUOUS"]
+        assert (
+            CoordinateAxis(data=strided, dims=["ch"]).fingerprint
+            == self._axis(["a", "b", "c"]).fingerprint
+        )
+
+    def test_undigestable_contents_report_none(self):
+        """None means 'unknown', so a caller falls back to comparing rather
+        than treating two unknowns as equal."""
+
+        class NoStringForm:
+            def __str__(self):
+                raise ValueError("cannot stringify")
+
+            __repr__ = __str__
+
+        axis = self._axis(["a", "b"])
+        axis.data = np.array([NoStringForm(), NoStringForm()], dtype=object)
+        axis.__dict__.pop("_fingerprint", None)
+        assert axis.fingerprint is None
+
+    def test_cached_on_the_instance(self):
+        axis = self._axis([f"e{i:03d}" for i in range(64)])
+        assert axis.fingerprint is axis.fingerprint
+        assert "_fingerprint" in axis.__dict__
+
+    def test_is_hashable(self):
+        """Consumers fold it into hash((key, shape, fingerprint))."""
+        hash(("key", (30, 3), self._axis(["A", "B", "C"]).fingerprint))
+
+    def test_survives_pickling(self):
+        """The cached value crosses a process boundary with the data, so the
+        far side never recomputes it."""
+        import pickle
+
+        axis = self._axis([f"e{i:03d}" for i in range(64)])
+        expected = axis.fingerprint
+        msg = AxisArray(
+            np.zeros((4, 64)),
+            dims=["time", "ch"],
+            axes={"time": AxisArray.TimeAxis(fs=10.0), "ch": axis},
+            key="k",
+        )
+        restored = pickle.loads(pickle.dumps(msg)).axes["ch"]
+        assert restored is not axis
+        assert restored.__dict__.get("_fingerprint") is not None  # arrived precomputed
+        assert restored.fingerprint == expected
+
+    def test_replace_yields_a_fresh_fingerprint(self):
+        """``replace`` builds a new axis, so the cache cannot leak across."""
+        axis = self._axis(["A", "B"])
+        _ = axis.fingerprint
+        updated = replace(axis, data=np.array(["X", "Y"]))
+        assert updated.fingerprint != axis.fingerprint
+
