@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from ezmsg.util.messages.axisarray import (
     AxisArray,
     CoordinateAxis,
+    LinearAxis,
     replace,
     shape2d,
     slice_along_axis,
@@ -549,3 +550,63 @@ class TestCoordinateAxisFingerprint:
         updated = replace(axis, data=np.array(["X", "Y"]))
         assert updated.fingerprint != axis.fingerprint
 
+
+class TestCoordinateAxisEquality:
+    """``CoordinateAxis`` compares its coordinate values, not just its unit.
+
+    It inherits an ``__eq__`` from two dataclasses; the MRO puts ``AxisBase``
+    (which compares only ``unit``) ahead of ``ArrayWithNamedDims`` (which
+    compares contents), so without an explicit ``__eq__`` any two axes sharing a
+    unit compared equal.
+    """
+
+    @staticmethod
+    def _axis(labels, **kwargs):
+        return CoordinateAxis(data=np.array(labels), dims=["ch"], **kwargs)
+
+    def test_equal_values(self):
+        assert self._axis(["A", "B"]) == self._axis(["A", "B"])
+
+    def test_different_values(self):
+        assert self._axis(["A", "B"]) != self._axis(["X", "Y"])
+
+    def test_reordered_values(self):
+        assert self._axis(["A", "B"]) != self._axis(["B", "A"])
+
+    def test_different_length(self):
+        assert self._axis(["A", "B"]) != self._axis(["A", "B", "C"])
+
+    def test_different_unit(self):
+        assert self._axis(["A", "B"]) != self._axis(["A", "B"], unit="label")
+
+    def test_different_dims(self):
+        assert self._axis(["A", "B"]) != CoordinateAxis(
+            data=np.array(["A", "B"]), dims=["x"]
+        )
+
+    def test_identity(self):
+        axis = self._axis(["A", "B"])
+        assert axis == axis  # noqa: PLR0124 -- exercises the `self is other` fast path
+
+    def test_other_axis_type(self):
+        assert self._axis(["A", "B"]) != LinearAxis(gain=1.0)
+
+    def test_linear_axis_equality_is_unaffected(self):
+        assert LinearAxis(gain=2.0, offset=1.0) == LinearAxis(gain=2.0, offset=1.0)
+        assert LinearAxis(gain=2.0) != LinearAxis(gain=3.0)
+
+    def test_axisarray_sees_a_relabelled_channel_axis(self):
+        """The consequence that motivated the fix: ``AxisArray.__eq__`` tests
+        ``self.axes == other.axes``, so a shadowed axis comparison made two
+        messages differing only in channel labels compare equal."""
+
+        def msg(labels):
+            return AxisArray(
+                np.zeros((4, 2)),
+                dims=["time", "ch"],
+                axes={"time": AxisArray.TimeAxis(fs=100.0), "ch": self._axis(labels)},
+                key="k",
+            )
+
+        assert msg(["A", "B"]) == msg(["A", "B"])
+        assert msg(["A", "B"]) != msg(["X", "Y"])

@@ -191,6 +191,30 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         """
         return self.data[x]
 
+    def __eq__(self, other):
+        """
+        Compare unit, dims and coordinate values.
+
+        Defined explicitly because this class inherits from two dataclasses that
+        both supply an ``__eq__``, and the MRO picks the wrong one:
+        ``CoordinateAxis -> AxisBase -> ABC -> ArrayWithNamedDims``. ``AxisBase``
+        is a plain ``@dataclass``, so it generates an ``__eq__`` over its only
+        field, ``unit``, and that shadows the content comparison in
+        ``ArrayWithNamedDims``. Two coordinate axes sharing a unit therefore
+        compared equal whatever their coordinate values were -- and, since
+        ``AxisArray.__eq__`` tests ``self.axes == other.axes``, so did two
+        messages differing only in their channel labels.
+
+        Follows the same convention as ``ArrayWithNamedDims.__eq__``: True, or
+        NotImplemented for anything else, which Python resolves to False once
+        the reflected call also declines.
+        """
+        if self is other:
+            return True
+        if other.__class__ is self.__class__ and self.unit == other.unit:
+            return ArrayWithNamedDims.__eq__(self, other)
+        return NotImplemented
+
     @property
     def fingerprint(self) -> tuple | None:
         """
