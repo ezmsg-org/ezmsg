@@ -47,6 +47,13 @@ class ModifyAxisTransformer:
             for ix, old_dim in enumerate(message.dims)
             if new_dims[ix] is None
         ]
+        # A renamed or dropped dimension takes chunk_dim with it: the field
+        # names a dimension, so leaving it pointing at the old name would either
+        # raise (the name is gone from dims) or silently describe the wrong one.
+        chunk_dim = message.chunk_dim
+        if chunk_dim is not None:
+            chunk_dim = name_map.get(chunk_dim, chunk_dim)
+
         if len(drop_ax_ix) > 0:
             new_dims = [d for d in new_dims if d is not None]
             new_axes.pop(None, None)
@@ -55,8 +62,9 @@ class ModifyAxisTransformer:
                 data=np.squeeze(message.data, axis=tuple(drop_ax_ix)),
                 dims=new_dims,
                 axes=new_axes,
+                chunk_dim=chunk_dim,
             )
-        return replace(message, dims=new_dims, axes=new_axes)
+        return replace(message, dims=new_dims, axes=new_axes, chunk_dim=chunk_dim)
 
     _send_warned: bool = False
 
