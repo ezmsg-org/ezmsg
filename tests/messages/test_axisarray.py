@@ -610,3 +610,56 @@ class TestCoordinateAxisEquality:
 
         assert msg(["A", "B"]) == msg(["A", "B"])
         assert msg(["A", "B"]) != msg(["X", "Y"])
+
+
+class TestChunkDim:
+    """`chunk_dim` names the dimension successive messages append along.
+
+    Its extent is whatever arrived this time, so consumers that cache state
+    keyed on the message layout have to treat it differently from the
+    dimensions that describe the stream's configuration.
+    """
+
+    @staticmethod
+    def _msg(**kwargs):
+        return AxisArray(
+            np.zeros((4, 2)),
+            dims=["time", "ch"],
+            axes={"time": AxisArray.TimeAxis(fs=100.0)},
+            **kwargs,
+        )
+
+    def test_defaults_to_none(self):
+        """Undeclared, so existing producers are unaffected."""
+        assert self._msg().chunk_dim is None
+
+    def test_round_trips(self):
+        assert self._msg(chunk_dim="time").chunk_dim == "time"
+
+    def test_must_name_an_actual_dim(self):
+        with pytest.raises(ValueError, match="chunk_dim 'nope' is not one of dims"):
+            self._msg(chunk_dim="nope")
+
+    def test_replace_carries_it(self):
+        """A transformer that only changes data keeps the same layout."""
+        original = self._msg(chunk_dim="time")
+        assert replace(original, data=np.ones((4, 2))).chunk_dim == "time"
+
+    def test_a_rename_must_update_it(self):
+        """Renaming the chunk dimension without updating chunk_dim is caught."""
+        original = self._msg(chunk_dim="time")
+        with pytest.raises(ValueError, match="must update chunk_dim"):
+            replace(original, dims=["win", "ch"])
+        assert replace(original, dims=["win", "ch"], chunk_dim="win").chunk_dim == "win"
+
+    def test_survives_pickling(self):
+        import pickle
+
+        assert (
+            pickle.loads(pickle.dumps(self._msg(chunk_dim="time"))).chunk_dim == "time"
+        )
+
+    def test_positional_construction_is_unaffected(self):
+        """chunk_dim is last, so existing positional calls still work."""
+        msg = AxisArray(np.zeros((4, 2)), ["time", "ch"], {}, {}, "key")
+        assert msg.key == "key" and msg.chunk_dim is None

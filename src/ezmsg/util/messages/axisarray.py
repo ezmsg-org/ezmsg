@@ -146,6 +146,15 @@ class ArrayWithNamedDims:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
+        # Checked here rather than in an AxisArray override: reusing this frame
+        # costs one getattr instead of a second __post_init__ call, and message
+        # construction is hot.
+        chunk_dim = getattr(self, "chunk_dim", None)
+        if chunk_dim is not None and chunk_dim not in self.dims:
+            raise ValueError(
+                f"chunk_dim {chunk_dim!r} is not one of dims {self.dims}. "
+                "An operation that renames this dimension must update chunk_dim too."
+            )
 
     def __eq__(self, other):
         if self is other:
@@ -307,11 +316,34 @@ class AxisArray(ArrayWithNamedDims):
     :type attrs: dict[str, typing.Any]
     :param key: Optional key identifier for this array, typically used to specify source device (default is empty string)
     :type key: str
+    :param chunk_dim: Name of the dimension this message is a chunk along, or None if not declared
+    :type chunk_dim: str | None
     """
 
     axes: dict[str, AxisBase] = field(default_factory=dict)
     attrs: dict[str, typing.Any] = field(default_factory=dict)
     key: str = ""
+
+    chunk_dim: str | None = None
+    """The dimension this message is a *chunk* along.
+
+    Successive messages in a stream append to one another along this dimension,
+    so it is the one whose extent is arbitrary: its length is however much
+    arrived this time, a ``LinearAxis`` here has an ``offset`` that advances
+    every message, and a ``CoordinateAxis`` here (irregular event times) has
+    per-message *values*. Everything else describes the stream's configuration
+    and is stable between reconfigurations.
+
+    Consumers that cache state keyed on the message layout need that
+    distinction, and cannot reliably infer it: it is ``"time"`` on a raw signal
+    but ``"win"`` downstream of a windowing stage, and taking ``dims[0]`` breaks
+    under :meth:`transpose`. Declaring it here puts the answer where it is
+    known -- in the producer -- instead of asking every consumer to guess.
+
+    ``None`` means "not declared", leaving consumers to fall back on their own
+    convention. Any operation that *renames* this dimension is responsible for
+    updating it, exactly as it already updates ``dims``.
+    """
 
     T = typing.TypeVar("T", bound="AxisArray")
 
