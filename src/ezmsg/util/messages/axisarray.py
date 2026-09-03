@@ -6,6 +6,7 @@ from array_api_compat import get_namespace, is_cupy_array, is_numpy_array, is_to
 import math
 import typing
 import warnings
+import zlib
 
 import ezmsg.core as ez
 
@@ -117,6 +118,10 @@ class LinearAxis(AxisBase):
         return cls(unit="s", gain=1.0 / fs, offset=offset)
 
 
+# Distinguishes "no fingerprint cached yet" from "cached, and it is None".
+_UNSET = object()
+
+
 @dataclass
 class ArrayWithNamedDims:
     """
@@ -141,6 +146,15 @@ class ArrayWithNamedDims:
             raise ValueError("dims must be same length as data.shape")
         if len(self.dims) != len(set(self.dims)):
             raise ValueError("dims contains repeated dim names")
+        # Checked here rather than in an AxisArray override: reusing this frame
+        # costs one getattr instead of a second __post_init__ call, and message
+        # construction is hot.
+        chunk_dim = getattr(self, "chunk_dim", None)
+        if chunk_dim is not None and chunk_dim not in self.dims:
+            raise ValueError(
+                f"chunk_dim {chunk_dim!r} is not one of dims {self.dims}. "
+                "An operation that renames this dimension must update chunk_dim too."
+            )
 
     def __eq__(self, other):
         if self is other:
@@ -186,6 +200,101 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         """
         return self.data[x]
 
+    def __eq__(self, other):
+        """
+        Compare unit, dims and coordinate values.
+
+        Defined explicitly because this class inherits from two dataclasses that
+        both supply an ``__eq__``, and the MRO picks the wrong one:
+        ``CoordinateAxis -> AxisBase -> ABC -> ArrayWithNamedDims``. ``AxisBase``
+        is a plain ``@dataclass``, so it generates an ``__eq__`` over its only
+        field, ``unit``, and that shadows the content comparison in
+        ``ArrayWithNamedDims``. Two coordinate axes sharing a unit therefore
+        compared equal whatever their coordinate values were -- and, since
+        ``AxisArray.__eq__`` tests ``self.axes == other.axes``, so did two
+        messages differing only in their channel labels.
+
+        Follows the same convention as ``ArrayWithNamedDims.__eq__``: True, or
+        NotImplemented for anything else, which Python resolves to False once
+        the reflected call also declines.
+        """
+        if self is other:
+            return True
+        if other.__class__ is self.__class__ and self.unit == other.unit:
+            return ArrayWithNamedDims.__eq__(self, other)
+        return NotImplemented
+
+    @property
+    def fingerprint(self) -> tuple | None:
+        """
+        A small, hashable stand-in for this axis's *contents*.
+
+        Two axes with equal fingerprints hold equal coordinate values; two axes
+        with different fingerprints do not. It is derived from the data rather
+        than assigned, so there is no counter for a producer to forget to bump —
+        building a new axis is what changes it.
+
+        This exists because a downstream operation that resolves coordinate
+        *values* into something it then caches — channel labels into array
+        indices, or into output labels — cannot key that cache on shape alone.
+        A source that renames, reorders or swaps channels without changing how
+        many it sends would otherwise keep getting the previous answer, emitting
+        one channel's samples under another channel's label. Comparing the
+        arrays outright is O(bytes) on every message and in every consumer;
+        comparing fingerprints is a tuple compare.
+
+        Computed on first access and cached on the instance, so the cost is paid
+        once per axis object rather than once per consumer per message. The
+        cached value is part of ``__dict__``, so it survives pickling and
+        arrives already computed on the far side of a process boundary.
+
+        ``None`` when the contents cannot be digested (a non-numpy backing
+        array, or an object dtype holding values with no string form). Callers
+        must treat ``None`` as "unknown" and fall back to comparing the data —
+        never as a value that compares equal to another ``None``.
+
+        .. warning::
+           Assumes the axis is not mutated after construction. Both
+           ``ax.data = other`` and ``ax.data[0] = "X"`` leave a stale
+           fingerprint. Messages fan out to several branches of a graph, so
+           mutating one in place is already unsafe; this makes it a requirement.
+           Build a new axis (e.g. via :func:`replace`) instead.
+
+        :return: Hashable content digest, or None if one cannot be computed
+        :rtype: tuple | None
+        """
+        # _UNSET, not None: a successfully computed fingerprint may itself be
+        # None, and that result has to be cached too -- recomputing it means
+        # re-raising out of ascontiguousarray on every access.
+        cached = self.__dict__.get("_fingerprint", _UNSET)
+        if cached is _UNSET:
+            cached = self.__dict__["_fingerprint"] = self._compute_fingerprint()
+        return cached
+
+    def _compute_fingerprint(self) -> tuple | None:
+        """Digest the coordinate values, or None if they cannot be digested."""
+        try:
+            data = np.ascontiguousarray(self.data)
+        except (TypeError, ValueError):
+            # A device-resident or otherwise non-numpy backing array. Refusing
+            # to guess is the safe answer; the caller falls back to comparing.
+            return None
+        if data.dtype.hasobject:
+            # An object array's buffer is pointers, so checksumming it directly
+            # would make two equal axes disagree. Widen to a real dtype first.
+            try:
+                data = np.ascontiguousarray(data.astype("U"))
+            except (TypeError, ValueError):
+                return None
+        # crc32 rather than hash(data.tobytes()) because the copy is not the
+        # bottleneck: on a 256-channel struct axis the copy runs at ~94 GB/s and
+        # CPython's siphash over the result at ~5.5 GB/s, while crc32 reads the
+        # array's buffer directly at ~29 GB/s.
+        #
+        # dtype goes in as the object, not str(dtype): numpy builds a structured
+        # dtype's repr field by field, which costs ~10x the checksum it annotates.
+        return (self.unit, tuple(self.dims), data.dtype, data.shape, zlib.crc32(data))
+
 
 @dataclass(eq=False)
 class AxisArray(ArrayWithNamedDims):
@@ -207,11 +316,34 @@ class AxisArray(ArrayWithNamedDims):
     :type attrs: dict[str, typing.Any]
     :param key: Optional key identifier for this array, typically used to specify source device (default is empty string)
     :type key: str
+    :param chunk_dim: Name of the dimension this message is a chunk along, or None if not declared
+    :type chunk_dim: str | None
     """
 
     axes: dict[str, AxisBase] = field(default_factory=dict)
     attrs: dict[str, typing.Any] = field(default_factory=dict)
     key: str = ""
+
+    chunk_dim: str | None = None
+    """The dimension this message is a *chunk* along.
+
+    Successive messages in a stream append to one another along this dimension,
+    so it is the one whose extent is arbitrary: its length is however much
+    arrived this time, a ``LinearAxis`` here has an ``offset`` that advances
+    every message, and a ``CoordinateAxis`` here (irregular event times) has
+    per-message *values*. Everything else describes the stream's configuration
+    and is stable between reconfigurations.
+
+    Consumers that cache state keyed on the message layout need that
+    distinction, and cannot reliably infer it: it is ``"time"`` on a raw signal
+    but ``"win"`` downstream of a windowing stage, and taking ``dims[0]`` breaks
+    under :meth:`transpose`. Declaring it here puts the answer where it is
+    known -- in the producer -- instead of asking every consumer to guess.
+
+    ``None`` means "not declared", leaving consumers to fall back on their own
+    convention. Any operation that *renames* this dimension is responsible for
+    updating it, exactly as it already updates ``dims``.
+    """
 
     T = typing.TypeVar("T", bound="AxisArray")
 
