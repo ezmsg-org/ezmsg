@@ -1,4 +1,6 @@
 import importlib.util
+import pickle
+
 import pytest
 import numpy as np
 
@@ -6,6 +8,7 @@ from dataclasses import dataclass, field
 
 from ezmsg.util.messages.axisarray import (
     AxisArray,
+    CoordinateAxis,
     shape2d,
     slice_along_axis,
     sliding_win_oneaxis,
@@ -414,3 +417,81 @@ def test_to_xr_dataarray():
     assert np.allclose(
         quality_data.y.data, np.array([-12.6, -12.8, -13.0, -12.4, -12.6])
     )
+
+
+# --------------------------------------------------------------------------- #
+# Serialization layout
+#
+# numpy hands a C- or F-contiguous array to a protocol-5 pickler out-of-band,
+# which ezmsg's marshal writes straight into shared memory. An array that is
+# neither falls back to an in-band copy through the pickle stream, so
+# ArrayWithNamedDims.__getstate__ makes it contiguous first.
+# --------------------------------------------------------------------------- #
+
+
+def _pickle_oob(obj) -> tuple[bytes, list]:
+    """Pickle at protocol 5, returning (in-band bytes, out-of-band buffers)."""
+    buffers: list = []
+    inband = pickle.dumps(obj, protocol=5, buffer_callback=buffers.append)
+    return inband, buffers
+
+
+@pytest.mark.parametrize(
+    "layout",
+    ["c_contiguous", "f_contiguous", "strided_cols", "strided_rows"],
+)
+def test_serializes_out_of_band_regardless_of_layout(layout: str) -> None:
+    base = np.arange(2048, dtype=np.float32).reshape(64, 32)
+    arr, dims = {
+        "c_contiguous": (base, ["time", "ch"]),
+        "f_contiguous": (base.T, ["ch", "time"]),
+        "strided_cols": (base[:, ::2], ["time", "ch"]),
+        "strided_rows": (base[::2, :], ["time", "ch"]),
+    }[layout]
+
+    msg = AxisArray(arr, dims=dims, key="layout")
+    inband, buffers = _pickle_oob(msg)
+
+    # The payload travels out-of-band, so the in-band stream stays tiny
+    # regardless of how the producer sliced its array.
+    assert len(buffers) == 1
+    assert len(inband) < 1024
+
+    restored = pickle.loads(inband, buffers=[b.raw() for b in buffers])
+    assert np.array_equal(restored.data, arr)
+    assert restored.dims == dims
+    assert restored.key == "layout"
+
+
+def test_f_contiguous_layout_is_not_forced_to_c_order() -> None:
+    """F-order arrays are already out-of-band; reordering them would be costly."""
+    base = np.arange(2048, dtype=np.float32).reshape(64, 32)
+    msg = AxisArray(base.T, dims=["ch", "time"])
+
+    state = msg.__getstate__()
+
+    assert state["data"] is msg.data
+    assert state["data"].flags.f_contiguous
+
+
+def test_making_data_contiguous_does_not_mutate_the_message() -> None:
+    base = np.arange(2048, dtype=np.float32).reshape(64, 32)
+    strided = base[:, ::2]
+    msg = AxisArray(strided, dims=["time", "ch"])
+
+    state = msg.__getstate__()
+
+    assert state["data"].flags.c_contiguous
+    assert np.array_equal(state["data"], strided)
+    # The caller still owns the view it handed us.
+    assert msg.data is strided
+    assert not msg.data.flags.c_contiguous
+
+
+def test_coordinate_axis_shares_the_contiguity_fix() -> None:
+    axis = CoordinateAxis(data=np.arange(200)[::2], dims=["ch"])
+    inband, buffers = _pickle_oob(axis)
+
+    assert len(buffers) == 1
+    restored = pickle.loads(inband, buffers=[b.raw() for b in buffers])
+    assert np.array_equal(restored.data, axis.data)
