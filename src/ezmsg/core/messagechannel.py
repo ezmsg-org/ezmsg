@@ -181,7 +181,7 @@ class ChannelProtocol(FramedProtocol):
                 chan._release_backpressure(msg_id, chan.id)
         except Exception:
             logger.exception("Channel %s failed to reattach SHM", chan.id)
-            self.close()
+            self.abort()
             return
 
         self.resume_reading()
@@ -334,7 +334,11 @@ class Channel:
         """
         Mark the Channel for shutdown and resource deallocation
         """
-        self._proto.close()
+        # abort() rather than close(): a graceful close defers connection_lost
+        # until queued acks flush, so a publisher that has already stopped
+        # reading them would leave wait_closed() hanging. The publisher frees
+        # this channel's backpressure on disconnect, so dropping them is safe.
+        self._proto.abort()
         self._graph_task.cancel()
 
     async def wait_closed(self) -> None:

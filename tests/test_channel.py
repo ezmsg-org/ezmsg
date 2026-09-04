@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from ezmsg.core.frameproto import FramedProtocol
 from ezmsg.core.messagechannel import Channel, ChannelProtocol
 from ezmsg.core.messagecache import CacheMiss
 from ezmsg.core.messagemarshal import MessageMarshal
@@ -199,3 +200,47 @@ async def test_channel_preserves_cached_message_during_shm_reattach(monkeypatch)
     assert queue.get_nowait() == (channel.pub_id, 2)
     assert channel.cache[2] == {"value": 2}
     assert not proto.buffer, "frame should be fully consumed"
+
+
+class _EchoProtocol(FramedProtocol):
+    def frames_available(self) -> None:
+        self._buffer.clear()
+
+
+@pytest.mark.asyncio
+async def test_teardown_completes_when_peer_stops_reading():
+    """
+    Channel teardown must not wait on a peer that has stopped reading.
+
+    A graceful transport.close() defers connection_lost until queued writes
+    flush, so a publisher that has already torn down its ack reader could
+    otherwise leave wait_closed() hanging forever.
+    """
+
+    # Server.wait_closed() waits on connection handlers, so the peer needs a
+    # way out or the test's own teardown would hang and mask the result.
+    release_peer = asyncio.Event()
+
+    async def deaf_peer(reader, writer):
+        await release_peer.wait()  # accepts, never reads
+        writer.close()
+
+    server = await asyncio.start_server(deaf_peer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        _, proto = await asyncio.get_running_loop().create_connection(
+            _EchoProtocol, "127.0.0.1", port
+        )
+        proto.start_dispatch()
+
+        # Fill the socket and the transport's own write buffer.
+        for _ in range(200):
+            proto.write(b"x" * 65536)
+        assert proto.transport.get_write_buffer_size() > 0
+
+        proto.abort()
+        await asyncio.wait_for(proto.wait_closed(), timeout=5.0)
+    finally:
+        release_peer.set()
+        server.close()
+        await server.wait_closed()

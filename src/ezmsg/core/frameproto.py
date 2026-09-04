@@ -116,7 +116,7 @@ class FramedProtocol(asyncio.Protocol):
             # wedging the connection, so surface it and tear down instead.
             logger.exception("%s: error dispatching frame", type(self).__name__)
             self._close_exc = exc
-            self.close()
+            self.abort()
 
     # ------------------------------------------------------------------ #
     # handshake phase
@@ -173,8 +173,25 @@ class FramedProtocol(asyncio.Protocol):
             self._transport.resume_reading()
 
     def close(self) -> None:
+        """
+        Close gracefully, flushing anything still queued for write.
+
+        Note that ``connection_lost`` -- and therefore :meth:`wait_closed` --
+        is deferred until that queue drains. Use :meth:`abort` for teardown,
+        where a peer that has stopped reading must not be able to wedge us.
+        """
         if self._transport is not None and not self._transport.is_closing():
             self._transport.close()
+
+    def abort(self) -> None:
+        """
+        Close immediately, discarding anything still queued for write.
+
+        ``connection_lost`` fires without waiting for the peer, so
+        :meth:`wait_closed` always completes.
+        """
+        if self._transport is not None:
+            self._transport.abort()
 
     async def wait_closed(self) -> None:
         if self._closed is not None:
