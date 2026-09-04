@@ -151,6 +151,35 @@ class ArrayWithNamedDims:
                 return True
         return NotImplemented
 
+    def __getstate__(self) -> dict[str, typing.Any]:
+        """
+        Make a strided ``data`` array contiguous before it is serialized.
+
+        numpy hands a C- **or** F-contiguous array to a protocol-5 pickler
+        out-of-band, which ezmsg's marshal writes straight into shared memory
+        without copying it. An array that is neither falls back to an in-band
+        copy through the pickle stream, which costs several times more and,
+        unlike the rest of serialization, scales with payload size. A
+        decimated or channel-sliced view hits this silently.
+
+        Doing the copy here is transparent rather than a behaviour change:
+        unpickling a strided array already yields a C-contiguous one, so the
+        receiver sees exactly the same array either way -- it just gets there
+        for less. F-contiguous arrays are deliberately left alone; they are
+        already on the out-of-band path, and forcing C order on them would be
+        a large pessimization.
+
+        Only numpy arrays are touched. torch/cupy arrays have their own
+        serialization and no ``flags`` attribute to consult.
+        """
+        state = self.__dict__.copy()
+        data = state["data"]
+        if is_numpy_array(data) and not (
+            data.flags.c_contiguous or data.flags.f_contiguous
+        ):
+            state["data"] = np.ascontiguousarray(data)
+        return state
+
 
 @dataclass(eq=False)
 class CoordinateAxis(AxisBase, ArrayWithNamedDims):
