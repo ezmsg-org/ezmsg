@@ -663,3 +663,56 @@ class TestChunkDim:
         """chunk_dim is last, so existing positional calls still work."""
         msg = AxisArray(np.zeros((4, 2)), ["time", "ch"], {}, {}, "key")
         assert msg.key == "key" and msg.chunk_dim is None
+
+
+class TestIterOverAxisAndChunkDim:
+    """Iterating a dimension away has to take ``chunk_dim`` with it.
+
+    ``iter_over_axis`` is the one method that *removes* a dimension --
+    ``isel``/``sel`` take along it and ``transpose`` only reorders -- so it is
+    the one place a stale ``chunk_dim`` can be left naming a dimension that no
+    longer exists.
+    """
+
+    @staticmethod
+    def _msg(chunk_dim):
+        return AxisArray(
+            np.arange(24, dtype=float).reshape(3, 4, 2),
+            dims=["win", "time", "ch"],
+            axes={"time": AxisArray.TimeAxis(fs=100.0)},
+            key="dev",
+            chunk_dim=chunk_dim,
+        )
+
+    def test_iterating_the_chunk_dim_clears_it(self):
+        """Each slice is one element along ``win``, not a chunk accumulating
+        there. Keeping the declaration would name a missing dim, which
+        ``__post_init__`` rejects -- so this used to raise rather than yield."""
+        for sub in self._msg(chunk_dim="win").iter_over_axis("win"):
+            assert sub.dims == ["time", "ch"]
+            assert sub.chunk_dim is None
+
+    def test_iterating_another_dim_keeps_it(self):
+        """``win`` still accumulates, and it is still present, so the
+        declaration is still true."""
+        for sub in self._msg(chunk_dim="win").iter_over_axis("time"):
+            assert sub.dims == ["win", "ch"]
+            assert sub.chunk_dim == "win"
+
+    def test_an_undeclared_chunk_dim_stays_undeclared(self):
+        for sub in self._msg(chunk_dim=None).iter_over_axis("win"):
+            assert sub.chunk_dim is None
+
+    def test_the_data_is_unchanged(self):
+        """The fix is bookkeeping only."""
+        subs = list(self._msg(chunk_dim="win").iter_over_axis("win"))
+        assert len(subs) == 3
+        assert np.array_equal(
+            subs[1].data, np.arange(24, dtype=float).reshape(3, 4, 2)[1]
+        )
+
+    def test_a_caller_can_declare_what_the_slices_are_chunks_along(self):
+        """Clearing it is the safe default, not the last word: unbundling
+        windows yields messages that accumulate along the within-window axis."""
+        sub = next(self._msg(chunk_dim="win").iter_over_axis("win"))
+        assert replace(sub, chunk_dim="time").chunk_dim == "time"

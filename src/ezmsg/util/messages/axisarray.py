@@ -655,6 +655,13 @@ class AxisArray(ArrayWithNamedDims):
         Yields AxisArray objects for each slice along the given axis, with that
         dimension removed from the resulting arrays.
 
+        Iterating over the chunk dimension consumes it: each slice is a single
+        element along it, not a chunk of a stream that accumulates there. The
+        yielded arrays therefore declare no :attr:`chunk_dim` -- keeping the old
+        one would name a dimension that is no longer in ``dims``, which
+        :meth:`__post_init__` rejects outright. A caller that knows what the
+        slices are chunks along should say so on the way out.
+
         :param axis: Dimension name or index to iterate over
         :type axis: str | int
         :yields: AxisArray objects for each slice along the axis
@@ -665,6 +672,7 @@ class AxisArray(ArrayWithNamedDims):
         dim_name = self.dims[axis_idx]
         new_dims = [d for i, d in enumerate(self.dims) if i != axis_idx]
         new_axes = {d: a for d, a in self.axes.items() if d != dim_name}
+        new_chunk_dim = None if self.chunk_dim == dim_name else self.chunk_dim
 
         for it_data in xp.moveaxis(self.data, axis_idx, 0):
             it_aa = replace(
@@ -672,6 +680,7 @@ class AxisArray(ArrayWithNamedDims):
                 data=it_data,
                 dims=new_dims,
                 axes=new_axes,
+                chunk_dim=new_chunk_dim,
             )
             yield it_aa
 
