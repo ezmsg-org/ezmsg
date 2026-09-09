@@ -149,11 +149,11 @@ class ArrayWithNamedDims:
         # Checked here rather than in an AxisArray override: reusing this frame
         # costs one getattr instead of a second __post_init__ call, and message
         # construction is hot.
-        chunk_dim = getattr(self, "chunk_dim", None)
-        if chunk_dim is not None and chunk_dim not in self.dims:
+        stream_dim = getattr(self, "stream_dim", None)
+        if stream_dim is not None and stream_dim not in self.dims:
             raise ValueError(
-                f"chunk_dim {chunk_dim!r} is not one of dims {self.dims}. "
-                "An operation that renames this dimension must update chunk_dim too."
+                f"stream_dim {stream_dim!r} is not one of dims {self.dims}. "
+                "An operation that renames this dimension must update stream_dim too."
             )
 
     def __eq__(self, other):
@@ -316,16 +316,16 @@ class AxisArray(ArrayWithNamedDims):
     :type attrs: dict[str, typing.Any]
     :param key: Optional key identifier for this array, typically used to specify source device (default is empty string)
     :type key: str
-    :param chunk_dim: Name of the dimension this message is a chunk along, or None if not declared
-    :type chunk_dim: str | None
+    :param stream_dim: Name of the dimension this message streams along, or None if not declared
+    :type stream_dim: str | None
     """
 
     axes: dict[str, AxisBase] = field(default_factory=dict)
     attrs: dict[str, typing.Any] = field(default_factory=dict)
     key: str = ""
 
-    chunk_dim: str | None = None
-    """The dimension this message is a *chunk* along.
+    stream_dim: str | None = None
+    """The dimension this message *streams* along.
 
     Successive messages in a stream append to one another along this dimension,
     so it is the one whose extent is arbitrary: its length is however much
@@ -655,12 +655,12 @@ class AxisArray(ArrayWithNamedDims):
         Yields AxisArray objects for each slice along the given axis, with that
         dimension removed from the resulting arrays.
 
-        Iterating over the chunk dimension consumes it: each slice is a single
-        element along it, not a chunk of a stream that accumulates there. The
-        yielded arrays therefore declare no :attr:`chunk_dim` -- keeping the old
+        Iterating over the stream dimension consumes it: each slice is a single
+        element along it, not a stretch of a stream that accumulates there. The
+        yielded arrays therefore declare no :attr:`stream_dim` -- keeping the old
         one would name a dimension that is no longer in ``dims``, which
         :meth:`__post_init__` rejects outright. A caller that knows what the
-        slices are chunks along should say so on the way out.
+        slices stream along should say so on the way out.
 
         :param axis: Dimension name or index to iterate over
         :type axis: str | int
@@ -672,7 +672,7 @@ class AxisArray(ArrayWithNamedDims):
         dim_name = self.dims[axis_idx]
         new_dims = [d for i, d in enumerate(self.dims) if i != axis_idx]
         new_axes = {d: a for d, a in self.axes.items() if d != dim_name}
-        new_chunk_dim = None if self.chunk_dim == dim_name else self.chunk_dim
+        new_stream_dim = None if self.stream_dim == dim_name else self.stream_dim
 
         for it_data in xp.moveaxis(self.data, axis_idx, 0):
             it_aa = replace(
@@ -680,7 +680,7 @@ class AxisArray(ArrayWithNamedDims):
                 data=it_data,
                 dims=new_dims,
                 axes=new_axes,
-                chunk_dim=new_chunk_dim,
+                stream_dim=new_stream_dim,
             )
             yield it_aa
 

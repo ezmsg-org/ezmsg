@@ -68,8 +68,8 @@ def test_drop_axis(targ_dim_len: int):
         assert res.data.shape == (5, 4)
 
 
-class TestChunkDimIsRemapped:
-    """`chunk_dim` names a dimension, so renaming that dimension has to move it.
+class TestStreamDimIsRemapped:
+    """`stream_dim` names a dimension, so renaming that dimension has to move it.
 
     Left alone it would either point at a name no longer in `dims` -- which
     AxisArray rejects at construction -- or, worse, silently name whichever
@@ -77,7 +77,7 @@ class TestChunkDimIsRemapped:
     """
 
     @staticmethod
-    def _msg(chunk_dim: str | None, win_len: int = 3):
+    def _msg(stream_dim: str | None, win_len: int = 3):
         return AxisArray(
             data=np.arange(win_len * 4 * 2).reshape(win_len, 4, 2),
             dims=["win", "time", "ch"],
@@ -86,31 +86,31 @@ class TestChunkDimIsRemapped:
                 "time": AxisArray.TimeAxis(fs=100.0),
                 "ch": AxisArray.CoordinateAxis(data=np.array(["a", "b"]), dims=["ch"]),
             },
-            key="test_chunk_dim",
-            chunk_dim=chunk_dim,
+            key="test_stream_dim",
+            stream_dim=stream_dim,
         )
 
-    def test_renaming_the_chunk_dim_moves_it(self):
+    def test_renaming_the_stream_dim_moves_it(self):
         res = modify_axis({"win": "batch"}).send(self._msg("win"))
         assert res.dims == ["batch", "time", "ch"]
-        assert res.chunk_dim == "batch"
+        assert res.stream_dim == "batch"
 
     def test_a_swap_follows_the_dimension_not_the_name(self):
         """The case that motivated this: a windowing stage emits `win` as the
-        chunk dimension and a later stage swaps the two time-like names."""
+        stream dimension and a later stage swaps the two time-like names."""
         res = modify_axis({"win": "time", "time": "sample"}).send(self._msg("win"))
         assert res.dims == ["time", "sample", "ch"]
-        assert res.chunk_dim == "time"
+        assert res.stream_dim == "time"
 
     def test_renaming_another_dim_leaves_it_alone(self):
         res = modify_axis({"ch": "channel"}).send(self._msg("win"))
         assert res.dims == ["win", "time", "channel"]
-        assert res.chunk_dim == "win"
+        assert res.stream_dim == "win"
 
     def test_undeclared_stays_undeclared(self):
-        assert modify_axis({"win": "batch"}).send(self._msg(None)).chunk_dim is None
+        assert modify_axis({"win": "batch"}).send(self._msg(None)).stream_dim is None
 
-    def test_dropping_the_chunk_dim_clears_it(self):
+    def test_dropping_the_stream_dim_clears_it(self):
         res = modify_axis({"win": None}).send(self._msg("win", win_len=1))
         assert res.dims == ["time", "ch"]
-        assert res.chunk_dim is None
+        assert res.stream_dim is None

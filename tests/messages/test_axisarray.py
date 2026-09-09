@@ -612,8 +612,8 @@ class TestCoordinateAxisEquality:
         assert msg(["A", "B"]) != msg(["X", "Y"])
 
 
-class TestChunkDim:
-    """`chunk_dim` names the dimension successive messages append along.
+class TestStreamDim:
+    """`stream_dim` names the dimension successive messages append along.
 
     Its extent is whatever arrived this time, so consumers that cache state
     keyed on the message layout have to treat it differently from the
@@ -631,88 +631,88 @@ class TestChunkDim:
 
     def test_defaults_to_none(self):
         """Undeclared, so existing producers are unaffected."""
-        assert self._msg().chunk_dim is None
+        assert self._msg().stream_dim is None
 
     def test_round_trips(self):
-        assert self._msg(chunk_dim="time").chunk_dim == "time"
+        assert self._msg(stream_dim="time").stream_dim == "time"
 
     def test_must_name_an_actual_dim(self):
-        with pytest.raises(ValueError, match="chunk_dim 'nope' is not one of dims"):
-            self._msg(chunk_dim="nope")
+        with pytest.raises(ValueError, match="stream_dim 'nope' is not one of dims"):
+            self._msg(stream_dim="nope")
 
     def test_replace_carries_it(self):
         """A transformer that only changes data keeps the same layout."""
-        original = self._msg(chunk_dim="time")
-        assert replace(original, data=np.ones((4, 2))).chunk_dim == "time"
+        original = self._msg(stream_dim="time")
+        assert replace(original, data=np.ones((4, 2))).stream_dim == "time"
 
     def test_a_rename_must_update_it(self):
-        """Renaming the chunk dimension without updating chunk_dim is caught."""
-        original = self._msg(chunk_dim="time")
-        with pytest.raises(ValueError, match="must update chunk_dim"):
+        """Renaming the stream dimension without updating stream_dim is caught."""
+        original = self._msg(stream_dim="time")
+        with pytest.raises(ValueError, match="must update stream_dim"):
             replace(original, dims=["win", "ch"])
-        assert replace(original, dims=["win", "ch"], chunk_dim="win").chunk_dim == "win"
+        assert replace(original, dims=["win", "ch"], stream_dim="win").stream_dim == "win"
 
     def test_survives_pickling(self):
         import pickle
 
         assert (
-            pickle.loads(pickle.dumps(self._msg(chunk_dim="time"))).chunk_dim == "time"
+            pickle.loads(pickle.dumps(self._msg(stream_dim="time"))).stream_dim == "time"
         )
 
     def test_positional_construction_is_unaffected(self):
-        """chunk_dim is last, so existing positional calls still work."""
+        """stream_dim is last, so existing positional calls still work."""
         msg = AxisArray(np.zeros((4, 2)), ["time", "ch"], {}, {}, "key")
-        assert msg.key == "key" and msg.chunk_dim is None
+        assert msg.key == "key" and msg.stream_dim is None
 
 
-class TestIterOverAxisAndChunkDim:
-    """Iterating a dimension away has to take ``chunk_dim`` with it.
+class TestIterOverAxisAndStreamDim:
+    """Iterating a dimension away has to take ``stream_dim`` with it.
 
     ``iter_over_axis`` is the one method that *removes* a dimension --
     ``isel``/``sel`` take along it and ``transpose`` only reorders -- so it is
-    the one place a stale ``chunk_dim`` can be left naming a dimension that no
+    the one place a stale ``stream_dim`` can be left naming a dimension that no
     longer exists.
     """
 
     @staticmethod
-    def _msg(chunk_dim):
+    def _msg(stream_dim):
         return AxisArray(
             np.arange(24, dtype=float).reshape(3, 4, 2),
             dims=["win", "time", "ch"],
             axes={"time": AxisArray.TimeAxis(fs=100.0)},
             key="dev",
-            chunk_dim=chunk_dim,
+            stream_dim=stream_dim,
         )
 
-    def test_iterating_the_chunk_dim_clears_it(self):
-        """Each slice is one element along ``win``, not a chunk accumulating
+    def test_iterating_the_stream_dim_clears_it(self):
+        """Each slice is one element along ``win``, not a stretch accumulating
         there. Keeping the declaration would name a missing dim, which
         ``__post_init__`` rejects -- so this used to raise rather than yield."""
-        for sub in self._msg(chunk_dim="win").iter_over_axis("win"):
+        for sub in self._msg(stream_dim="win").iter_over_axis("win"):
             assert sub.dims == ["time", "ch"]
-            assert sub.chunk_dim is None
+            assert sub.stream_dim is None
 
     def test_iterating_another_dim_keeps_it(self):
         """``win`` still accumulates, and it is still present, so the
         declaration is still true."""
-        for sub in self._msg(chunk_dim="win").iter_over_axis("time"):
+        for sub in self._msg(stream_dim="win").iter_over_axis("time"):
             assert sub.dims == ["win", "ch"]
-            assert sub.chunk_dim == "win"
+            assert sub.stream_dim == "win"
 
-    def test_an_undeclared_chunk_dim_stays_undeclared(self):
-        for sub in self._msg(chunk_dim=None).iter_over_axis("win"):
-            assert sub.chunk_dim is None
+    def test_an_undeclared_stream_dim_stays_undeclared(self):
+        for sub in self._msg(stream_dim=None).iter_over_axis("win"):
+            assert sub.stream_dim is None
 
     def test_the_data_is_unchanged(self):
         """The fix is bookkeeping only."""
-        subs = list(self._msg(chunk_dim="win").iter_over_axis("win"))
+        subs = list(self._msg(stream_dim="win").iter_over_axis("win"))
         assert len(subs) == 3
         assert np.array_equal(
             subs[1].data, np.arange(24, dtype=float).reshape(3, 4, 2)[1]
         )
 
-    def test_a_caller_can_declare_what_the_slices_are_chunks_along(self):
+    def test_a_caller_can_declare_what_the_slices_stream_along(self):
         """Clearing it is the safe default, not the last word: unbundling
         windows yields messages that accumulate along the within-window axis."""
-        sub = next(self._msg(chunk_dim="win").iter_over_axis("win"))
-        assert replace(sub, chunk_dim="time").chunk_dim == "time"
+        sub = next(self._msg(stream_dim="win").iter_over_axis("win"))
+        assert replace(sub, stream_dim="time").stream_dim == "time"
