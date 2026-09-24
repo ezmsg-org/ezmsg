@@ -44,6 +44,9 @@ test = [
     "xarray>=2025.6.1",
     "psutil>=7.1.0",
     "pytest-benchmark>=5.2.3",
+    # Exercises the schema extra's pydantic-present paths; the absent paths
+    # are tested by stubbing the soft import out.
+    "pydantic>=2.7",
 ]
 docs = [
   {include-group = "axisarray"},
@@ -70,6 +73,12 @@ perf = [
 ]
 dashboard = [
   "ezmsg-dashboard; python_version >= '3.11'",
+]
+# Standard JSON Schema in settings metadata, and validation/coercion of
+# dynamic settings field updates in the owning process. Without it, schema
+# fields are None and field updates apply raw, exactly as before.
+schema = [
+  "pydantic>=2.7",
 ]
 
 [tool.pytest.ini_options]
