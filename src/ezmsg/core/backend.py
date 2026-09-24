@@ -14,6 +14,7 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
 from socket import socket
+from typing import get_origin
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
@@ -392,7 +393,9 @@ class GraphRunner:
         return f"{tp.__module__}.{tp.__qualname__}"
 
     def _stream_type_name(self, stream_type: object) -> str:
-        if inspect.isclass(stream_type):
+        # Python 3.10 considers GenericAlias objects (e.g. list[int]) classes.
+        # Preserve their parameters instead of naming only the origin class.
+        if get_origin(stream_type) is None and inspect.isclass(stream_type):
             return self._type_name(stream_type)
         return repr(stream_type)
 
