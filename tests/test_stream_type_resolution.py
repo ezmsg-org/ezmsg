@@ -1,5 +1,7 @@
 from typing import Generic, TypeVar
 
+import pytest
+
 import ezmsg.core as ez
 from ezmsg.core.backend import ExecutionContext, GraphRunner
 from ezmsg.core.type_resolution import resolve_stream_type
@@ -44,3 +46,23 @@ def test_independent_specializations():
 
     assert resolve_stream_type(Text, U) == list[str]
     assert resolve_stream_type(Concrete, U) == list[int]
+
+
+@pytest.mark.parametrize(
+    "annotation, expected",
+    [
+        (int, "builtins.int"),
+        (list, "builtins.list"),
+        (list[int], "list[int]"),
+        (dict[str, list[int]], "dict[str, list[int]]"),
+        (tuple[int, str], "tuple[int, str]"),
+    ],
+)
+def test_parameterized_stream_metadata_preserves_arguments(annotation, expected):
+    class TypedUnit(ez.Unit):
+        OUTPUT = ez.OutputStream(annotation)
+
+    unit = TypedUnit()
+    ExecutionContext.setup({"UNIT": unit})
+    metadata = GraphRunner(components={"UNIT": unit})._component_metadata().components["UNIT"]
+    assert metadata.streams["OUTPUT"].msg_type == expected
