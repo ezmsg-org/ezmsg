@@ -31,6 +31,7 @@ from .stream import (
     OutputRelay,
 )
 from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
+from .type_resolution import resolve_stream_type
 from .settings import Settings
 from .graphmeta import (
     CollectionMetadata,
@@ -421,7 +422,9 @@ class GraphRunner:
                         else None
                     ),
                     settings_type=(
-                        self._stream_type_name(input_settings.msg_type)
+                        self._stream_type_name(
+                            resolve_stream_type(type(comp), input_settings.msg_type)
+                        )
                         if isinstance(input_settings, InputStream)
                         else None
                     ),
@@ -431,7 +434,9 @@ class GraphRunner:
                 topic_entries: dict[str, TopicMetadataType] = {}
                 relay_entries: dict[str, RelayMetadataType] = {}
                 for stream_name, stream in comp.streams.items():
-                    msg_type = self._stream_type_name(stream.msg_type)
+                    msg_type = self._stream_type_name(
+                        resolve_stream_type(type(comp), stream.msg_type)
+                    )
                     if isinstance(stream, InputRelay):
                         runtime = _relay_runtime_info(stream)
                         relay_entries[stream_name] = InputRelayMetadata(
