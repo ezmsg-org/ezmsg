@@ -54,7 +54,7 @@ class DemoSystem(ez.Collection):
 @pytest.fixture
 def demo_module_path(tmp_path):
     path = tmp_path / "inspect_demo_system.py"
-    path.write_text(DEMO_MODULE)
+    path.write_text(DEMO_MODULE, encoding="utf-8")
     return path
 
 
@@ -128,6 +128,6 @@ class TestInspectCommand:
 
     def test_broken_module_reports_the_import_failure(self, tmp_path):
         path = tmp_path / "broken_module.py"
-        path.write_text("this is not python(\n")
+        path.write_text("this is not python(\n", encoding="utf-8")
         with pytest.raises(SystemExit, match="Could not import"):
             cmdline(argv=["inspect", str(path)])
