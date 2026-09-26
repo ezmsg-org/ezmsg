@@ -2,6 +2,7 @@ import argparse
 
 from .dashboard_cmd import setup_dashboard_cmdline
 from .graphviz import setup_graphviz_cmdline
+from .inspect import setup_inspect_cmdline
 from .mermaid import setup_mermaid_cmdline
 from .serve import setup_serve_cmdline
 from .shutdown import setup_shutdown_cmdline
@@ -15,3 +16,4 @@ def setup_core_cmdline(subparsers: argparse._SubParsersAction) -> None:
     setup_shutdown_cmdline(subparsers)
     setup_graphviz_cmdline(subparsers)
     setup_mermaid_cmdline(subparsers)
+    setup_inspect_cmdline(subparsers)

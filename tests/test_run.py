@@ -3,6 +3,8 @@ import os
 import pytest
 
 import ezmsg.core as ez
+from ezmsg.core.backend import ExecutionContext
+from ezmsg.core.graphserver import GraphService
 
 from ez_test_utils import (
     get_test_fn,
@@ -77,6 +79,23 @@ def test_local_system(toy_system_fixture, num_messages):
                 results.append(json.loads(line))
 
         assert len(results) == num_messages
+
+
+def test_default_graph_address_is_resolved_before_process_creation(monkeypatch):
+    captured_addresses: list[object] = []
+    create_processes = ExecutionContext.create_processes
+
+    def capture_graph_address(self, graph_address, backend_process):
+        captured_addresses.append(graph_address)
+        create_processes(self, graph_address, backend_process)
+
+    monkeypatch.setattr(ExecutionContext, "create_processes", capture_graph_address)
+
+    with get_test_fn() as test_filename:
+        system = ToySystem(ToySystemSettings(num_msgs=1, output_fn=str(test_filename)))
+        ez.run(SYSTEM=system, force_single_process=True)
+
+    assert captured_addresses == [GraphService.default_address()]
 
 
 @pytest.mark.parametrize("passthrough_settings", [False, True])
