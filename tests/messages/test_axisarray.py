@@ -545,6 +545,29 @@ class TestCoordinateAxisFingerprint:
         assert restored.__dict__.get("_fingerprint") is not None  # arrived precomputed
         assert restored.fingerprint == expected
 
+    def test_pickling_computes_it_if_untouched(self):
+        """A producer that never touched the fingerprint still ships it, so the
+        first consumer past a process boundary does not recompute it per
+        message."""
+        import pickle
+
+        from ezmsg.core.messagemarshal import MessageMarshal
+
+        axis = self._axis(["A", "B", "C"])
+        assert "_fingerprint" not in axis.__dict__
+        restored = pickle.loads(pickle.dumps(axis))
+        assert restored.__dict__.get("_fingerprint") is not None
+        assert restored.fingerprint == self._axis(["A", "B", "C"]).fingerprint
+
+        # The same through ezmsg's own marshal (protocol 5, out-of-band buffers).
+        msg = AxisArray(
+            np.zeros((2, 3)),
+            dims=["time", "ch"],
+            axes={"time": AxisArray.TimeAxis(fs=10.0), "ch": self._axis(["A", "B", "C"])},
+        )
+        restored_msg = MessageMarshal.load(MessageMarshal.dump(msg))
+        assert restored_msg.axes["ch"].__dict__.get("_fingerprint") is not None
+
     def test_replace_yields_a_fresh_fingerprint(self):
         """``replace`` builds a new axis, so the cache cannot leak across."""
         axis = self._axis(["A", "B"])

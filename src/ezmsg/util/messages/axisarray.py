@@ -253,6 +253,22 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
             return ArrayWithNamedDims.__eq__(self, other)
         return NotImplemented
 
+    def __getstate__(self) -> dict[str, typing.Any]:
+        """
+        Materialize :attr:`fingerprint` before pickling, so it rides along.
+
+        On the far side of a process boundary every message unpickles into a
+        new axis object; without a precomputed fingerprint, the first consumer
+        there would recompute it for every message. Computing it here costs a
+        dict lookup when the producer reuses its axis objects, and otherwise
+        moves the one computation to the publisher, whichever unit built the
+        axis and whether or not it touched the fingerprint.
+        """
+        self.fingerprint
+
+        # Note: should return super().__getstate__() after Python 3.10 support is dropped.
+        return self.__dict__
+
     @property
     def fingerprint(self) -> tuple | None:
         """
@@ -274,8 +290,10 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
 
         Computed on first access and cached on the instance, so the cost is paid
         once per axis object rather than once per consumer per message. The
-        cached value is part of ``__dict__``, so it survives pickling and
-        arrives already computed on the far side of a process boundary.
+        cached value is part of ``__dict__``, and pickling computes it if it
+        has not been already (see :meth:`__getstate__`), so it always arrives
+        precomputed on the far side of a process boundary. Producers therefore
+        need not touch it themselves.
 
         ``None`` when the contents cannot be digested (a non-numpy backing
         array, or an object dtype holding values with no string form). Callers
