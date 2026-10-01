@@ -240,3 +240,23 @@ async def test_close_with_live_view() -> None:
     shm.close()
     await shm.wait_closed()
     server.stop()
+
+
+@pytest.mark.asyncio
+async def test_attaching_an_unlinked_segment_is_refused() -> None:
+    """Once a segment's last lease ends it is unlinked; the GraphServer must
+    then refuse the name (ValueError, which channels treat as stale) rather
+    than hand back one the client cannot open (FileNotFoundError)."""
+    service = GraphService()
+    server = service.create_server()
+
+    shm = await service.create_shm(2, 2**12)
+    name = shm.name
+    shm.close()
+    await shm.wait_closed()
+    await asyncio.sleep(0.05)  # let the server see the lease end
+
+    with pytest.raises(ValueError):
+        await service.attach_shm(name)
+
+    server.stop()
