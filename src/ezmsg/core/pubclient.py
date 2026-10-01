@@ -7,6 +7,7 @@ from uuid import UUID
 from contextlib import suppress
 from dataclasses import dataclass
 
+from .axiselision import AxisElision, ELISION_ENABLED
 from .backpressure import Backpressure
 from .shm import SHMContext
 from .graphserver import GraphService
@@ -75,6 +76,8 @@ def _resolve_allow_local(force_tcp: bool, allow_local: bool | None) -> bool:
 class PubChannelInfo(ChannelInfo):
     pid: int
     shm_ok: bool = False
+    # The channel can resolve elided axes (it sent Command.ELIDE_OK).
+    elide_ok: bool = False
 
 
 class Publisher:
@@ -279,6 +282,10 @@ class Publisher:
         self._retired_shms: list[tuple[int, SHMContext]] = []
         self._msg_id = 0
         self._channels = dict()
+        # Axis elision: on only while every channel this publisher serializes
+        # for can resolve it (see _update_elision).
+        self._elision = AxisElision()
+        self._elide = False
         self._channel_tasks = dict()
         self._running = asyncio.Event()
         if not start_paused:
@@ -424,6 +431,9 @@ class Publisher:
         :type reader: asyncio.StreamReader
         """
         self._channels[info.id] = info
+        # A new channel holds no axes yet: announce them all again.
+        self._elision.reset()
+        self._update_elision()
 
         try:
             while True:
@@ -437,6 +447,14 @@ class Publisher:
                     self._backpressure.free(info.id, msg_id % self._num_buffers)
                     self._profile.sample_inflight(self._backpressure.pressure)
 
+                elif msg == Command.ELIDE_OK.value:
+                    info.elide_ok = True
+                    self._update_elision()
+
+                elif msg == Command.AXIS_RESEND.value:
+                    logger.debug(f"Publisher {self.id}: Channel {info.id} asked for axes again")
+                    self._elision.reset()
+
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(f"Publisher {self.id}: Channel {info.id} connection fail")
 
@@ -445,6 +463,15 @@ class Publisher:
             self._profile.sample_inflight(self._backpressure.pressure)
             await close_stream_writer(self._channels[info.id].writer)
             del self._channels[info.id]
+            self._update_elision()
+
+    def _update_elision(self) -> None:
+        remote = [ch for ch in self._channels.values() if not self._can_deliver_locally(ch)]
+        enable = ELISION_ENABLED and bool(remote) and all(ch.elide_ok for ch in remote)
+        if enable and not self._elide:
+            # What was announced while off may not have reached everyone.
+            self._elision.reset()
+        self._elide = enable
 
     async def sync(self) -> None:
         """
@@ -517,7 +544,9 @@ class Publisher:
             self._local_channel.put_local(self._msg_id, obj)
 
         if any(not self._can_deliver_locally(ch) for ch in self._channels.values()):
-            with MessageMarshal.serialize(self._msg_id, obj) as (
+            with MessageMarshal.serialize(
+                self._msg_id, obj, self._elision if self._elide else None
+            ) as (
                 total_size,
                 header,
                 buffers,
