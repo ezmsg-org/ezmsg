@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from ezmsg.core.subclient import Subscriber
+from ezmsg.core.messagechannel import CHANNEL_FAILED, ChannelFailed
 from ezmsg.core.graphmeta import ProfileChannelType
 from ezmsg.core.netprotocol import Command, encode_str
 from ezmsg.core import channelmanager as channelmanager_module
@@ -148,3 +149,58 @@ async def test_recv_zero_copy_skips_stale_notification():
     # Before the fix this would raise KeyError for stale_pub.
     async with sub.recv_zero_copy() as msg:
         assert msg == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_recv_zero_copy_raises_channel_failed():
+    """A crashed channel must surface to the subscriber instead of leaving it
+    waiting forever (issue #272)."""
+    sub = Subscriber(
+        id=uuid4(),
+        topic="test/topic",
+        graph_address=None,
+        _guard=Subscriber._SENTINEL,
+    )
+
+    pub_id = uuid4()
+    channel = DummyChannel()
+    channel.failure = BufferError("boom")
+    sub._channels[pub_id] = channel
+
+    await sub._incoming.put((pub_id, CHANNEL_FAILED))
+    await sub._incoming.put((pub_id, 1))
+
+    with pytest.raises(ChannelFailed) as excinfo:
+        async with sub.recv_zero_copy():
+            pass
+    assert excinfo.value.__cause__ is channel.failure
+
+    # Other notifications still flow afterwards.
+    async with sub.recv_zero_copy() as msg:
+        assert msg == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_a_channel_crash_reaches_the_subscriber():
+    """An exception while the channel delivers a message ends its connection;
+    the subscriber must get ChannelFailed (chained from it), not wait forever."""
+    import ezmsg.core as ez
+
+    async with ez.GraphContext(auto_start=True) as ctx:
+        pub = await ctx.publisher("/CRASH", host="127.0.0.1", num_buffers=2, allow_local=False)
+        sub = await ctx.subscriber("/CRASH")
+        await pub.broadcast(b"ok")
+        async with sub.recv_zero_copy() as msg:
+            assert msg == b"ok"
+
+        channel = sub._channels[pub.id]
+        boom = RuntimeError("delivery failed")
+
+        def explode(*args, **kwargs):
+            raise boom
+
+        channel._deliver_from_shm = explode
+        await pub.broadcast(b"never delivered")
+        with pytest.raises(ChannelFailed) as excinfo:
+            await asyncio.wait_for(sub.recv(), timeout=5.0)
+        assert excinfo.value.__cause__ is boom

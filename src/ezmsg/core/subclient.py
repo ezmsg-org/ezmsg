@@ -8,7 +8,13 @@ from copy import deepcopy
 
 from .graphserver import GraphService
 from .channelmanager import CHANNELS
-from .messagechannel import NotificationQueue, LeakyQueue, Channel
+from .messagechannel import (
+    CHANNEL_FAILED,
+    ChannelFailed,
+    NotificationQueue,
+    LeakyQueue,
+    Channel,
+)
 from .profiling import PROFILES, PROFILE_TIME
 
 from .netprotocol import (
@@ -154,6 +160,8 @@ class Subscriber:
         :type notification: tuple[UUID, int]
         """
         pub_id, msg_id = notification
+        if msg_id == CHANNEL_FAILED:
+            return
         if pub_id in self._channels:
             self._channels[pub_id].release_without_get(msg_id, self.id)
 
@@ -302,6 +310,11 @@ class Subscriber:
             # Stale notification from an unregistered publisher — skip.
 
         channel = self._channels[pub_id]
+        if msg_id < 0:  # CHANNEL_FAILED; literal compare keeps the hot path cheap
+            raise ChannelFailed(
+                f"Subscriber {self.topic}({self.id}) will receive no more messages "
+                f"from publisher {channel.topic}({pub_id}): its channel crashed"
+            ) from channel.failure
         channel_kind = channel.channel_kind
         self._active_msg_seq = msg_id
         sampled, trace_lease, _trace_user_span = self._profile.trace_receive_state(
