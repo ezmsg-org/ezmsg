@@ -265,9 +265,10 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         axis and whether or not it touched the fingerprint.
         """
         self.fingerprint
-
-        # Note: should return super().__getstate__() after Python 3.10 support is dropped.
-        return self.__dict__
+        # ArrayWithNamedDims.__getstate__ (reached through the MRO, so this
+        # works on 3.10 too) makes strided coordinate data contiguous; the
+        # fingerprint is computed above from the same values either way.
+        return super().__getstate__()
 
     @property
     def fingerprint(self) -> tuple | None:
