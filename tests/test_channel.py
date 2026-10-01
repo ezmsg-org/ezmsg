@@ -3,7 +3,8 @@ from uuid import uuid4
 
 import pytest
 
-from ezmsg.core.messagechannel import Channel
+from ezmsg.core.frameproto import FramedProtocol
+from ezmsg.core.messagechannel import Channel, ChannelProtocol
 from ezmsg.core.messagecache import CacheMiss
 from ezmsg.core.messagemarshal import MessageMarshal
 from ezmsg.core.netprotocol import Command, uint64_to_bytes
@@ -11,6 +12,8 @@ from ezmsg.core.backpressure import Backpressure
 
 
 class DummyWriter:
+    """Stands in for Channel._proto where only outbound acks matter."""
+
     def __init__(self):
         self.buffer: list[bytes] = []
 
@@ -22,6 +25,38 @@ class DummyWriter:
 
     async def wait_closed(self) -> None:
         return None
+
+
+class FakeTransport:
+    """Minimal asyncio.Transport stand-in for driving a ChannelProtocol."""
+
+    def __init__(self):
+        self.buffer: list[bytes] = []
+        self.reading = True
+
+    def write(self, data: bytes) -> None:
+        self.buffer.append(data)
+
+    def is_closing(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        return None
+
+    def pause_reading(self) -> None:
+        self.reading = False
+
+    def resume_reading(self) -> None:
+        self.reading = True
+
+    def get_extra_info(self, name, default=None):
+        return default
+
+
+async def _drain_tasks(turns: int = 20):
+    """Let tasks spawned from within a read callback (e.g. SHM reattach) run."""
+    for _ in range(turns):
+        await asyncio.sleep(0)
 
 
 def _resolved_task():
@@ -56,8 +91,7 @@ def _raw_message(msg_id: int, payload) -> memoryview:
 @pytest.mark.asyncio
 async def test_channel_acknowledges_remote_messages():
     channel = Channel(uuid4(), uuid4(), 2, None, None, Channel._SENTINEL)
-    channel._pub_writer = DummyWriter()
-    channel._pub_task = _resolved_task()
+    channel._proto = DummyWriter()
     channel._graph_task = _resolved_task()
 
     client_id = uuid4()
@@ -84,14 +118,13 @@ async def test_channel_acknowledges_remote_messages():
     assert channel.backpressure.buffers[buf_idx].is_empty
 
     expected_ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
-    assert channel._pub_writer.buffer[-1] == expected_ack
+    assert channel._proto.buffer[-1] == expected_ack
 
 
 @pytest.mark.asyncio
 async def test_channel_releases_local_backpressure(monkeypatch):
     channel = Channel(uuid4(), uuid4(), 2, None, None, Channel._SENTINEL)
-    channel._pub_writer = DummyWriter()
-    channel._pub_task = _resolved_task()
+    channel._proto = DummyWriter()
     channel._graph_task = _resolved_task()
 
     local_bp = Backpressure(channel.num_buffers)
@@ -113,7 +146,7 @@ async def test_channel_releases_local_backpressure(monkeypatch):
 
     buf_idx = msg_id % channel.num_buffers
     assert local_bp.buffers[buf_idx].is_empty
-    assert channel._pub_writer.buffer == []
+    assert channel._proto.buffer == []
 
 
 def test_channel_put_local_requires_local_backpressure():
@@ -128,8 +161,6 @@ async def test_channel_preserves_cached_message_during_shm_reattach(monkeypatch)
     new_slots = [_raw_message(4, {"value": 4}), _raw_message(1, {"value": 1}), _raw_message(2, {"value": 2})]
 
     channel = Channel(uuid4(), uuid4(), 3, None, None, Channel._SENTINEL)
-    channel._pub_writer = DummyWriter()
-    channel._pub_task = _resolved_task()
     channel._graph_task = _resolved_task()
     preserved_during_reattach = False
 
@@ -147,10 +178,69 @@ async def test_channel_preserves_cached_message_during_shm_reattach(monkeypatch)
 
     monkeypatch.setattr("ezmsg.core.messagechannel.GraphService.attach_shm", fake_attach_shm)
 
-    reader = asyncio.StreamReader()
-    reader.feed_data(Command.TX_SHM.value + uint64_to_bytes(2) + uint64_to_bytes(3) + b"new")
-    reader.feed_eof()
+    client_id = uuid4()
+    queue: asyncio.Queue = asyncio.Queue()
+    channel.register_client(client_id, queue)
 
-    await channel._publisher_connection(reader)
+    proto = ChannelProtocol()
+    proto.connection_made(FakeTransport())
+    proto.bind(channel)
+    channel._proto = proto
+    proto.start_dispatch()
+
+    # Naming an unattached segment parks the frame and hands off to a task; the
+    # frame is then re-dispatched against the new segment.
+    proto.data_received(
+        Command.TX_SHM.value + uint64_to_bytes(2) + uint64_to_bytes(3) + b"new"
+    )
+    await _drain_tasks()
 
     assert preserved_during_reattach
+    assert channel.shm.name == "new"
+    assert queue.get_nowait() == (channel.pub_id, 2)
+    assert channel.cache[2] == {"value": 2}
+    assert not proto.buffer, "frame should be fully consumed"
+
+
+class _EchoProtocol(FramedProtocol):
+    def frames_available(self) -> None:
+        self._buffer.clear()
+
+
+@pytest.mark.asyncio
+async def test_teardown_completes_when_peer_stops_reading():
+    """
+    Channel teardown must not wait on a peer that has stopped reading.
+
+    A graceful transport.close() defers connection_lost until queued writes
+    flush, so a publisher that has already torn down its ack reader could
+    otherwise leave wait_closed() hanging forever.
+    """
+
+    # Server.wait_closed() waits on connection handlers, so the peer needs a
+    # way out or the test's own teardown would hang and mask the result.
+    release_peer = asyncio.Event()
+
+    async def deaf_peer(reader, writer):
+        await release_peer.wait()  # accepts, never reads
+        writer.close()
+
+    server = await asyncio.start_server(deaf_peer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        _, proto = await asyncio.get_running_loop().create_connection(
+            _EchoProtocol, "127.0.0.1", port
+        )
+        proto.start_dispatch()
+
+        # Fill the socket and the transport's own write buffer.
+        for _ in range(200):
+            proto.write(b"x" * 65536)
+        assert proto.transport.get_write_buffer_size() > 0
+
+        proto.abort()
+        await asyncio.wait_for(proto.wait_closed(), timeout=5.0)
+    finally:
+        release_peer.set()
+        server.close()
+        await server.wait_closed()
