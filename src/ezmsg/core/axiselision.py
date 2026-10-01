@@ -31,10 +31,6 @@ from collections import OrderedDict
 
 ELISION_ENABLED = "EZMSG_DISABLE_AXIS_ELISION" not in os.environ
 
-# Stream dimension assumed for a message that does not declare one; mirrors
-# ezmsg-baseproc's default, so a per-message "time" axis is never elided.
-FALLBACK_STREAM_DIM = "time"
-
 # Publisher: forget what was announced (forcing definitions again) past this
 # many distinct axes. Receiver: keep at most this many.
 MAX_ANNOUNCED = 256
@@ -42,15 +38,19 @@ MAX_TABLE = 256
 
 _AxisArray: typing.Any = None
 _CoordinateAxis: typing.Any = None
+# Stream dimension assumed for a message that does not declare one, so that a
+# per-message axis by that name is never elided; the shared definition is
+# ezmsg.util.messages.axisarray.DEFAULT_STREAM_DIM.
+_default_stream_dim: str | None = None
 
 
 def _types() -> tuple[typing.Any, typing.Any]:
     # Imported lazily: ezmsg.util.messages imports ezmsg.core.
-    global _AxisArray, _CoordinateAxis
+    global _AxisArray, _CoordinateAxis, _default_stream_dim
     if _AxisArray is None:
-        from ..util.messages.axisarray import AxisArray, CoordinateAxis
+        from ..util.messages.axisarray import AxisArray, CoordinateAxis, DEFAULT_STREAM_DIM
 
-        _AxisArray, _CoordinateAxis = AxisArray, CoordinateAxis
+        _AxisArray, _CoordinateAxis, _default_stream_dim = AxisArray, CoordinateAxis, DEFAULT_STREAM_DIM
     return _AxisArray, _CoordinateAxis
 
 
@@ -100,8 +100,8 @@ def wire_token(axis: typing.Any) -> bytes | None:
 
 def _stream_dim(d: dict) -> str | None:
     stream = d.get("stream_dim")
-    if stream is None and FALLBACK_STREAM_DIM in d["dims"]:
-        stream = FALLBACK_STREAM_DIM
+    if stream is None and _default_stream_dim in d["dims"]:
+        stream = _default_stream_dim
     return stream
 
 

@@ -62,6 +62,15 @@ class TestWire:
         wired = el.wire(msg(ch_axis(), stream_dim=None, time_axis=events))
         assert wired.axes["time"] is events and type(wired.axes["ch"]) is _AxisDef
 
+    def test_the_fallback_is_axisarrays_default_stream_dim(self):
+        """Elision and consumers (e.g. ezmsg-baseproc) must agree on which axis
+        is per-message when stream_dim is undeclared: one shared definition."""
+        from ezmsg.core import axiselision
+        from ezmsg.util.messages.axisarray import DEFAULT_STREAM_DIM
+
+        AxisElision().wire(b"anything")  # loads the lazy imports
+        assert axiselision._default_stream_dim == DEFAULT_STREAM_DIM == "time"
+
     def test_the_callers_message_is_untouched(self):
         el, ch = AxisElision(), ch_axis()
         m = msg(ch)
