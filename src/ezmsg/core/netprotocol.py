@@ -347,6 +347,13 @@ class Command(enum.Enum):
     PROCESS_ROUTE_RESPONSE = enum.auto()
     ERROR = enum.auto()
 
+    # Channel -> Publisher: axis elision (appended, so no existing value moves).
+    # A channel that can resolve elided axes says so once after connecting; an
+    # older publisher's read loop ignores the byte.
+    ELIDE_OK = enum.auto()
+    # A channel received a reference to an axis it does not hold.
+    AXIS_RESEND = enum.auto()
+
 
 def create_socket(
     host: str | None = None,
