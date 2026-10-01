@@ -76,6 +76,28 @@ html_logo = "_static/_images/ezmsg_logo.png"
 html_favicon = "_static/_images/ezmsg_logo.png"
 html_title = f"ezmsg {version}"
 
+html_theme_options = {
+    "logo": {
+        "text": f"ezmsg {version}",
+        "link": "https://www.ezmsg.org",
+        "alt_text": "ezmsg.org",
+    },
+    "navbar_start": ["navbar-logo"],
+    "navbar_end": ["theme-switcher", "navbar-icon-links"],
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/ezmsg-org/ezmsg",
+            "icon": "fa-brands fa-github",
+        },
+        {
+            "name": "ezmsg.org",
+            "url": "https://www.ezmsg.org",
+            "icon": "fa-solid fa-house",
+        },
+    ],
+}
+
 html_static_path = ["_static"]
 
 # Timestamp is inserted at every page bottom in this strftime format.
