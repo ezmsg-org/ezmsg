@@ -18,7 +18,11 @@ import pytest
 import ezmsg.core as ez
 
 from ez_test_utils import get_test_fn
-from ezmsg.core.shm_grow_test_support import GrowSystem, GrowSystemSettings
+from ezmsg.core.shm_grow_test_support import (
+    GrowSystem,
+    GrowSystemSettings,
+    RetainingGrowSystem,
+)
 
 
 @pytest.mark.parametrize(
@@ -48,3 +52,29 @@ def test_cross_process_grow_delivers_all(sizes):
 
         assert [r["seq"] for r in results] == list(range(len(sizes)))
         assert [r["len"] for r in results] == list(sizes)
+
+
+def test_cross_process_grow_with_retained_views():
+    """Issue #272: a subscriber retaining zero-copy views into the old SHM
+    segment must not kill the channel when the publisher grows it."""
+    sizes = (8, 8, 16384, 8, 65536, 8)
+    with get_test_fn() as test_filename:
+        system = RetainingGrowSystem(
+            GrowSystemSettings(
+                sizes=sizes,
+                buf_size=4096,
+                num_buffers=4,
+                output_fn=str(test_filename),
+            )
+        )
+        ez.run(SYSTEM=system)
+
+        results = []
+        with open(test_filename, "r") as file:
+            for line in file:
+                results.append(json.loads(line))
+
+        assert [r["seq"] for r in results] == list(range(len(sizes)))
+        assert [r["len"] for r in results] == list(sizes)
+        # Zero-copy SHM views must not let subscribers write shared memory.
+        assert all(r["readonly"] for r in results)

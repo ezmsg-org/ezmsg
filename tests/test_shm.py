@@ -210,3 +210,33 @@ if __name__ == "__main__":
     asyncio.run(test_rw())
     asyncio.run(test_shm_detach_order())
     asyncio.run(test_shutdown())
+
+
+@pytest.mark.asyncio
+async def test_close_with_live_view() -> None:
+    """Closing an SHMContext while a view into it is alive must not raise;
+    the mapping stays valid for the view until it is released (issue #272)."""
+    service = GraphService()
+    server = service.create_server()
+
+    shm = await service.create_shm(4, 2**16)
+    attach_shm = await service.attach_shm(shm.name)
+
+    content = b"HELLO"
+    with shm.buffer(0) as mem:
+        mem[0 : len(content)] = content[:]
+
+    # Like a retained zero-copy ndarray: a fresh export on the mapping.
+    view = memoryview(attach_shm[0])
+
+    attach_shm.close()
+    await attach_shm.wait_closed()
+
+    assert bytes(view[0 : len(content)]) == content
+    with pytest.raises(BufferError):
+        attach_shm[0]
+    view.release()
+
+    shm.close()
+    await shm.wait_closed()
+    server.stop()
