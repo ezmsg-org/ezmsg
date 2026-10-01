@@ -421,6 +421,38 @@ def test_to_xr_dataarray():
     )
 
 
+def _crc32_collision(n: int) -> tuple[bytes, bytes]:
+    """Two different n-byte strings with the same crc32.
+
+    For equal lengths crc32(a) ^ crc32(b) is linear in a ^ b over GF(2), so 33
+    single-bit flips (in a 32-bit space) must contain a combination whose crc32
+    effects cancel; Gaussian elimination finds it.
+    """
+    import zlib
+
+    base = bytes(n)
+    c0 = zlib.crc32(base)
+    basis: dict[int, tuple[int, int]] = {}
+    for bit in range(33):
+        flipped = bytearray(base)
+        flipped[bit // 8] ^= 1 << (bit % 8)
+        value, mask = zlib.crc32(bytes(flipped)) ^ c0, 1 << bit
+        while value:
+            pivot = value.bit_length() - 1
+            if pivot not in basis:
+                basis[pivot] = (value, mask)
+                break
+            value ^= basis[pivot][0]
+            mask ^= basis[pivot][1]
+        if value == 0:
+            other = bytearray(base)
+            for b in range(33):
+                if mask >> b & 1:
+                    other[b // 8] ^= 1 << (b % 8)
+            return base, bytes(other)
+    raise AssertionError("unreachable: 33 vectors in 32 dimensions are dependent")
+
+
 class TestCoordinateAxisFingerprint:
     """``CoordinateAxis.fingerprint`` is derived from the contents, not assigned.
 
@@ -446,6 +478,18 @@ class TestCoordinateAxisFingerprint:
             self._axis(["A", "B", "C"]).fingerprint
             != self._axis(["X", "Y", "Z"]).fingerprint
         )
+
+    def test_a_crc32_collision_is_still_told_apart(self):
+        """The digest is 64 bits (crc32 + adler32): two contents built to share
+        a crc32 must still fingerprint differently, because the transport keys
+        axes a receiver already holds on the fingerprint."""
+        import zlib
+
+        a, b = _crc32_collision(64)
+        assert a != b and zlib.crc32(a) == zlib.crc32(b)
+        fa = CoordinateAxis(data=np.frombuffer(a, np.uint8), dims=["ch"]).fingerprint
+        fb = CoordinateAxis(data=np.frombuffer(b, np.uint8), dims=["ch"]).fingerprint
+        assert fa != fb
 
     def test_reorder_is_detected(self):
         assert (

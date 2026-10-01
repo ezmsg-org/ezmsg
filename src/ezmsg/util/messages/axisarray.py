@@ -338,9 +338,18 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         # CPython's siphash over the result at ~5.5 GB/s, while crc32 reads the
         # array's buffer directly at ~29 GB/s.
         #
+        # 64 bits, not 32: the fingerprint keys more than state resets -- the
+        # transport sends an axis a receiver already holds as a token derived
+        # from it -- and a collision there would silently swap one axis's
+        # values for another's. crc32 and adler32 are structurally different
+        # checksums, so equal contents must collide in both; together they cost
+        # ~3x crc32 alone (1.0 vs 0.36 us on a 256-channel struct axis), still
+        # ~10x cheaper than a cryptographic digest.
+        #
         # dtype goes in as the object, not str(dtype): numpy builds a structured
         # dtype's repr field by field, which costs ~10x the checksum it annotates.
-        return (self.unit, tuple(self.dims), data.dtype, data.shape, zlib.crc32(data))
+        digest = (zlib.crc32(data) << 32) | zlib.adler32(data)
+        return (self.unit, tuple(self.dims), data.dtype, data.shape, digest)
 
 
 @dataclass(eq=False)
