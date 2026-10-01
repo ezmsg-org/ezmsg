@@ -131,8 +131,8 @@ class TestResolve:
             assert out.axes["ch"] is roundtrip(msg(ch, 2), el, table).axes["ch"]
 
 
-async def _pubsub(ctx, topic):
-    pub = await ctx.publisher(topic, host="127.0.0.1", num_buffers=4, allow_local=False)
+async def _pubsub(ctx, topic, force_tcp=False):
+    pub = await ctx.publisher(topic, host="127.0.0.1", num_buffers=4, allow_local=False, force_tcp=force_tcp)
     sub = await ctx.subscriber(topic)
     for _ in range(100):  # the channel's ELIDE_OK arrives asynchronously
         if pub._elide:
@@ -147,9 +147,10 @@ async def _recv(sub):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_over_shm():
+@pytest.mark.parametrize("force_tcp", [False, True], ids=["shm", "tcp"])
+async def test_end_to_end(force_tcp):
     async with ez.GraphContext(auto_start=True) as ctx:
-        pub, sub = await _pubsub(ctx, "/ELIDE/E2E")
+        pub, sub = await _pubsub(ctx, f"/ELIDE/E2E/{force_tcp}", force_tcp)
         assert pub._elide
         ch = ch_axis(64)
         got = []
@@ -158,6 +159,7 @@ async def test_end_to_end_over_shm():
             got.append(await _recv(sub))
         assert [g[1] for g in got] == [0.0, 1.0, 2.0, 3.0, 4.0]
         assert all(g[0] is got[0][0] for g in got)  # one shared axis on the far side
+        assert sub._channels[pub.id].channel_kind.name == ("TCP" if force_tcp else "SHM")
         await pub.broadcast(msg(ch_axis(64, prefix="z"), 5))
         assert (await _recv(sub))[2] == "z000"
 
