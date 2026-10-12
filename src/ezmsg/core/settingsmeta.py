@@ -15,12 +15,18 @@ def _type_name(tp: object) -> str:
 
 
 def _sanitize(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
+    # Enums first: a mixin enum (IntEnum, StrEnum, IntFlag) is an instance of
+    # its mixed-in builtin, so the primitives check below would return the
+    # member itself and leak the defining package onto the wire.
     if isinstance(value, enum.Enum):
         return _sanitize(value.value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
     if isinstance(value, Mapping):
-        return {str(key): _sanitize(val) for key, val in value.items()}
+        # Sanitize keys too, so an enum key renders as its value rather than
+        # through str(), whose output for an IntEnum changed in 3.11 -- the same
+        # settings would otherwise key differently per interpreter version.
+        return {str(_sanitize(key)): _sanitize(val) for key, val in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_sanitize(val) for val in value]
     if is_dataclass(value):
