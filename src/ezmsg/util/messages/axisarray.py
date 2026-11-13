@@ -444,6 +444,8 @@ class AxisArray(ArrayWithNamedDims):
         # checks for AxisArray fields
         if (
             self.key == other.key
+            and self.stream_dim == other.stream_dim
+            and self.segment == other.segment
             and self.attrs == other.attrs
             and self.axes == other.axes
         ):

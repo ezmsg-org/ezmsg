@@ -907,3 +907,8 @@ class TestSegment:
         """segment is last, so existing positional calls still work."""
         msg = AxisArray(np.zeros((4, 2)), ["time", "ch"], {}, {}, "key", "time")
         assert msg.stream_dim == "time" and msg.segment == 0
+
+    def test_equality_compares_stream_dim_and_segment(self):
+        assert self._msg(segment=3, stream_dim="time") == self._msg(segment=3, stream_dim="time")
+        assert self._msg(segment=3) != self._msg(segment=4)
+        assert self._msg(stream_dim="time") != self._msg()
