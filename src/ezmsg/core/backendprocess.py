@@ -48,6 +48,7 @@ from .profiling import PROFILES, PROFILE_TIME
 from .processclient import ProcessControlClient
 from .pubclient import Publisher
 from .subclient import Subscriber
+from .messagechannel import ChannelFailed
 from .netprotocol import AddressType
 from .settingsmeta import (
     coerce_settings_field_value,
@@ -867,28 +868,33 @@ async def handle_subscriber(
             await sub.wait_closed()
             break
 
-        async with next_message() as msg:
-            try:
-                if on_message is not None:
-                    try:
-                        await on_message(msg)
-                    except Exception as exc:
-                        logger.warning(
-                            f"Failed to report subscriber message metadata: {exc}"
-                        )
-                for callable in list(callables):
-                    try:
-                        span_start_ns = sub.begin_profile()
+        try:
+            async with next_message() as msg:
+                try:
+                    if on_message is not None:
                         try:
-                            await callable(msg)
-                        finally:
-                            sub.end_profile(
-                                span_start_ns, getattr(callable, "__name__", None)
+                            await on_message(msg)
+                        except Exception as exc:
+                            logger.warning(
+                                f"Failed to report subscriber message metadata: {exc}"
                             )
-                    except (Complete, NormalTermination):
-                        callables.remove(callable)
-            finally:
-                del msg
+                    for callable in list(callables):
+                        try:
+                            span_start_ns = sub.begin_profile()
+                            try:
+                                await callable(msg)
+                            finally:
+                                sub.end_profile(
+                                    span_start_ns, getattr(callable, "__name__", None)
+                                )
+                        except (Complete, NormalTermination):
+                            callables.remove(callable)
+                finally:
+                    del msg
+        except ChannelFailed as exc:
+            # Keep serving this stream's other publishers.
+            logger.error(f"{exc}: {exc.__cause__!r}")
+            continue
 
         if len(callables) > 1:
             await asyncio.sleep(0)

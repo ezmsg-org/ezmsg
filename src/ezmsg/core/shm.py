@@ -235,6 +235,7 @@ class SHMInfo:
 
     shm: SharedMemory
     leases: set["asyncio.Task[None]"] = field(default_factory=set)
+    unlinked: bool = False
 
     @classmethod
     def create(cls, num_buffers: int, buf_size: int) -> "SHMInfo":
@@ -278,7 +279,8 @@ class SHMInfo:
     def _release(self, task: "asyncio.Task[None]"):
         self.leases.discard(task)
         logger.debug(f"discarded lease from {self.shm.name}; {len(self.leases)} left")
-        if len(self.leases) == 0:
+        if len(self.leases) == 0 and not self.unlinked:
             logger.debug(f"unlinking {self.shm.name}")
+            self.unlinked = True
             self.shm.close()
             self.shm.unlink()

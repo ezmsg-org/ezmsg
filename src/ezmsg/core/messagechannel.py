@@ -32,6 +32,17 @@ _FRAME_PREFIX = 1 + 8 + 8
 
 logger = logging.getLogger("ezmsg")
 
+# Notification msg_id a Channel sends its clients when its publisher connection
+# dies unexpectedly; real msg_ids are unsigned.
+CHANNEL_FAILED = -1
+
+
+class ChannelFailed(RuntimeError):
+    """
+    Raised to a subscriber when the Channel delivering messages from one of its
+    publishers crashes; no further messages will arrive from that publisher.
+    """
+
 
 class LeakyQueue(asyncio.Queue[typing.Tuple[UUID, int]]):
     """
@@ -94,9 +105,19 @@ class ChannelProtocol(FramedProtocol):
         self._channel = channel
 
     def connection_lost(self, exc: BaseException | None) -> None:
+        # A peer that simply went away is a normal disconnect; anything else is
+        # a crash. An exception out of frames_available is caught by
+        # _drain_frames, which keeps it as _close_exc and aborts (so exc is None
+        # here) -- read it before the base class overwrites it with exc.
+        failure = exc if exc is not None else self._close_exc
         super().connection_lost(exc)
-        if self._channel is not None:
-            self._channel._on_disconnected()
+        chan = self._channel
+        if chan is not None:
+            if failure is not None and chan.failure is None and not isinstance(
+                failure, (ConnectionResetError, BrokenPipeError)
+            ):
+                chan.failure = failure
+            chan._on_disconnected()
 
     def frames_available(self) -> None:
         chan = self._channel
@@ -161,7 +182,10 @@ class ChannelProtocol(FramedProtocol):
 
             try:
                 chan.shm = await GraphService(chan._graph_address).attach_shm(shm_name)
-            except ValueError:
+            except (ValueError, FileNotFoundError):
+                # ValueError: the GraphServer does not know the name.
+                # FileNotFoundError: an older GraphServer still knew a segment
+                # it had already unlinked.
                 logger.warning(
                     "Channel %s received stale SHM %s for publisher %s; waiting for next valid SHM",
                     chan.id,
@@ -181,8 +205,9 @@ class ChannelProtocol(FramedProtocol):
                 )
                 del self._buffer[:frame_end]
                 chan._release_backpressure(msg_id, chan.id)
-        except Exception:
+        except Exception as exc:
             logger.exception("Channel %s failed to reattach SHM", chan.id)
+            chan.failure = exc
             self.abort()
             return
 
@@ -250,6 +275,7 @@ class Channel:
         # Axes the publisher sent in full, for resolving its elided references.
         self._axis_table = AxisTable()
         self._axes_requested = False
+        self.failure: BaseException | None = None
 
     @classmethod
     async def create(
@@ -468,6 +494,8 @@ class Channel:
         self.cache.clear()
         if self.shm is not None:
             self.shm.close()
+        if self.failure is not None:
+            self._notify_failure()
         logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     def _set_channel_kind(self, kind: ProfileChannelType) -> None:
@@ -495,6 +523,12 @@ class Channel:
             self.backpressure.lease(client_id, buf_idx)
             queue.put_nowait((self.pub_id, msg_id))
         return not self.backpressure.available(buf_idx)
+
+    def _notify_failure(self) -> None:
+        """wake every client so it can surface this channel's failure"""
+        for queue in self.clients.values():
+            if queue is not None:
+                queue.put_nowait((self.pub_id, CHANNEL_FAILED))
 
     def put_local(self, msg_id: int, msg: typing.Any) -> None:
         """

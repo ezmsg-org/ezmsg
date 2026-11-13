@@ -273,6 +273,10 @@ class GraphServer(threading.Thread):
                     num_buffers = await read_int(reader)
                     buf_size = await read_int(reader)
 
+                    # Forget segments whose last lease has ended.
+                    for name in [n for n, i in self.shms.items() if i.unlinked]:
+                        del self.shms[name]
+
                     # Create segment
                     shm_info = SHMInfo.create(num_buffers, buf_size)
                     self.shms[shm_info.shm.name] = shm_info
@@ -281,6 +285,11 @@ class GraphServer(threading.Thread):
                 elif req == Command.SHM_ATTACH.value:
                     shm_name = await read_str(reader)
                     shm_info = self.shms.get(shm_name, None)
+                    if shm_info is not None and shm_info.unlinked:
+                        # Its last lease ended and it is gone; attaching would
+                        # hand the client a name it cannot open.
+                        del self.shms[shm_name]
+                        shm_info = None
 
                 if shm_info is None:
                     await close_stream_writer(writer)
