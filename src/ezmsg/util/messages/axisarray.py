@@ -384,6 +384,8 @@ class AxisArray(ArrayWithNamedDims):
     :type key: str
     :param stream_dim: Name of the dimension this message streams along, or None if not declared
     :type stream_dim: str | None
+    :param segment: Counter that changes whenever this message does not continue the previous one
+    :type segment: int
     """
 
     axes: dict[str, AxisBase] = field(default_factory=dict)
@@ -411,6 +413,24 @@ class AxisArray(ArrayWithNamedDims):
     updating it, exactly as it already updates ``dims``.
     """
 
+    segment: int = 0
+    """Which run of continuous, same-configuration data this message belongs to.
+
+    Messages with the same :attr:`key` and the same ``segment`` continue one
+    another: each picks up, along :attr:`stream_dim`, where the previous one
+    stopped, from an unchanged source. A producer changes the value -- normally
+    by adding one -- on the first message that does not: after a gap in time
+    (dropped packets, a pause, a new section of a file), or after the source was
+    reconfigured (a different channel count or sample rate).
+
+    Consumers that carry state between messages, such as a filter's memory or a
+    partly filled window, compare it with the previous message's and start again
+    when it differs. Only a *change* means anything; the value itself does not,
+    and ``0`` is simply where a stream that never breaks stays. It is a level
+    and not an edge, so it survives a stage that drops or merges messages, and
+    every stage is expected to pass it on.
+    """
+
     T = typing.TypeVar("T", bound="AxisArray")
 
     def __eq__(self, other):
@@ -424,6 +444,8 @@ class AxisArray(ArrayWithNamedDims):
         # checks for AxisArray fields
         if (
             self.key == other.key
+            and self.stream_dim == other.stream_dim
+            and self.segment == other.segment
             and self.attrs == other.attrs
             and self.axes == other.axes
         ):

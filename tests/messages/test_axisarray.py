@@ -863,3 +863,52 @@ def test_coordinate_axis_shares_the_contiguity_fix() -> None:
     assert len(buffers) == 1
     restored = pickle.loads(inband, buffers=[b.raw() for b in buffers])
     assert np.array_equal(restored.data, axis.data)
+
+
+class TestSegment:
+    """`segment` marks which run of continuous data a message belongs to.
+
+    Stateful consumers reset when it changes, so it has to default to "no
+    break" and ride through everything that copies or ships a message.
+    """
+
+    @staticmethod
+    def _msg(**kwargs):
+        return AxisArray(
+            data=np.zeros((4, 2)),
+            dims=["time", "ch"],
+            axes={"time": AxisArray.TimeAxis(fs=100.0)},
+            **kwargs,
+        )
+
+    def test_default_is_zero(self):
+        assert self._msg().segment == 0
+
+    def test_survives_replace(self):
+        """Stages that build output with `replace` pass it on for free."""
+        assert replace(self._msg(segment=3), data=np.ones((4, 2))).segment == 3
+
+    def test_survives_pickle(self):
+        import pickle
+
+        assert pickle.loads(pickle.dumps(self._msg(segment=3))).segment == 3
+
+    def test_survives_wire_elision(self):
+        from ezmsg.core.axiselision import AxisElision
+
+        assert AxisElision().wire(self._msg(segment=3)).segment == 3
+
+    def test_survives_iteration_and_transpose(self):
+        msg = self._msg(segment=3)
+        assert all(sub.segment == 3 for sub in msg.iter_over_axis("time"))
+        assert AxisArray.transpose(msg, ["ch", "time"]).segment == 3
+
+    def test_positional_construction_is_unchanged(self):
+        """segment is last, so existing positional calls still work."""
+        msg = AxisArray(np.zeros((4, 2)), ["time", "ch"], {}, {}, "key", "time")
+        assert msg.stream_dim == "time" and msg.segment == 0
+
+    def test_equality_compares_stream_dim_and_segment(self):
+        assert self._msg(segment=3, stream_dim="time") == self._msg(segment=3, stream_dim="time")
+        assert self._msg(segment=3) != self._msg(segment=4)
+        assert self._msg(stream_dim="time") != self._msg()
