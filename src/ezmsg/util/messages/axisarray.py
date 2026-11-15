@@ -360,7 +360,15 @@ class CoordinateAxis(AxisBase, ArrayWithNamedDims):
         # dtype goes in as the object, not str(dtype): numpy builds a structured
         # dtype's repr field by field, which costs ~10x the checksum it annotates.
         digest = (zlib.crc32(data) << 32) | zlib.adler32(data)
-        return (self.unit, tuple(self.dims), data.dtype, data.shape, digest)
+        # str(): repr and pickle of np.str_ differ from str, and config_id and the
+        # wire token are built from those.
+        return (
+            str(self.unit),
+            tuple(map(str, self.dims)),
+            data.dtype,
+            data.shape,
+            digest,
+        )
 
 
 @dataclass(eq=False)
@@ -931,7 +939,8 @@ def compute_config_id(message: AxisArray) -> int:
     """
     Digest the configuration of ``message`` into a :attr:`AxisArray.config_id`.
 
-    Reads the key, dims, the data's dtype, the length, axis unit and coordinates
+    Reads the key, dims, the data's dtype (only its kind for numpy string and
+    bytes data, whose width varies per message), the length, axis unit and coordinates
     (or linear gain and offset) of every dimension except the stream dimension,
     and the gain and unit of a linear stream axis. The stream dimension's length and offset, and
     coordinate values along it, are per-message and left out.
@@ -941,32 +950,39 @@ def compute_config_id(message: AxisArray) -> int:
     :return: A positive 63-bit id, never 0, stable across processes
     :rtype: int
     """
-    stream_dim = message.stream_dim or DEFAULT_STREAM_DIM
+    # Names go through str(): repr(np.str_("x")) differs from repr("x"), and
+    # readers may hand over either.
+    stream_dim = str(message.stream_dim or DEFAULT_STREAM_DIM)
     layout = []
     for dim, length in zip(message.dims, message.data.shape):
         ax = message.axes.get(dim)
+        dim = str(dim)
         if dim == stream_dim:
             if isinstance(ax, LinearAxis):
-                layout.append((dim, ax.unit, float(ax.gain)))
+                layout.append((dim, str(ax.unit), float(ax.gain)))
             continue
         if isinstance(ax, LinearAxis):
-            ax_part = (ax.unit, float(ax.gain), float(ax.offset))
+            ax_part = (str(ax.unit), float(ax.gain), float(ax.offset))
         elif isinstance(ax, CoordinateAxis):
             # tolist(), not the raw bytes: an object array's buffer is pointers.
             ax_part = ax.fingerprint or (
-                ax.unit,
-                tuple(ax.dims),
+                str(ax.unit),
+                tuple(map(str, ax.dims)),
                 repr(ax.data.tolist()),
             )
         else:
             ax_part = None
         layout.append((dim, int(length), ax_part))
+    dtype = message.data.dtype
+    # A string dtype's width follows the longest string in each message, so only
+    # its kind is configuration. torch/mlx dtypes are not np.dtype and have no kind.
+    is_str = isinstance(dtype, np.dtype) and dtype.kind in ("U", "S")
     return chain_config_id(
         0,
-        message.key,
-        tuple(message.dims),
+        str(message.key),
+        tuple(map(str, message.dims)),
         stream_dim,
-        str(message.data.dtype),
+        dtype.kind if is_str else str(dtype),
         tuple(layout),
     )
 

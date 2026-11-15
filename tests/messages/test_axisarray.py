@@ -1053,3 +1053,38 @@ class TestConfigId:
     def test_dtype_is_part_of_the_config(self):
         msg = self._msg()
         assert compute_config_id(msg) != compute_config_id(replace(msg, data=msg.data.astype(np.float32)))
+        assert compute_config_id(msg) != compute_config_id(
+            replace(msg, data=msg.data.astype(np.int16))
+        )
+
+    @pytest.mark.parametrize("dtype", ["U", "S"])
+    def test_string_width_is_not_part_of_the_config(self, dtype):
+        """String/bytes width follows the longest value in each message."""
+        msg = self._msg()
+        short, long = (
+            replace(msg, data=np.full((4, 2), "x" * n, dtype=f"{dtype}{n}"))
+            for n in (5, 7)
+        )
+        assert short.data.dtype != long.data.dtype
+        assert compute_config_id(short) == compute_config_id(long)
+        assert compute_config_id(short) != compute_config_id(msg)
+
+    def test_numpy_strings_digest_like_str(self):
+        msg = self._msg()
+        base = compute_config_id(msg)
+        assert compute_config_id(replace(msg, key=np.str_("k"))) == base
+        ch = msg.axes["ch"]
+        np_names = replace(
+            msg,
+            dims=[np.str_(d) for d in msg.dims],
+            axes={
+                np.str_("time"): replace(msg.axes["time"], unit=np.str_("s")),
+                np.str_("ch"): CoordinateAxis(
+                    data=ch.data, dims=[np.str_("ch")], unit=np.str_(ch.unit)
+                ),
+            },
+            stream_dim=np.str_("time"),
+        )
+        assert compute_config_id(np_names) == compute_config_id(
+            replace(msg, stream_dim="time")
+        )
