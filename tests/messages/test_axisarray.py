@@ -1016,6 +1016,29 @@ class TestConfigId:
             a, "lowpass", 40.0
         )
 
+    @pytest.mark.parametrize(
+        "np_part, py_part",
+        [
+            (np.float64(30.0), 30.0),
+            (np.int64(3), 3),
+            (np.array([1.0, 2.0]), [1.0, 2.0]),
+            (("lp", (np.float32(0.5), np.int16(4))), ("lp", (0.5, 4))),
+        ],
+    )
+    def test_chain_digests_numpy_values_like_python(self, np_part, py_part):
+        assert chain_config_id(1, np_part) == chain_config_id(1, py_part)
+
+    def test_chain_numpy_values_still_differ(self):
+        assert chain_config_id(1, np.float64(30.0)) != chain_config_id(1, 40.0)
+        assert chain_config_id(1, np.array([1, 2])) != chain_config_id(1, [1, 3])
+
+    def test_array_backend_is_part_of_the_config(self):
+        mx = pytest.importorskip("mlx.core")
+        msg = self._msg()
+        on_mlx = replace(msg, data=mx.array(msg.data))
+        assert compute_config_id(on_mlx) != compute_config_id(msg)
+        assert compute_config_id(replace(msg, data=np.ones((4, 2)))) == compute_config_id(msg)
+
     def test_deterministic_across_processes(self):
         import os
         import subprocess

@@ -922,7 +922,9 @@ def chain_config_id(parent: int, *parts) -> int:
     new dims, lengths, axis fingerprints) or that joins several inputs
     (``chain_config_id(a.config_id, b.config_id)``). Do not pass settings that
     leave the layout alone, or changing them resets everything downstream. Parts
-    are digested by ``repr``, so they must have a deterministic one.
+    are digested by ``repr`` after numpy scalars and arrays (also inside tuples
+    and lists) become Python values, so ``np.float64(30.0)`` digests like
+    ``30.0``; other parts must have a deterministic ``repr``.
 
     :param parent: The upstream config_id
     :type parent: int
@@ -931,15 +933,34 @@ def chain_config_id(parent: int, *parts) -> int:
     :rtype: int
     """
     # blake2b, not hash(): hash() of a str is salted per process.
-    digest = hashlib.blake2b(repr((parent, *parts)).encode(), digest_size=8).digest()
+    digest = hashlib.blake2b(repr(_plain((parent, *parts))).encode(), digest_size=8).digest()
     return (int.from_bytes(digest, "big") >> 1) or 1
+
+
+def _plain(x):
+    """numpy scalars/arrays to Python values, recursing into tuples and lists."""
+    # repr(np.float64(1.0)) is "np.float64(1.0)" under numpy 2, "1.0" before.
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return _plain(x.tolist())
+    # Exact types: a tuple stays a tuple and a list a list, so plain parts digest as before.
+    if type(x) in (tuple, list):
+        return type(x)(map(_plain, x))
+    return x
+
+
+def array_backend(data) -> str:
+    """The array library holding ``data``: ``numpy``, ``mlx``, ``torch``, ``cupy``, ``sparse``, ..."""
+    return type(data).__module__.partition(".")[0]
 
 
 def compute_config_id(message: AxisArray) -> int:
     """
     Digest the configuration of ``message`` into a :attr:`AxisArray.config_id`.
 
-    Reads the key, dims, the data's dtype (only its kind for numpy string and
+    Reads the key, dims, the array backend (:func:`array_backend`), the data's
+    dtype (only its kind for numpy string and
     bytes data, whose width varies per message), the length, axis unit and coordinates
     (or linear gain and offset) of every dimension except the stream dimension,
     and the gain and unit of a linear stream axis. The stream dimension's length and offset, and
@@ -984,6 +1005,7 @@ def compute_config_id(message: AxisArray) -> int:
         stream_dim,
         dtype.kind if is_str else str(dtype),
         tuple(layout),
+        array_backend(message.data),
     )
 
 
