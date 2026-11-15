@@ -3,6 +3,7 @@ from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from dataclasses import field, dataclass
 from array_api_compat import get_namespace, is_cupy_array, is_numpy_array, is_torch_array
+import hashlib
 import math
 import typing
 import warnings
@@ -386,6 +387,8 @@ class AxisArray(ArrayWithNamedDims):
     :type stream_dim: str | None
     :param segment: Counter that changes whenever this message does not continue the previous one
     :type segment: int
+    :param config_id: Digest identifying the stream's configuration, or 0 if not declared
+    :type config_id: int
     """
 
     axes: dict[str, AxisBase] = field(default_factory=dict)
@@ -431,6 +434,24 @@ class AxisArray(ArrayWithNamedDims):
     every stage is expected to pass it on.
     """
 
+    config_id: int = 0
+    """A stable digest identifying the stream's configuration.
+
+    It covers everything except :attr:`stream_dim`'s per-message extent: the
+    :attr:`key`, ``dims``, the data's dtype, the length of every other dimension, the coordinate
+    values on those dimensions, the gain and offset of linear axes on them, and
+    the gain of the stream axis. A stateful consumer compares it with the
+    previous message's to decide whether to reset, one int compare per message
+    instead of inspecting the layout.
+
+    ``0`` means "not declared", and consumers must then inspect the layout
+    themselves. Only a *change* means anything; it is an identity, not a counter.
+    A stage that passes the layout through unchanged leaves it alone (``replace``
+    carries it); a stage that changes the layout derives a new one with
+    :func:`compute_config_id` or :func:`chain_config_id` and sets it, typically
+    once on its output template at reset.
+    """
+
     T = typing.TypeVar("T", bound="AxisArray")
 
     def __eq__(self, other):
@@ -446,6 +467,7 @@ class AxisArray(ArrayWithNamedDims):
             self.key == other.key
             and self.stream_dim == other.stream_dim
             and self.segment == other.segment
+            and self.config_id == other.config_id
             and self.attrs == other.attrs
             and self.axes == other.axes
         ):
@@ -882,6 +904,71 @@ class AxisArray(ArrayWithNamedDims):
         new_dims = [aa.dims[d] for d in dim_indices]
         new_data = xp.transpose(aa.data, dim_indices)
         return replace(aa, data=new_data, dims=new_dims, axes=aa.axes)
+
+
+def chain_config_id(parent: int, *parts) -> int:
+    """
+    Derive a :attr:`AxisArray.config_id` from a parent id and further parts.
+
+    For a stage that changes the layout (pass what it changed as ``parts``: the
+    new dims, lengths, axis fingerprints) or that joins several inputs
+    (``chain_config_id(a.config_id, b.config_id)``). Do not pass settings that
+    leave the layout alone, or changing them resets everything downstream. Parts
+    are digested by ``repr``, so they must have a deterministic one.
+
+    :param parent: The upstream config_id
+    :type parent: int
+    :param parts: Further values that determine the output configuration
+    :return: A positive 63-bit id, never 0, stable across processes
+    :rtype: int
+    """
+    # blake2b, not hash(): hash() of a str is salted per process.
+    digest = hashlib.blake2b(repr((parent, *parts)).encode(), digest_size=8).digest()
+    return (int.from_bytes(digest, "big") >> 1) or 1
+
+
+def compute_config_id(message: AxisArray) -> int:
+    """
+    Digest the configuration of ``message`` into a :attr:`AxisArray.config_id`.
+
+    Reads the key, dims, the data's dtype, the length, axis unit and coordinates
+    (or linear gain and offset) of every dimension except the stream dimension,
+    and the gain and unit of a linear stream axis. The stream dimension's length and offset, and
+    coordinate values along it, are per-message and left out.
+
+    :param message: The message whose configuration to digest
+    :type message: AxisArray
+    :return: A positive 63-bit id, never 0, stable across processes
+    :rtype: int
+    """
+    stream_dim = message.stream_dim or DEFAULT_STREAM_DIM
+    layout = []
+    for dim, length in zip(message.dims, message.data.shape):
+        ax = message.axes.get(dim)
+        if dim == stream_dim:
+            if isinstance(ax, LinearAxis):
+                layout.append((dim, ax.unit, float(ax.gain)))
+            continue
+        if isinstance(ax, LinearAxis):
+            ax_part = (ax.unit, float(ax.gain), float(ax.offset))
+        elif isinstance(ax, CoordinateAxis):
+            # tolist(), not the raw bytes: an object array's buffer is pointers.
+            ax_part = ax.fingerprint or (
+                ax.unit,
+                tuple(ax.dims),
+                repr(ax.data.tolist()),
+            )
+        else:
+            ax_part = None
+        layout.append((dim, int(length), ax_part))
+    return chain_config_id(
+        0,
+        message.key,
+        tuple(message.dims),
+        stream_dim,
+        str(message.data.dtype),
+        tuple(layout),
+    )
 
 
 def slice_along_axis(in_arr: npt.NDArray, sl: slice | int, axis: int) -> npt.NDArray:
