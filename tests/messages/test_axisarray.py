@@ -10,6 +10,8 @@ from ezmsg.util.messages.axisarray import (
     AxisArray,
     CoordinateAxis,
     LinearAxis,
+    chain_config_id,
+    compute_config_id,
     replace,
     shape2d,
     slice_along_axis,
@@ -912,3 +914,200 @@ class TestSegment:
         assert self._msg(segment=3, stream_dim="time") == self._msg(segment=3, stream_dim="time")
         assert self._msg(segment=3) != self._msg(segment=4)
         assert self._msg(stream_dim="time") != self._msg()
+
+
+class TestConfigId:
+    """`config_id` identifies the stream's configuration.
+
+    Like `segment` it must default to "not declared" and ride through everything
+    that copies or ships a message; the helpers must derive it deterministically
+    from the configuration alone.
+    """
+
+    @staticmethod
+    def _msg(n_time=4, ch=("a", "b"), fs=100.0, offset=0.0, key="k", **kwargs):
+        return AxisArray(
+            data=np.zeros((n_time, len(ch))),
+            dims=["time", "ch"],
+            axes={
+                "time": AxisArray.TimeAxis(fs=fs, offset=offset),
+                "ch": CoordinateAxis(data=np.array(ch), dims=["ch"]),
+            },
+            key=key,
+            **kwargs,
+        )
+
+    def test_default_is_zero(self):
+        assert self._msg().config_id == 0
+
+    def test_survives_replace(self):
+        assert replace(self._msg(config_id=7), data=np.ones((4, 2))).config_id == 7
+
+    def test_survives_pickle(self):
+        assert pickle.loads(pickle.dumps(self._msg(config_id=7))).config_id == 7
+
+    def test_survives_wire_elision(self):
+        from ezmsg.core.axiselision import AxisElision
+
+        assert AxisElision().wire(self._msg(config_id=7)).config_id == 7
+
+    def test_survives_iteration_transpose_and_concatenate(self):
+        msg = self._msg(config_id=7)
+        assert all(sub.config_id == 7 for sub in msg.iter_over_axis("time"))
+        assert AxisArray.transpose(msg, ["ch", "time"]).config_id == 7
+        assert AxisArray.concatenate(msg, msg, dim="time").config_id == 7
+
+    def test_equality_compares_config_id(self):
+        assert self._msg(config_id=7) == self._msg(config_id=7)
+        assert self._msg(config_id=7) != self._msg(config_id=8)
+
+    def test_same_config_same_id(self):
+        assert compute_config_id(self._msg()) == compute_config_id(self._msg())
+
+    @pytest.mark.parametrize(
+        "changed",
+        [
+            {"key": "other"},
+            {"ch": ("a", "c")},
+            {"ch": ("a", "b", "c")},
+            {"fs": 200.0},
+        ],
+    )
+    def test_differs_when_config_changes(self, changed):
+        assert compute_config_id(self._msg(**changed)) != compute_config_id(self._msg())
+
+    def test_differs_when_dims_change(self):
+        msg = self._msg()
+        renamed = replace(msg, dims=["time", "chan"], axes={"time": msg.axes["time"]})
+        assert compute_config_id(renamed) != compute_config_id(
+            replace(msg, axes={"time": msg.axes["time"]})
+        )
+
+    def test_ignores_stream_offset_and_length(self):
+        base = compute_config_id(self._msg())
+        assert compute_config_id(self._msg(offset=12.5)) == base
+        assert compute_config_id(self._msg(n_time=17)) == base
+
+    def test_respects_declared_stream_dim(self):
+        """With stream_dim declared, the other dim's length is configuration."""
+        a = self._msg(stream_dim="ch")
+        b = self._msg(n_time=5, stream_dim="ch")
+        assert compute_config_id(a) != compute_config_id(b)
+
+    def test_falls_back_to_axis_data_without_fingerprint(self):
+        def undigestable(**kw):
+            msg = self._msg(**kw)
+            msg.axes["ch"].__dict__["_fingerprint"] = None  # as for a device array
+            return compute_config_id(msg)
+
+        assert undigestable() == undigestable()
+        assert undigestable(ch=("a", "c")) != undigestable()
+
+    def test_never_zero_and_fits_63_bits(self):
+        ids = [compute_config_id(self._msg(key=str(i))) for i in range(200)]
+        ids += [chain_config_id(i, "x") for i in range(200)]
+        assert all(0 < i < 2**63 for i in ids)
+
+    def test_chain(self):
+        a, b = compute_config_id(self._msg()), compute_config_id(self._msg(key="b"))
+        assert chain_config_id(a, b) == chain_config_id(a, b)
+        assert chain_config_id(a, b) != chain_config_id(b, a)
+        assert chain_config_id(a, "lowpass", 30.0) != chain_config_id(
+            a, "lowpass", 40.0
+        )
+
+    @pytest.mark.parametrize(
+        "np_part, py_part",
+        [
+            (np.float64(30.0), 30.0),
+            (np.int64(3), 3),
+            (np.array([1.0, 2.0]), [1.0, 2.0]),
+            (("lp", (np.float32(0.5), np.int16(4))), ("lp", (0.5, 4))),
+        ],
+    )
+    def test_chain_digests_numpy_values_like_python(self, np_part, py_part):
+        assert chain_config_id(1, np_part) == chain_config_id(1, py_part)
+
+    def test_chain_numpy_values_still_differ(self):
+        assert chain_config_id(1, np.float64(30.0)) != chain_config_id(1, 40.0)
+        assert chain_config_id(1, np.array([1, 2])) != chain_config_id(1, [1, 3])
+
+    def test_array_backend_is_part_of_the_config(self):
+        mx = pytest.importorskip("mlx.core")
+        msg = self._msg()
+        on_mlx = replace(msg, data=mx.array(msg.data))
+        assert compute_config_id(on_mlx) != compute_config_id(msg)
+        assert compute_config_id(replace(msg, data=np.ones((4, 2)))) == compute_config_id(msg)
+
+    def test_deterministic_across_processes(self):
+        import os
+        import subprocess
+        import sys
+
+        code = (
+            f"import sys; sys.path.insert(0, {os.path.dirname(__file__)!r});"
+            "from test_axisarray import TestConfigId as T, compute_config_id, chain_config_id;"
+            "print(compute_config_id(T._msg()), chain_config_id(1, 'a', 2.5))"
+        )
+        ids = {
+            subprocess.run(
+                [sys.executable, "-c", code],
+                env={**os.environ, "PYTHONHASHSEED": seed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            for seed in ("1", "2")
+        }
+        assert len(ids) == 1
+        assert ids.pop().split() == [
+            str(compute_config_id(self._msg())),
+            str(chain_config_id(1, "a", 2.5)),
+        ]
+
+    def test_coordinate_stream_axis_timestamps_are_left_out(self):
+        def events(times):
+            msg = self._msg(n_time=len(times))
+            axes = {**msg.axes, "time": CoordinateAxis(data=np.array(times), dims=["time"], unit="s")}
+            return replace(msg, axes=axes)
+
+        assert compute_config_id(events([0.1, 0.5, 0.9, 1.0])) == compute_config_id(events([2.0, 2.2]))
+
+    def test_dtype_is_part_of_the_config(self):
+        msg = self._msg()
+        assert compute_config_id(msg) != compute_config_id(replace(msg, data=msg.data.astype(np.float32)))
+        assert compute_config_id(msg) != compute_config_id(
+            replace(msg, data=msg.data.astype(np.int16))
+        )
+
+    @pytest.mark.parametrize("dtype", ["U", "S"])
+    def test_string_width_is_not_part_of_the_config(self, dtype):
+        """String/bytes width follows the longest value in each message."""
+        msg = self._msg()
+        short, long = (
+            replace(msg, data=np.full((4, 2), "x" * n, dtype=f"{dtype}{n}"))
+            for n in (5, 7)
+        )
+        assert short.data.dtype != long.data.dtype
+        assert compute_config_id(short) == compute_config_id(long)
+        assert compute_config_id(short) != compute_config_id(msg)
+
+    def test_numpy_strings_digest_like_str(self):
+        msg = self._msg()
+        base = compute_config_id(msg)
+        assert compute_config_id(replace(msg, key=np.str_("k"))) == base
+        ch = msg.axes["ch"]
+        np_names = replace(
+            msg,
+            dims=[np.str_(d) for d in msg.dims],
+            axes={
+                np.str_("time"): replace(msg.axes["time"], unit=np.str_("s")),
+                np.str_("ch"): CoordinateAxis(
+                    data=ch.data, dims=[np.str_("ch")], unit=np.str_(ch.unit)
+                ),
+            },
+            stream_dim=np.str_("time"),
+        )
+        assert compute_config_id(np_names) == compute_config_id(
+            replace(msg, stream_dim="time")
+        )
