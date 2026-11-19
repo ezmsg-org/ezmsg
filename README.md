@@ -12,8 +12,9 @@ Messaging and Multiprocessing.
 
 ## Dependencies
 
-- Due to reliance on `multiprocessing.shared_memory`, `ezmsg` requires **minimum Python 3.8**.
-- `typing_extensions`
+- `ezmsg` requires **Python 3.10 or newer**.
+- `array-api-compat`
+- `typing-extensions`
 
 Testing `ezmsg` requires:
 
@@ -25,32 +26,22 @@ Testing `ezmsg` requires:
 ## Setup (Development)
 
 ```bash
-$ python3 -m venv env
-$ source env/bin/activate
-(env) $ pip install --upgrade pip poetry
-(env) $ poetry install --with test
-
-(env) $ python -m pytest tests # Optionally, Perform tests
+$ uv sync
+$ uv run pytest tests # Optionally, perform tests
 ```
-
-Note that it is generally recommended to install poetry into its own standalone venv via the `pipx` cli tool.
 
 ## Documentation
 
-To build the documentation in this branch, install sphinx
+To build the documentation, install the `docs` dependency group and run `make`
+(on Windows, `make.bat` in the same folder).
 
 ```bash
-pip install sphinx
-```
-
-Then change directory to the `docs/` folder and run the `make.bat` file with an html specification.
-
-```bash
+uv sync --only-group docs
 cd docs
-uv run make.bat html
+uv run make html
 ```
 
-https://ezmsg.readthedocs.io/en/latest/
+https://www.ezmsg.org/
 
 `ezmsg` is very similar to [`labgraph`](https://www.github.com/facebookresearch/labgraph), so you might get a primer with their documentation and examples. Additionally, there are many examples provided in the examples/tests directories strewn throughout this repository.
 
