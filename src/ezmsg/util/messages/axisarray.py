@@ -118,6 +118,15 @@ class LinearAxis(AxisBase):
         return cls(unit="s", gain=1.0 / fs, offset=offset)
 
 
+DEFAULT_STREAM_DIM = "time"
+"""The dimension assumed to be the stream dimension of an :class:`AxisArray` that
+does not declare :attr:`~AxisArray.stream_dim` (when it has one by that name).
+
+Anything that must decide which axis changes every message -- ezmsg's transport,
+which never elides the stream axis, and consumers that key cached state on the
+rest -- reads it from here so they cannot disagree.
+"""
+
 # Distinguishes "no fingerprint cached yet" from "cached, and it is None".
 _UNSET = object()
 
@@ -397,8 +406,8 @@ class AxisArray(ArrayWithNamedDims):
     under :meth:`transpose`. Declaring it here puts the answer where it is
     known -- in the producer -- instead of asking every consumer to guess.
 
-    ``None`` means "not declared", leaving consumers to fall back on their own
-    convention. Any operation that *renames* this dimension is responsible for
+    ``None`` means "not declared", leaving consumers to fall back on a
+    convention: :data:`DEFAULT_STREAM_DIM`, if the message has that dimension. Any operation that *renames* this dimension is responsible for
     updating it, exactly as it already updates ``dims``.
     """
 

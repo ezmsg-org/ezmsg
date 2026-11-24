@@ -106,7 +106,7 @@ class Marshal:
 
     @classmethod
     @contextmanager
-    def obj_from_mem(cls, mem: memoryview) -> Generator[Any, None, None]:
+    def obj_from_mem(cls, mem: memoryview, axis_table: Any = None) -> Generator[Any, None, None]:
         """
         Deserialize an object from a memory buffer.
 
@@ -115,9 +115,12 @@ class Marshal:
 
         :param mem: Memory buffer containing serialized object.
         :type mem: memoryview
+        :param axis_table: The receiving channel's
+            :class:`~ezmsg.core.axiselision.AxisTable`, to resolve elided axes.
         :return: Context manager yielding the deserialized object.
         :rtype: Generator[Any, None, None]
         :raises UninitializedMemory: If memory buffer is not properly initialized.
+        :raises MissingAxis: If the message references an axis not in ``axis_table``.
         """
         cls._assert_initialized(mem)
 
@@ -138,6 +141,8 @@ class Marshal:
             sidx += bsz
 
         obj = cls.load(buffers)
+        if axis_table is not None:
+            axis_table.resolve(obj)
 
         try:
             yield obj
@@ -149,7 +154,7 @@ class Marshal:
     @classmethod
     @contextmanager
     def serialize(
-        cls, msg_id: int, obj: Any
+        cls, msg_id: int, obj: Any, elision: Any = None
     ) -> Generator[tuple[int, bytes, list[memoryview]], None, None]:
         """
         Serialize an object for network transmission.
@@ -161,9 +166,13 @@ class Marshal:
         :type msg_id: int
         :param obj: Object to serialize.
         :type obj: Any
+        :param elision: The publisher's :class:`~ezmsg.core.axiselision.AxisElision`,
+            when every receiver can resolve elided axes.
         :return: Context manager yielding (total_size, header, buffers) tuple.
         :rtype: Generator[tuple[int, bytes, list[memoryview]], None, None]
         """
+        if elision is not None:
+            obj = elision.wire(obj)
         buffers = cls.dump(obj)
         header = uint64_to_bytes(len(buffers))
         buf_lengths = [len(buf) for buf in buffers]

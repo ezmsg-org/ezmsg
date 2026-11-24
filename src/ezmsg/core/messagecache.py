@@ -78,7 +78,7 @@ class MessageCache:
             )
         )
 
-    def put_from_mem(self, mem: memoryview) -> None:
+    def put_from_mem(self, mem: memoryview, axis_table: typing.Any = None) -> None:
         """
         Reconstitute a message in mem and keep it in cache, releasing and
         overwriting the existing slot in cache.
@@ -89,7 +89,7 @@ class MessageCache:
         :type from_mem: memoryview
         :raises UninitializedMemory: If mem buffer is not properly initialized.
         """
-        ctx = MessageMarshal.obj_from_mem(mem)
+        ctx = MessageMarshal.obj_from_mem(mem, axis_table)
         self._put(
             CacheEntry(
                 object=ctx.__enter__(),

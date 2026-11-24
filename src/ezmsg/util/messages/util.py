@@ -11,7 +11,7 @@ T = TypeVar("T")
 # raises TypeError), and a value derived from the *old* field values must not be
 # carried onto a modified copy. Dropping is always safe -- the copy recomputes
 # on next access. Costs ~0.01 us per replace.
-_DERIVED_CACHE_ATTRS = ("_fingerprint",)
+_DERIVED_CACHE_ATTRS = ("_fingerprint", "_wire_token")
 
 
 def fast_replace(arr: T, **kwargs: Any) -> T:
@@ -38,8 +38,9 @@ def fast_replace(arr: T, **kwargs: Any) -> T:
     :rtype: T
     """
     out_kwargs = arr.__dict__.copy()  # Shallow copy
-    for name in _DERIVED_CACHE_ATTRS:
-        out_kwargs.pop(name, None)
+    # _DERIVED_CACHE_ATTRS, unrolled: cheaper than a loop over even one name.
+    out_kwargs.pop("_fingerprint", None)
+    out_kwargs.pop("_wire_token", None)
     out_kwargs.update(kwargs)
     return arr.__class__(**out_kwargs)
 

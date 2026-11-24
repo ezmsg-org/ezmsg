@@ -6,6 +6,7 @@ import logging
 from uuid import UUID
 from contextlib import contextmanager, suppress
 
+from .axiselision import AxisTable, MissingAxis, ELISION_ENABLED
 from .shm import SHMContext
 from .messagemarshal import MessageMarshal, UninitializedMemory
 from .backpressure import Backpressure
@@ -149,7 +150,8 @@ class ChannelProtocol(FramedProtocol):
             preserved = chan._snapshot_cached_messages()
             chan.cache.clear()
             for preserved_msg in preserved:
-                chan.cache.put_from_mem(preserved_msg)
+                with suppress(MissingAxis):
+                    chan.cache.put_from_mem(preserved_msg, chan._axis_table)
 
             if chan.shm is not None:
                 old_shm = chan.shm
@@ -245,6 +247,9 @@ class Channel:
         self._graph_address = graph_address
         self._local_backpressure = None
         self._channel_kind = ProfileChannelType.UNKNOWN
+        # Axes the publisher sent in full, for resolving its elided references.
+        self._axis_table = AxisTable()
+        self._axes_requested = False
 
     @classmethod
     async def create(
@@ -311,6 +316,10 @@ class Channel:
         if num_buffers <= 0:
             proto.close()
             raise ValueError("publisher reports invalid num_buffers")
+        if ELISION_ENABLED:
+            # Tell the publisher we can resolve elided axes. An older publisher's
+            # read loop ignores the byte and keeps sending axes in full.
+            proto.write(Command.ELIDE_OK.value)
 
         chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address, _guard=cls._SENTINEL)
         chan.topic = topic
@@ -403,7 +412,11 @@ class Channel:
             self._release_backpressure(msg_id, self.id)
             return
 
-        self.cache.put_from_mem(shm_buf)
+        try:
+            self.cache.put_from_mem(shm_buf, self._axis_table)
+        except MissingAxis as exc:
+            self._missing_axis(msg_id, exc)
+            return
         self._set_channel_kind(ProfileChannelType.SHM)
         self._finish_delivery(msg_id)
 
@@ -414,11 +427,34 @@ class Channel:
         Called inline from :meth:`ChannelProtocol.frames_available`.
         """
         assert MessageMarshal.msg_id(obj_bytes) == msg_id
-        self.cache.put_from_mem(memoryview(obj_bytes).toreadonly())
+        try:
+            self.cache.put_from_mem(memoryview(obj_bytes).toreadonly(), self._axis_table)
+        except MissingAxis as exc:
+            self._missing_axis(msg_id, exc)
+            return
         self._set_channel_kind(ProfileChannelType.TCP)
         self._finish_delivery(msg_id)
 
+    def _missing_axis(self, msg_id: int, exc: MissingAxis) -> None:
+        """A message referenced an axis we do not hold (we missed or evicted
+        its definition). Drop it, as the stale-SHM path does, and ask the
+        publisher to send its axes in full again -- once per episode, since
+        several messages already in flight may reference it too."""
+        logger.warning(
+            "Channel %s dropping message %s from publisher %s: unknown axis %s",
+            self.id,
+            msg_id,
+            self.pub_id,
+            exc,
+        )
+        if not self._axes_requested:
+            self._axes_requested = True
+            self._proto.write(Command.AXIS_RESEND.value)
+        self._release_backpressure(msg_id, self.id)
+
     def _finish_delivery(self, msg_id: int) -> None:
+        # A message resolved, so any axes we asked for have arrived.
+        self._axes_requested = False
         if not self._notify_clients(msg_id):
             # Nobody is listening; need to ack!
             self.cache.release(msg_id)

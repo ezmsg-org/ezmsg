@@ -57,3 +57,16 @@ class TestReplaceWithDerivedCaches:
         # The axis object is passed through by reference, cache intact.
         assert updated.axes["ch"] is axis
         assert updated.axes["ch"].fingerprint == axis.fingerprint
+
+
+@pytest.mark.parametrize("name", __import__("ezmsg.util.messages.util", fromlist=["x"])._DERIVED_CACHE_ATTRS)
+def test_fast_replace_drops_every_derived_cache_attr(name):
+    """fast_replace drops these by unrolled pops; keep it in step with the list."""
+    import numpy as np
+
+    from ezmsg.util.messages.axisarray import CoordinateAxis
+    from ezmsg.util.messages.util import fast_replace
+
+    ax = CoordinateAxis(data=np.arange(3), dims=["ch"])
+    ax.__dict__[name] = "stale"
+    assert name not in fast_replace(ax, data=np.arange(4)).__dict__
