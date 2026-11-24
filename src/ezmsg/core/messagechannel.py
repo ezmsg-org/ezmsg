@@ -11,17 +11,23 @@ from .messagemarshal import MessageMarshal, UninitializedMemory
 from .backpressure import Backpressure
 from .messagecache import MessageCache, CacheMiss
 from .graphserver import GraphService
+from .frameproto import FramedProtocol
 from .netprotocol import (
     Command,
     Address,
     AddressType,
+    BYTEORDER,
     read_str,
-    read_int,
     uint64_to_bytes,
     encode_str,
     close_stream_writer,
 )
 from .graphmeta import ProfileChannelType
+
+# TX_SHM and TX_TCP share a fixed prefix: command byte, msg_id, then a length
+# that covers the rest of the frame (the SHM segment name, or the serialized
+# message respectively).
+_FRAME_PREFIX = 1 + 8 + 8
 
 logger = logging.getLogger("ezmsg")
 
@@ -70,6 +76,118 @@ class LeakyQueue(asyncio.Queue[typing.Tuple[UUID, int]]):
 NotificationQueue = asyncio.Queue[typing.Tuple[UUID, int]] | LeakyQueue
 
 
+class ChannelProtocol(FramedProtocol):
+    """
+    Receives message notifications from a Publisher.
+
+    During dispatch, :meth:`frames_available` runs synchronously in the
+    transport's read callback, so an incoming message is cached and its
+    subscribers notified without the extra task wakeup the streams API costs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._channel: "Channel | None" = None
+
+    def bind(self, channel: "Channel") -> None:
+        self._channel = channel
+
+    def connection_lost(self, exc: BaseException | None) -> None:
+        super().connection_lost(exc)
+        if self._channel is not None:
+            self._channel._on_disconnected()
+
+    def frames_available(self) -> None:
+        chan = self._channel
+        assert chan is not None, "protocol dispatching before bind()"
+        buf = self._buffer
+
+        while True:
+            if len(buf) < _FRAME_PREFIX:
+                return
+            cmd = bytes(buf[0:1])
+            msg_id = int.from_bytes(buf[1:9], BYTEORDER)
+            tail = int.from_bytes(buf[9:_FRAME_PREFIX], BYTEORDER)
+            end = _FRAME_PREFIX + tail
+            if len(buf) < end:
+                return
+
+            if cmd == Command.TX_SHM.value:
+                shm_name = bytes(buf[_FRAME_PREFIX:end]).decode("utf-8")
+                if chan.shm is None or chan.shm.name != shm_name:
+                    # Attaching is async and cannot happen in a read callback.
+                    # Stop reading, leave this frame buffered, and hand off.
+                    self.pause_reading()
+                    asyncio.get_running_loop().create_task(
+                        self._reattach_shm(shm_name, end, msg_id),
+                        name=f"chan-{chan.id}: reattach_shm",
+                    )
+                    return
+                del buf[:end]
+                chan._deliver_from_shm(msg_id)
+
+            elif cmd == Command.TX_TCP.value:
+                payload = bytes(buf[_FRAME_PREFIX:end])
+                del buf[:end]
+                chan._deliver_from_tcp(msg_id, payload)
+
+            else:
+                raise ValueError(f"unimplemented data telemetry: {cmd!r}")
+
+    async def _reattach_shm(self, shm_name: str, frame_end: int, msg_id: int) -> None:
+        """
+        Swap to a new SHM generation, then resume dispatch.
+
+        The triggering frame is still buffered: on success we re-dispatch it
+        against the new segment, on failure we drop it and release its
+        backpressure so the publisher is not stalled by it.
+        """
+        chan = self._channel
+        assert chan is not None
+
+        try:
+            preserved = chan._snapshot_cached_messages()
+            chan.cache.clear()
+            for preserved_msg in preserved:
+                chan.cache.put_from_mem(preserved_msg)
+
+            if chan.shm is not None:
+                old_shm = chan.shm
+                chan.shm = None
+                old_shm.close()
+                await old_shm.wait_closed()
+
+            try:
+                chan.shm = await GraphService(chan._graph_address).attach_shm(shm_name)
+            except ValueError:
+                logger.warning(
+                    "Channel %s received stale SHM %s for publisher %s; waiting for next valid SHM",
+                    chan.id,
+                    shm_name,
+                    chan.pub_id,
+                )
+                chan.shm = None
+
+            if chan.shm is None:
+                # Drop the frame we parked, otherwise dispatch would retry the
+                # attach against the same name forever.
+                logger.warning(
+                    "Channel %s dropping message %s from publisher %s because its SHM generation is stale",
+                    chan.id,
+                    msg_id,
+                    chan.pub_id,
+                )
+                del self._buffer[:frame_end]
+                chan._release_backpressure(msg_id, chan.id)
+        except Exception:
+            logger.exception("Channel %s failed to reattach SHM", chan.id)
+            self.abort()
+            return
+
+        self.resume_reading()
+        self._drain_frames()
+
+
 class Channel:
     """
     Channel is a "middle-man" that receives messages from a particular Publisher,
@@ -96,8 +214,7 @@ class Channel:
     backpressure: Backpressure
 
     _graph_task: asyncio.Task[None]
-    _pub_task: asyncio.Task[None]
-    _pub_writer: asyncio.StreamWriter
+    _proto: ChannelProtocol
     _graph_address: AddressType | None
     _local_backpressure: Backpressure | None
     _channel_kind: ProfileChannelType
@@ -163,30 +280,37 @@ class Channel:
         id_str = await read_str(graph_reader)
         pub_address = await Address.from_stream(graph_reader)
 
-        reader, writer = await asyncio.open_connection(*pub_address)
-        writer.write(Command.CHANNEL.value)
-        writer.write(encode_str(id_str))
+        # The per-message path uses a Protocol rather than the streams API so
+        # that an incoming notification is handled in the transport's read
+        # callback instead of costing an extra task wakeup. The handshake below
+        # is sequential and runs once, so it reads in the ordinary awaiting way.
+        loop = asyncio.get_running_loop()
+        _, proto = await loop.create_connection(ChannelProtocol, *pub_address)
+        proto.write(Command.CHANNEL.value + encode_str(id_str))
 
-        topic = await read_str(reader)
+        topic = await proto.read_str()
 
         shm = None
-        shm_name = await read_str(reader)
+        shm_name = await proto.read_str()
         try:
             shm = await graph_service.attach_shm(shm_name)
-            writer.write(Command.SHM_OK.value)
+            proto.write(Command.SHM_OK.value)
         except (ValueError, OSError):
             shm = None
-            writer.write(Command.SHM_ATTACH_FAILED.value)
-        writer.write(uint64_to_bytes(os.getpid()))
+            proto.write(Command.SHM_ATTACH_FAILED.value)
+        proto.write(uint64_to_bytes(os.getpid()))
 
-        result = await reader.read(1)
+        result = await proto.read_exactly(1)
         if result != Command.COMPLETE.value:
             # NOTE: The only reason this would happen is if the
             # publisher's writer is closed due to a crash or shutdown
+            proto.close()
             raise ValueError(f"failed to create channel {pub_id=}")
 
-        num_buffers = await read_int(reader)
-        assert num_buffers > 0, "publisher reports invalid num_buffers"
+        num_buffers = await proto.read_uint64()
+        if num_buffers <= 0:
+            proto.close()
+            raise ValueError("publisher reports invalid num_buffers")
 
         chan = cls(UUID(id_str), pub_id, num_buffers, shm, graph_address, _guard=cls._SENTINEL)
         chan.topic = topic
@@ -196,11 +320,11 @@ class Channel:
             name=f"chan-{chan.id}: _graph_connection",
         )
 
-        chan._pub_writer = writer
-        chan._pub_task = asyncio.create_task(
-            chan._publisher_connection(reader),
-            name=f"chan-{chan.id}: _publisher_connection",
-        )
+        chan._proto = proto
+        proto.bind(chan)
+        # Anything the publisher sent between the handshake and here is already
+        # buffered; start_dispatch drains it before returning.
+        proto.start_dispatch()
 
         logger.debug(f"created channel {chan.id=} {pub_id=} {pub_address=}")
 
@@ -210,15 +334,18 @@ class Channel:
         """
         Mark the Channel for shutdown and resource deallocation
         """
-        self._pub_task.cancel()
+        # abort() rather than close(): a graceful close defers connection_lost
+        # until queued acks flush, so a publisher that has already stopped
+        # reading them would leave wait_closed() hanging. The publisher frees
+        # this channel's backpressure on disconnect, so dropping them is safe.
+        self._proto.abort()
         self._graph_task.cancel()
 
     async def wait_closed(self) -> None:
         """
         Wait until the Channel has properly shutdown and its resources have been deallocated.
         """
-        with suppress(asyncio.CancelledError):
-            await self._pub_task
+        await self._proto.wait_closed()
         with suppress(asyncio.CancelledError):
             await self._graph_task
         if self.shm is not None:
@@ -247,115 +374,63 @@ class Channel:
         finally:
             await close_stream_writer(writer)
 
-    async def _publisher_connection(self, reader: asyncio.StreamReader) -> None:
+    def _deliver_from_shm(self, msg_id: int) -> None:
         """
-        The task that handles communication between the Channel and the Publisher it receives messages from.
+        Cache the message sitting in our SHM slot and notify clients.
+
+        Called inline from :meth:`ChannelProtocol.frames_available`, so the
+        caller has already established that ``self.shm`` matches the segment the
+        publisher named.
         """
+        assert self.shm is not None
+        shm_buf = self.shm[msg_id % self.num_buffers]
+        # The slot for this msg_id may be uninitialized after a mid-stream
+        # resize; msg_id() raises UninitializedMemory in that case. Treat it as
+        # a mismatch (drop + release) rather than letting it kill the channel.
         try:
-            while True:
-                msg = await reader.read(1)
-
-                if not msg:
-                    break
-
-                msg_id = await read_int(reader)
-                buf_idx = msg_id % self.num_buffers
-                channel_kind = ProfileChannelType.UNKNOWN
-
-                if msg == Command.TX_SHM.value:
-                    channel_kind = ProfileChannelType.SHM
-                    shm_name = await read_str(reader)
-
-                    if self.shm is None or self.shm.name != shm_name:
-                        preserved_cache = self._snapshot_cached_messages()
-                        self.cache.clear()
-                        for preserved_msg in preserved_cache:
-                            self.cache.put_from_mem(preserved_msg)
-
-                        if self.shm is not None:
-                            old_shm = self.shm
-                            old_shm.close()
-                            await old_shm.wait_closed()
-
-                        try:
-                            self.shm = await GraphService(
-                                self._graph_address
-                            ).attach_shm(shm_name)
-                        except ValueError:
-                            logger.warning(
-                                "Channel %s received stale SHM %s for publisher %s; waiting for next valid SHM",
-                                self.id,
-                                shm_name,
-                                self.pub_id,
-                            )
-                            self.shm = None
-
-                    if self.shm is None:
-                        logger.warning(
-                            "Channel %s dropping message %s from publisher %s because its SHM generation is stale",
-                            self.id,
-                            msg_id,
-                            self.pub_id,
-                        )
-                        self._release_backpressure(msg_id, self.id)
-                        continue
-
-                    shm_buf = self.shm[buf_idx]
-                    # The slot for this msg_id may be uninitialized after a
-                    # mid-stream resize; msg_id() raises UninitializedMemory in
-                    # that case. Treat it as a mismatch (drop + release) instead
-                    # of letting it escape and silently kill the channel task.
-                    try:
-                        slot_msg_id = MessageMarshal.msg_id(shm_buf)
-                    except UninitializedMemory:
-                        slot_msg_id = None
-                    if slot_msg_id != msg_id:
-                        logger.warning(
-                            "Channel %s skipping stale SHM contents for message %s from publisher %s; will use next valid SHM generation",
-                            self.id,
-                            msg_id,
-                            self.pub_id,
-                        )
-                        self._release_backpressure(msg_id, self.id)
-                        continue
-
-                    self.cache.put_from_mem(shm_buf)
-
-                elif msg == Command.TX_TCP.value:
-                    channel_kind = ProfileChannelType.TCP
-                    buf_size = await read_int(reader)
-                    obj_bytes = await reader.readexactly(buf_size)
-                    assert MessageMarshal.msg_id(obj_bytes) == msg_id
-                    self.cache.put_from_mem(memoryview(obj_bytes).toreadonly())
-
-                else:
-                    raise ValueError(f"unimplemented data telemetry: {msg}")
-
-                self._set_channel_kind(channel_kind)
-
-                if not self._notify_clients(msg_id):
-                    # Nobody is listening; need to ack!
-                    self.cache.release(msg_id)
-                    self._acknowledge(msg_id)
-
-        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
-            logger.debug(f"connection fail: channel:{self.id} - pub:{self.pub_id}")
-        except Exception:
-            logger.exception(
-                "Channel %s publisher connection crashed for pub %s",
+            slot_msg_id = MessageMarshal.msg_id(shm_buf)
+        except UninitializedMemory:
+            slot_msg_id = None
+        if slot_msg_id != msg_id:
+            logger.warning(
+                "Channel %s skipping stale SHM contents for message %s from publisher %s; will use next valid SHM generation",
                 self.id,
+                msg_id,
                 self.pub_id,
             )
-            raise
+            self._release_backpressure(msg_id, self.id)
+            return
 
-        finally:
-            self.cache.clear()
-            if self.shm is not None:
-                self.shm.close()
+        self.cache.put_from_mem(shm_buf)
+        self._set_channel_kind(ProfileChannelType.SHM)
+        self._finish_delivery(msg_id)
 
-            await close_stream_writer(self._pub_writer)
+    def _deliver_from_tcp(self, msg_id: int, obj_bytes: bytes) -> None:
+        """
+        Cache a message that arrived inline over TCP and notify clients.
 
-            logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
+        Called inline from :meth:`ChannelProtocol.frames_available`.
+        """
+        assert MessageMarshal.msg_id(obj_bytes) == msg_id
+        self.cache.put_from_mem(memoryview(obj_bytes).toreadonly())
+        self._set_channel_kind(ProfileChannelType.TCP)
+        self._finish_delivery(msg_id)
+
+    def _finish_delivery(self, msg_id: int) -> None:
+        if not self._notify_clients(msg_id):
+            # Nobody is listening; need to ack!
+            self.cache.release(msg_id)
+            self._acknowledge(msg_id)
+
+    def _on_disconnected(self) -> None:
+        """
+        Release per-connection resources. Invoked from the protocol's
+        ``connection_lost``, which replaces the old task's ``finally`` block.
+        """
+        self.cache.clear()
+        if self.shm is not None:
+            self.shm.close()
+        logger.debug(f"disconnected: channel:{self.id} -> pub:{self.pub_id}")
 
     def _set_channel_kind(self, kind: ProfileChannelType) -> None:
         if self._channel_kind == ProfileChannelType.UNKNOWN:
@@ -480,7 +555,7 @@ class Channel:
     def _acknowledge(self, msg_id: int) -> None:
         try:
             ack = Command.RX_ACK.value + uint64_to_bytes(msg_id)
-            self._pub_writer.write(ack)
+            self._proto.write(ack)
         except (BrokenPipeError, ConnectionResetError):
             logger.info(f"ack fail: channel:{self.id} -> pub:{self.pub_id}")
 
