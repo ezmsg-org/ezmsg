@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Generator
 import logging
+import os
 
 from dataclasses import dataclass, field
 from contextlib import contextmanager, suppress
@@ -124,8 +125,27 @@ class SHMContext:
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.debug(f"SHMContext {self.name} GraphServer {type(e)}")
         finally:
-            self._shm.close()
+            self._close_shm()
             await close_stream_writer(writer)
+
+    def _close_shm(self) -> None:
+        try:
+            self._shm.close()
+        except BufferError:
+            # Something still holds a view into this segment (e.g. a subscriber
+            # retained a zero-copy numpy array past its callback).  The mmap
+            # can't be closed while exported, so drop our handle to it instead;
+            # it is unmapped when the last view is garbage collected.  The
+            # segment itself is unlinked by the GraphServer once leases end.
+            # SharedMemory.close() has already released and cleared ``_buf``.
+            logger.debug(
+                f"SHMContext {self.name} has live views; deferring unmap to GC"
+            )
+            self._shm._mmap = None  # type: ignore[attr-defined]
+            fd = getattr(self._shm, "_fd", -1)
+            if fd >= 0:
+                os.close(fd)
+                self._shm._fd = -1  # type: ignore[attr-defined]
 
     def __getitem__(self, idx: int) -> memoryview:
         """
@@ -180,6 +200,8 @@ class SHMContext:
         """
         with suppress(asyncio.CancelledError):
             await self._graph_task
+        # A task cancelled before it first ran never executes its finally.
+        self._close_shm()
 
     @property
     def name(self) -> str:

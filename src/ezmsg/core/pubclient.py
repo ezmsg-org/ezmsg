@@ -272,6 +272,11 @@ class Publisher:
         self.pid = os.getpid()
         self.topic = topic
         self._shm = shm
+        # Segments replaced by a grow, each with the last msg_id sent under its
+        # name. Kept open until every channel must have attached it (see
+        # _close_retired_shms): closing at once let the GraphServer unlink a
+        # segment a lagging channel had yet to attach.
+        self._retired_shms: list[tuple[int, SHMContext]] = []
         self._msg_id = 0
         self._channels = dict()
         self._channel_tasks = dict()
@@ -300,6 +305,8 @@ class Publisher:
         self._graph_task.cancel()
         PROFILES.unregister_publisher(self.id)
         self._shm.close()
+        for _, retired in self._retired_shms:
+            retired.close()
         self._connection_task.cancel()
         for task in self._channel_tasks.values():
             task.cancel()
@@ -312,6 +319,9 @@ class Publisher:
         connection server shutdown, and all subscriber tasks to complete.
         """
         await self._shm.wait_closed()
+        for _, retired in self._retired_shms:
+            await retired.wait_closed()
+        self._retired_shms.clear()
         with suppress(asyncio.CancelledError):
             await self._graph_task
         with suppress(asyncio.CancelledError):
@@ -500,6 +510,9 @@ class Publisher:
                     PROFILE_TIME() - wait_start_ns, msg_seq=self._msg_id
                 )
 
+        if self._retired_shms:
+            await self._close_retired_shms()
+
         if self._should_use_local_fast_path():
             self._local_channel.put_local(self._msg_id, obj)
 
@@ -525,8 +538,10 @@ class Publisher:
                             except UninitializedMemory:
                                 pass
 
-                        self._shm.close()
-                        await self._shm.wait_closed()
+                        # Not closed yet: messages already sent name the old
+                        # segment, and a channel that has not processed them
+                        # still has to attach it.
+                        self._retired_shms.append((self._msg_id - 1, self._shm))
                         self._shm = new_shm
 
                     with self._shm.buffer(buf_idx) as mem:
@@ -595,6 +610,22 @@ class Publisher:
                     )
                 )
         self._msg_id += 1
+
+    async def _close_retired_shms(self) -> None:
+        """Close replaced segments no channel can still need.
+
+        Called once the backpressure wait for this message's slot is over, so
+        message ``msg_id - num_buffers`` has been released by every channel,
+        and with it every earlier one. A channel attaches the segment a message
+        names before it can release that message, so a segment whose last
+        message is at or below that floor has been attached by every channel
+        that will ever ask for it.
+        """
+        floor = self._msg_id - self._num_buffers
+        while self._retired_shms and self._retired_shms[0][0] <= floor:
+            _, retired = self._retired_shms.pop(0)
+            retired.close()
+            await retired.wait_closed()
 
     def _should_use_local_fast_path(self) -> bool:
         return any(self._can_deliver_locally(ch) for ch in self._channels.values())

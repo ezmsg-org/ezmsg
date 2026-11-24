@@ -383,7 +383,9 @@ class Channel:
         publisher named.
         """
         assert self.shm is not None
-        shm_buf = self.shm[msg_id % self.num_buffers]
+        # Read-only: this memory is shared with the publisher and every other
+        # subscriber (matches the TCP path below).
+        shm_buf = self.shm[msg_id % self.num_buffers].toreadonly()
         # The slot for this msg_id may be uninitialized after a mid-stream
         # resize; msg_id() raises UninitializedMemory in that case. Treat it as
         # a mismatch (drop + release) rather than letting it kill the channel.
