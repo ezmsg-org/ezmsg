@@ -5,6 +5,14 @@ from typing import Any, TypeVar
 
 T = TypeVar("T")
 
+# Instance attributes that are lazily derived caches rather than dataclass
+# fields. fast_replace copies __dict__ wholesale into the constructor, so these
+# have to be dropped for two reasons: they are not init parameters (passing one
+# raises TypeError), and a value derived from the *old* field values must not be
+# carried onto a modified copy. Dropping is always safe -- the copy recomputes
+# on next access. Costs ~0.01 us per replace.
+_DERIVED_CACHE_ATTRS = ("_fingerprint",)
+
 
 def fast_replace(arr: T, **kwargs: Any) -> T:
     """
@@ -30,6 +38,8 @@ def fast_replace(arr: T, **kwargs: Any) -> T:
     :rtype: T
     """
     out_kwargs = arr.__dict__.copy()  # Shallow copy
+    for name in _DERIVED_CACHE_ATTRS:
+        out_kwargs.pop(name, None)
     out_kwargs.update(kwargs)
     return arr.__class__(**out_kwargs)
 
