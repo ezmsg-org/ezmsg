@@ -1,12 +1,11 @@
-import pytest
 import asyncio
-import ezmsg.core as ez
-
-from ezmsg.core.graphserver import GraphService
-
-from multiprocessing import Process
-
 from collections.abc import AsyncGenerator
+from multiprocessing import Process
+from pathlib import Path
+
+import pytest
+
+import ezmsg.core as ez
 
 
 class TransmitReceiveSettings(ez.Settings):
@@ -75,6 +74,8 @@ class AttachTestProcess(Process):
 TX_TOPIC = "TX"
 RX_TOPIC = "RX"
 ACK_TOPIC = "ACK"
+PROCESS_TIMEOUT = 30.0
+PROCESS_CLEANUP_TIMEOUT = 5.0
 
 
 class TransmitReceiveProcess(AttachTestProcess):
@@ -104,31 +105,72 @@ class AttachEchoProcess(AttachTestProcess):
             )
 
 
+async def wait_for_processes(processes: list[Process]) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + PROCESS_TIMEOUT
+    remaining = list(processes)
+
+    while remaining:
+        for process in list(remaining):
+            if process.is_alive():
+                continue
+            process.join()
+            assert process.exitcode == 0, (
+                f"{process.name} exited with status {process.exitcode}"
+            )
+            remaining.remove(process)
+
+        if not remaining:
+            return
+        if loop.time() >= deadline:
+            names = ", ".join(process.name for process in remaining)
+            raise AssertionError(
+                f"Processes did not exit within {PROCESS_TIMEOUT}s: {names}"
+            )
+
+        await asyncio.sleep(0.05)
+
+
+async def close_process(process: Process) -> None:
+    if process.is_alive():
+        process.terminate()
+        await asyncio.to_thread(process.join, PROCESS_CLEANUP_TIMEOUT)
+    if process.is_alive():
+        process.kill()
+        await asyncio.to_thread(process.join, PROCESS_CLEANUP_TIMEOUT)
+
+    assert not process.is_alive(), f"Could not stop {process.name}"
+    process.close()
+
+
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="canonical port isn't always available")
-async def test_attach():
-    graph_service = GraphService(address=GraphService.default_address())
-    graph_server = graph_service.create_server()
+async def test_attach(monkeypatch: pytest.MonkeyPatch):
+    """Independent processes attach to one already-running default server.
 
-    async with ez.GraphContext(graph_service):
+    Previously skipped as "canonical port isn't always available": the test
+    needed the shared default port, which anything on the machine could
+    occupy. The hermetic conftest pins the default to a session-private
+    address and runs a server there for every test, so attaching — from
+    this process and from the spawned children, which inherit the pinned
+    environment — is reliable. The conftest's server IS the attach target;
+    the test no longer creates its own.
+    """
+    # pytest's importlib mode does not put the repository root on sys.path.
+    # Spawned processes need it there to unpickle these test process classes.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+
+    async with ez.GraphContext():
         settings = TransmitReceiveSettings()
-
         txrx_process = TransmitReceiveProcess(settings)
-        txrx_process.start()
-
         echo_process = AttachEchoProcess(settings)
-        echo_process.start()
+        started_processes: list[Process] = []
 
-        echo_process.join()
-        txrx_process.join()
+        try:
+            for process in (txrx_process, echo_process):
+                process.start()
+                started_processes.append(process)
 
-    graph_server.stop()
-
-
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_attach())
-    finally:
-        loop.close()
+            await wait_for_processes(started_processes)
+        finally:
+            for process in started_processes:
+                await close_process(process)
