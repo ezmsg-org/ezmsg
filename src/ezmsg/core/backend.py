@@ -14,6 +14,7 @@ from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Barrier as BarrierType
 from multiprocessing.connection import wait, Connection
 from socket import socket
+from typing import get_origin
 
 from .netprotocol import DEFAULT_SHM_SIZE, AddressType
 
@@ -31,6 +32,7 @@ from .stream import (
     OutputRelay,
 )
 from .unit import Unit, PROCESS_ATTR, SUBSCRIBES_ATTR, PUBLISHES_ATTR
+from .type_resolution import resolve_stream_type
 from .settings import Settings
 from .graphmeta import (
     CollectionMetadata,
@@ -391,7 +393,9 @@ class GraphRunner:
         return f"{tp.__module__}.{tp.__qualname__}"
 
     def _stream_type_name(self, stream_type: object) -> str:
-        if inspect.isclass(stream_type):
+        # Python 3.10 considers GenericAlias objects (e.g. list[int]) classes.
+        # Preserve their parameters instead of naming only the origin class.
+        if get_origin(stream_type) is None and inspect.isclass(stream_type):
             return self._type_name(stream_type)
         return repr(stream_type)
 
@@ -421,7 +425,9 @@ class GraphRunner:
                         else None
                     ),
                     settings_type=(
-                        self._stream_type_name(input_settings.msg_type)
+                        self._stream_type_name(
+                            resolve_stream_type(type(comp), input_settings.msg_type)
+                        )
                         if isinstance(input_settings, InputStream)
                         else None
                     ),
@@ -431,7 +437,9 @@ class GraphRunner:
                 topic_entries: dict[str, TopicMetadataType] = {}
                 relay_entries: dict[str, RelayMetadataType] = {}
                 for stream_name, stream in comp.streams.items():
-                    msg_type = self._stream_type_name(stream.msg_type)
+                    msg_type = self._stream_type_name(
+                        resolve_stream_type(type(comp), stream.msg_type)
+                    )
                     if isinstance(stream, InputRelay):
                         runtime = _relay_runtime_info(stream)
                         relay_entries[stream_name] = InputRelayMetadata(
